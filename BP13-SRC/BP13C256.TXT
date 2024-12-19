@@ -1,0 +1,1035 @@
+      ***************************                                               
+       IDENTIFICATION DIVISION.                                                 
+      ***************************                                               
+                                                                                
+       PROGRAM-ID.   BP13C256.                                                  
+       AUTHOR.       RGM.                                                       
+       DATE-WRITTEN. 8 JUNE 1995.                                               
+      ******************************************************************        
+      *                                                                *        
+      *   SYSTEM NAME  :   SYSTEM OF COMMITMENT   (SOC)                *        
+      *                                                                *        
+      *   SYSTEM ID    :   BP13                                        *        
+      *                                                                *        
+      *   OBJECTIVE    :   1. TO UPDATE SOC MASTER WHEN A PARTICULAR   *        
+      *                       REGISTRATION IS CANCELLED AND WRITE THE  *        
+      *                       RECORD TO SOC HISTORY FILE.              *        
+      *                    2. TO OUTPUT RECORD TO BP13F310 FOR PRINT-  *        
+      *                       ING OF REPORT.                           *        
+      *                                                                *        
+      *   INPUT FILES  :   1. BP13F200 - BOOKING APPOINTMENT FILE      *        
+      *                    2. BP13F205 - CONTROL REC                   *        
+      *                    3. BM06K110 - FLAT INVENTORY FILE           *        
+      *                                                                *        
+      *   I-O FILES    :   1. BP13K800 - SOC MASTER FILE (VSAM)        *        
+      *                    2. BP13K840 - SOC HISTORY FILE              *        
+      *                                                                *        
+      *   OUTPUT FILE  :   1. BP13F310 - CANCELLATION CASES FILE       *        
+      *                                                                *        
+      *   OUTPUT LIST  :   1. BP13L256 - CONTROL LIST                  *        
+      *                                                                *        
+      *                                                                *        
+      *   CHGE-NO  BY    DATE   DESCRIPTION                            *        
+      *   -------  ---  ------  -------------------------------------  *        
+      *   C9504B5  RGM  080695  TO CANCEL APPLICATION UNDER RFS AND    *        
+      *                         BALLOT SYSTEM.                         *        
+      *   C9504B5  LMS  130795  TO CHECK DTE-BALLOT BEFORE CANCEL.     *        
+      *   BP130062 LMS  071295  TO CHECK COND-TAG BEFORE CANCEL.       *        
+      *   BP130250 LMS  140797  TO INCLUDE CANCELLATION OF 3-ROOM      *        
+      *                         APPLICATIONS.                          *        
+      *   BP130418 SIA  100798  TO CATER FOR YR 2000                   *        
+      *   BP130677  GV  210699  TO REPORT P18L256A - NON CANCELLATION  *        
+      *                         DUE TO DOWNGRADING INTO SMALLER FLATS  *        
+      *   BP131032 CT2  120601  DO NOT CANCEL APPLICATION IF           *        
+      *                         K800-NUM-BTO = 'Y'.                    *        
+      *   BP130970 MBS  090501  WRITE TO 2 FILES K800 RECORDS WITH     *        
+      *                         AND WITHOUT SCHEME-ACCNT               *        
+      *   BP132072 CT2  180102  REMOVE HALF IDP CODE UPON CANCELLATION *        
+      *                         OF CASES UNDER CODE 27                 *        
+      *   BP132095 MTD  230402  EXPAND LENGTH OF BP13F200              *        
+      *                         (FROM 100 TO 300)                      *        
+      *   BP132531 LMS  290604  IF ALLO-STAT = NC, REASON = 83.        *        
+      *                         IF ALLO-STAT = NI, REASON = C4.        *        
+      *                         (FOR BE AND BTO ONLY).                 *        
+      *   BP132577 SK   190804  INCLUDE BP13F915 (CDB FILE)            *        
+      *   BP132807 LMS1 160106  NEW CANCELLATION CODE FOR NF           *        
+      *   BP137200 FNP1 080318  CHANGE 'DE' TXN-TYPE TO 'TE' IN F915  *         
+      *   BP137326 FNP1 061218  BLANK OFF OTHER DETAILS WHEN CREATING *         
+      *                         'TE' FOR F915                                   
+      ******************************************************************        
+                                                                                
+                                                                                
+      ************************                                                  
+       ENVIRONMENT DIVISION.                                                    
+      ************************                                                  
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT P13F800S  ASSIGN        TO P13F800S.                          
+           SELECT P13F800N  ASSIGN        TO P13F800N.                          
+           SELECT BP13F310  ASSIGN        TO BP13F310.                          
+           SELECT BP13F200  ASSIGN        TO BP13F200.                          
+           SELECT BP13F205  ASSIGN        TO BP13F205.                          
+           SELECT BP13F915  ASSIGN        TO BP13F915.                          
+           SELECT BP13K800  ASSIGN        TO BP13K800                           
+                            ORGANIZATION  IS INDEXED                            
+                            ACCESS MODE   IS RANDOM                             
+                            RECORD KEY    IS K800-NUM-REGN                      
+                            FILE STATUS   IS BP13K800-STATUS.                   
+           SELECT BP13K820  ASSIGN        TO BP13K820                           
+                            ORGANIZATION  IS INDEXED                            
+                            ACCESS MODE   IS DYNAMIC                            
+                            RECORD KEY    IS K820-KEY-FLD                       
+                            FILE STATUS   IS BP13K820-STATUS.                   
+           SELECT BP13K840  ASSIGN        TO BP13K840                           
+                            ORGANIZATION  IS INDEXED                            
+                            ACCESS MODE   IS RANDOM                             
+                            RECORD KEY    IS K840-KEY-FLD                       
+                            FILE STATUS   IS BP13K840-STATUS.                   
+           SELECT BM06K110  ASSIGN        TO BM06K110                           
+                            ORGANIZATION  IS INDEXED                            
+                            ACCESS MODE   IS RANDOM                             
+                            RECORD KEY    IS K110-KEY-FLD                       
+                            ALTERNATE RECORD KEY IS K110-REGN-NO                
+                            FILE STATUS   IS BM06K110-STATUS.                   
+           SELECT BP13L256  ASSIGN        TO BP13L256.                          
+           SELECT P13L256A  ASSIGN        TO P13L256A.                          
+                                                                                
+                                                                                
+      *****************                                                         
+       DATA DIVISION.                                                           
+      *****************                                                         
+                                                                                
+      *============*                                                            
+       FILE SECTION.                                                            
+      *============*                                                            
+                                                                                
+       FD   P13F800S                                                            
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            BLOCK CONTAINS  0   RECORDS                                         
+            LABEL RECORDS   ARE STANDARD                                        
+            RECORDING MODE  IS  F.                                              
+       01   P13F800S-REC                  PIC X(2000).                          
+                                                                                
+       FD   P13F800N                                                            
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            BLOCK CONTAINS  0   RECORDS                                         
+            LABEL RECORDS   ARE STANDARD                                        
+            RECORDING MODE  IS  F.                                              
+       01   P13F800N-REC                  PIC X(2000).                          
+                                                                                
+       FD   BP13F310                                                            
+            BLOCK  CONTAINS 0   RECORDS                                         
+            RECORD CONTAINS 150 CHARACTERS                                      
+            LABEL  RECORD   IS  STANDARD                                        
+            RECORDING MODE  IS  F.                                              
+       COPY BP13F310.                                                           
+                                                                                
+       FD   BP13F200                                                            
+            BLOCK  CONTAINS 0   RECORDS                                         
+            RECORD CONTAINS 300 CHARACTERS                                      
+            LABEL  RECORD   IS  STANDARD                                        
+            RECORDING MODE  IS  F.                                              
+       COPY BP13F200.                                                           
+                                                                                
+       FD   BP13F205                                                            
+            BLOCK  CONTAINS 0   RECORDS                                         
+            RECORD CONTAINS 80  CHARACTERS                                      
+            LABEL  RECORD   IS  STANDARD                                        
+            RECORDING MODE  IS  F.                                              
+       COPY BP13F205.                                                           
+                                                                                
+       FD   BP13K800                                                            
+            RECORD CONTAINS 2000 CHARACTERS.                                    
+       COPY BP13K800.                                                           
+                                                                                
+       FD   BP13K820                                                            
+            RECORD CONTAINS 400 CHARACTERS.                                     
+       COPY BP13K820.                                                           
+                                                                                
+       FD   BP13K840                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BP13K840.                                                           
+                                                                                
+       FD   BM06K110                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BM06K110.                                                           
+                                                                                
+       FD  BP13F915                                                             
+           BLOCK  CONTAINS    0 CHARACTERS                                      
+           RECORD CONTAINS  800 CHARACTERS                                      
+           LABEL  RECORDS   ARE STANDARD                                        
+           RECORDING MODE   IS  F.                                              
+       COPY BP13F915.                                                           
+                                                                                
+       FD   BP13L256                                                            
+            RECORD CONTAINS 132 CHARACTERS                                      
+            LABEL  RECORD   IS  OMITTED                                         
+            RECORDING MODE  IS  F.                                              
+       01   L256-PRT-REC                  PIC X(132).                           
+                                                                                
+       FD   P13L256A                                                            
+            RECORD CONTAINS 132 CHARACTERS                                      
+            LABEL  RECORD   IS  OMITTED                                         
+            RECORDING MODE  IS  F.                                              
+       01   L256A-PRT-REC                  PIC X(132).                          
+                                                                                
+                                                                                
+      *=======================*                                                 
+       WORKING-STORAGE SECTION.                                                 
+      *=======================*                                                 
+                                                                                
+       01  WS-INDICATORS.                                                       
+           05  BP13K800-STATUS            PIC 99     VALUE ZEROS.               
+           05  BP13K820-STATUS            PIC 99     VALUE ZEROS.               
+           05  BP13K840-STATUS            PIC 99     VALUE ZEROS.               
+           05  BM06K110-STATUS            PIC 99     VALUE ZEROS.               
+           05  WS-EOF-F200                PIC X      VALUE 'N'.                 
+           05  WS-EOF-F205                PIC X      VALUE 'N'.                 
+           05  WS-K820-EOF                PIC X      VALUE 'N'.                 
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-EDITED-DATE.                                                  
+               10  WS-EDITED-DD           PIC 99     VALUE ZEROS.               
+               10  FILLER                 PIC X      VALUE '/'.                 
+               10  WS-EDITED-MM           PIC 99     VALUE ZEROS.               
+               10  FILLER                 PIC X      VALUE '/'.                 
+               10  WS-EDITED-CC           PIC 99     VALUE ZEROS.               
+               10  WS-EDITED-YY           PIC 99     VALUE ZEROS.               
+           05  WS-CURRENT-DATE.                                                 
+               10  WS-CURRENT-CC          PIC 9(2)   VALUE ZEROS.               
+               10  WS-CURRENT-YYMMDD.                                           
+                   15  WS-CURRENT-YY      PIC 9(2)   VALUE ZEROS.               
+                   15  WS-CURRENT-MM      PIC 9(2)   VALUE ZEROS.               
+                   15  WS-CURRENT-DD      PIC 9(2)   VALUE ZEROS.               
+           05  WS-KEYS.                                                         
+               10  WS-F205-KEY.                                                 
+                   15  WS-F205-DTE-ALLOCN PIC X(8)   VALUE SPACES.              
+                   15  WS-F205-NT-ZONE    PIC X(3)   VALUE SPACES.              
+                   15  WS-F205-FLAT-TYPE  PIC X(2)   VALUE SPACES.              
+               10  WS-F200-KEY.                                                 
+                   15  WS-F200-DTE-ALLOC  PIC X(8)   VALUE SPACES.              
+                   15  WS-F200-NT-ZONE    PIC X(3)   VALUE SPACES.              
+                   15  WS-F200-FLAT-TYPE  PIC X(2)   VALUE SPACES.              
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-READ-CNT-F200           PIC 9(6)   VALUE ZEROS.               
+           05  WS-READ-CNT-F205           PIC 9(6)   VALUE ZEROS.               
+           05  WS-READ-CNT-K800           PIC 9(6)   VALUE ZEROS.               
+           05  WS-WRITE-CNT-F915          PIC 9(6)   VALUE ZEROS.               
+           05  WS-WRITE-CNT-K800          PIC 9(6)   VALUE ZEROS.               
+           05  WS-WRITE-CNT-F800N         PIC 9(6)   VALUE ZEROS.               
+           05  WS-WRITE-CNT-F800S         PIC 9(6)   VALUE ZEROS.               
+           05  WS-REWRITE-CNT-K840        PIC 9(6)   VALUE ZEROS.               
+           05  WS-WRITE-CNT-L256          PIC 9(6)   VALUE ZEROS.               
+           05  WS-WRITE-CNT-L256A         PIC 9(6)   VALUE ZEROS.               
+           05  WS-FND-CNT-K110            PIC 9(6)   VALUE ZEROS.               
+           05  WS-NFD-CNT-K110            PIC 9(6)   VALUE ZEROS.               
+           05  WS-WRITE-CNT-F310          PIC 9(6)   VALUE ZEROS.               
+           05  WS-CNT-PAGE                PIC 9(3)   VALUE ZEROS.               
+           05  WS-CNT-LINE                PIC 9(3)   VALUE 41.                  
+           05  WS-CNT-PAGEA               PIC 9(3)   VALUE ZEROS.               
+           05  WS-CNT-LINEA               PIC 9(3)   VALUE 41.                  
+                                                                                
+                                                                                
+      *----------------------------------------------------------*              
+      *    REPORT LISTING (BP13L256)  LAY-OUT                    *              
+      *----------------------------------------------------------*              
+       01  L256-HDG-1.                                                          
+           05  FILLER                     PIC X(22)  VALUE                      
+               'LISTING-ID : BP13L256'.                                         
+           05  FILLER                     PIC X(68)  VALUE SPACES.              
+           05  FILLER                     PIC X(7)   VALUE 'DATE : '.           
+           05  L256-PRT-DATE              PIC X(10)  VALUE SPACE.               
+           05  FILLER                     PIC X(10)  VALUE SPACES.              
+           05  FILLER                     PIC X(7)   VALUE 'PAGE : '.           
+           05  L256-NUM-PAGE              PIC ZZ9.                              
+                                                                                
+       01  L256-HDG-2.                                                          
+           05  FILLER                     PIC X(27)  VALUE SPACES.              
+           05  FILLER                     PIC X(40)  VALUE                      
+               'NOT REGISTERED CASES (CANCELLATION) BUT '.                      
+           05  FILLER                     PIC X(40)  VALUE                      
+               'ACCEPTED FLAT IN FIS                    '.                      
+                                                                                
+       01  L256-HDG-2A.                                                         
+           05  FILLER                     PIC X(27)  VALUE SPACES.              
+           05  FILLER                     PIC X(40)  VALUE                      
+               '========================================'.                      
+           05  FILLER                     PIC X(40)  VALUE                      
+               '====================                    '.                      
+                                                                                
+       01  L256-HDG-3.                                                          
+           05  FILLER                     PIC X(15)  VALUE SPACES.              
+           05  FILLER                     PIC X(45)  VALUE                      
+               '   REGN-NO               SCHEME-ACCOUNT-NO   '.                 
+           05  FILLER                     PIC X(45)  VALUE                      
+               '    ALLOC-SCHEME        DATE ACCEPTED        '.                 
+                                                                                
+       01  L256-HDG-3A.                                                         
+           05  FILLER                     PIC X(15) VALUE SPACES.               
+           05  FILLER                     PIC X(45)  VALUE                      
+               '   ------------          -----------------   '.                 
+           05  FILLER                     PIC X(45)  VALUE                      
+               '    ------------        -------------        '.                 
+                                                                                
+       01  L256-PRT-DETAIL.                                                     
+           05  FILLER                     PIC X(20)  VALUE SPACES.              
+           05  L256-PRT-REGN-NO           PIC X(8)   VALUE SPACES.              
+           05  FILLER                     PIC X(14)  VALUE SPACES.              
+           05  L256-PRT-SCHEME            PIC 9(4)   VALUE ZEROES.              
+           05  FILLER                     PIC X      VALUE '-'.                 
+           05  L256-PRT-ACC               PIC 9(4)   VALUE ZEROES.              
+           05  FILLER                     PIC X      VALUE '-'.                 
+           05  L256-PRT-CHK               PIC 9      VALUE ZERO.                
+           05  FILLER                     PIC X      VALUE '-'.                 
+           05  L256-PRT-ACC-TYPE          PIC 99     VALUE ZEROES.              
+           05  FILLER                     PIC X(14)  VALUE SPACES.              
+           05  L256-PRT-ALLO-SCHEME       PIC X(3)   VALUE SPACES.              
+           05  FILLER                     PIC X(13)  VALUE SPACES.              
+           05  L256-PRT-ACCEPT            PIC X(10)  VALUE SPACES.              
+           05  FILLER                     PIC X(20)  VALUE SPACE.               
+                                                                                
+       01  L256-PRT-CONCLUDE.                                                   
+           05  FILLER                     PIC X(32)  VALUE SPACES.              
+           05  FILLER                     PIC X(41)  VALUE                      
+           'NO. OF CASES FOUND IN EXISTENCE IN FIS = '.                         
+           05  L256-PRT-TOTAL             PIC ZZZZZ9.                           
+           05  FILLER                     PIC X(98)  VALUE SPACES.              
+                                                                                
+       01  L256-HDG-LINE.                                                       
+           05  FILLER                     PIC X(27)  VALUE SPACES.              
+           05  FILLER                     PIC X(40)  VALUE                      
+               '----------------------------------------'.                      
+           05  FILLER                     PIC X(40)  VALUE                      
+               '--------------------                    '.                      
+                                                                                
+      *----------------------------------------------------------*              
+      *    REPORT LISTING (P13L256A) LAY-OUT                     *              
+      *----------------------------------------------------------*              
+       01  L256A-HDG-1.                                                         
+           05  FILLER                     PIC X(22)  VALUE                      
+               'P13L256A      HDB3'.                                            
+           05  FILLER                     PIC X(18)  VALUE SPACES.              
+           05  FILLER                     PIC X(50)  VALUE                      
+               'SYSTEM OF COMMITMENT'.                                          
+           05  FILLER                     PIC X(7)   VALUE 'DATE : '.           
+           05  L256A-PRT-DATE             PIC X(10)  VALUE SPACE.               
+           05  FILLER                     PIC X(03)  VALUE SPACES.              
+           05  FILLER                     PIC X(7)   VALUE 'PAGE : '.           
+           05  L256A-NUM-PAGE             PIC ZZ9.                              
+                                                                                
+       01  L256A-HDG-2.                                                         
+           05  FILLER                     PIC X(27)  VALUE SPACES.              
+           05  FILLER                     PIC X(39)  VALUE                      
+               'NON CANCELLATION DUE TO DOWNGRADING TO '.                       
+           05  FILLER                     PIC X(40)  VALUE                      
+               'SMALLER FLATS'.                                                 
+           05  FILLER                     PIC X(04)  VALUE SPACES.              
+           05  FILLER                     PIC X(07)  VALUE 'USER : '.           
+           05  FILLER                     PIC X(15)  VALUE                      
+               'ALLOCATION TEAM'.                                               
+                                                                                
+       01  L256A-HDG-2A.                                                        
+           05  FILLER                     PIC X(27)  VALUE SPACES.              
+           05  FILLER                     PIC X(40)  VALUE                      
+               '----------------------------------------'.                      
+           05  FILLER                     PIC X(40)  VALUE                      
+               '-------------'.                                                 
+                                                                                
+       01  L256A-HDG-3.                                                         
+           05  FILLER                     PIC X(05)  VALUE SPACES.              
+           05  FILLER                     PIC X(45)  VALUE                      
+               'REGN-NO         NAME                         '.                 
+           05  FILLER                     PIC X(07)  VALUE SPACES.              
+           05  FILLER                     PIC X(10)  VALUE SPACES.              
+           05  FILLER                     PIC X(50)  VALUE                      
+               'BALLOT DATE         ROOM-TYPE           ROOM-TYPE'.             
+                                                                                
+       01  L256A-HDG-4.                                                         
+           05  FILLER                     PIC X(05)  VALUE SPACES.              
+           05  FILLER                     PIC X(45)  VALUE SPACES.              
+           05  FILLER                     PIC X(07)  VALUE SPACES.              
+           05  FILLER                     PIC X(10)  VALUE SPACES.              
+           05  FILLER                     PIC X(52)  VALUE                      
+               '                 (APPOINTMENT FILE)    (SOC MASTER)'.           
+                                                                                
+       01  L256A-HDG-3A.                                                        
+           05  FILLER                     PIC X(05)  VALUE SPACES.              
+           05  FILLER                     PIC X(45)  VALUE                      
+               '-------      --------------------------------'.                 
+           05  FILLER                     PIC X(07)  VALUE ALL '-'.             
+           05  FILLER                     PIC X(10)  VALUE SPACES.              
+           05  FILLER                     PIC X(52)  VALUE                      
+               '-----------      ------------------    ------------'.           
+                                                                                
+       01  L256A-PRT-DETAIL.                                                    
+           05  FILLER                     PIC X(05)  VALUE SPACES.              
+           05  L256A-PRT-REGN-NO          PIC X(8)   VALUE SPACES.              
+           05  FILLER                     PIC X(06)  VALUE SPACES.              
+           05  L256A-PRT-NAME             PIC X(40)  VALUE SPACES.              
+           05  FILLER                     PIC X(10)  VALUE SPACES.              
+           05  L256A-PRT-DTE-BALLOT       PIC X(07)  VALUE SPACES.              
+           05  FILLER                     PIC X(13)  VALUE SPACES.              
+           05  L256A-PRT-FLAT-TYPE        PIC XX     VALUE SPACES.              
+           05  FILLER                     PIC X(19)   VALUE SPACES.             
+           05  L256A-PRT-ROOM-TYPE        PIC XX     VALUE SPACES.              
+                                                                                
+      **********************                                                    
+       PROCEDURE DIVISION.                                                      
+      **********************                                                    
+                                                                                
+      ******************************************************************        
+       000-MAIN-ROUTINE.                                                        
+      ******************************************************************        
+            PERFORM  100-OPEN-ROUTINE                                           
+               THRU  100-EXIT.                                                  
+            PERFORM  200-READ-BP13F205                                          
+               THRU  200-EXIT.                                                  
+            PERFORM  400-PROCESS-ROUTINE                                        
+               THRU  400-EXIT                                                   
+              UNTIL  WS-EOF-F205 = 'Y'.                                         
+            PERFORM  900-CLOSE-ROUTINE                                          
+               THRU  900-EXIT.                                                  
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       100-OPEN-ROUTINE.                                                        
+      ******************************************************************        
+           OPEN INPUT                                                           
+                       BP13F205                                                 
+                       BP13F200                                                 
+                       BM06K110                                                 
+                       BP13K820                                                 
+                I-O    BP13K800                                                 
+                       BP13K840                                                 
+                OUTPUT P13F800S                                                 
+                       P13F800N                                                 
+                       BP13F310                                                 
+                       BP13F915                                                 
+                       P13L256A                                                 
+                       BP13L256.                                                
+                                                                                
+           IF BM06K110-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'ERROR OPENING BM06K110, STATUS ' BM06K110-STATUS         
+              MOVE     BM06K110-STATUS    TO   RETURN-CODE                      
+              GO TO    900-EXIT                                                 
+           END-IF.                                                              
+                                                                                
+           IF BP13K800-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'ERROR OPENING BP13K800, STATUS ' BP13K800-STATUS         
+              MOVE     BP13K800-STATUS    TO   RETURN-CODE                      
+              GO TO    900-EXIT                                                 
+           END-IF.                                                              
+                                                                                
+           IF BP13K840-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'ERROR OPENING BP13K840, STATUS ' BP13K840-STATUS         
+              MOVE     BP13K840-STATUS    TO   RETURN-CODE                      
+              GO TO    900-EXIT                                                 
+           END-IF.                                                              
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       200-READ-BP13F205.                                                       
+      ******************************************************************        
+                                                                                
+           READ BP13F205                                                        
+             AT END MOVE 'Y' TO WS-EOF-F205                                     
+             GO TO 200-EXIT.                                                    
+                                                                                
+           ADD  1                  TO WS-READ-CNT-F205.                         
+           MOVE F205-DTE-ALLOCN    TO WS-F205-DTE-ALLOCN.                       
+           MOVE F205-NUM-NT-ZONE   TO WS-F205-NT-ZONE.                          
+           MOVE F205-NUM-FLAT-TYPE TO WS-F205-FLAT-TYPE.                        
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       300-READ-BP13F200.                                                       
+      ******************************************************************        
+                                                                                
+           READ BP13F200                                                        
+             AT END MOVE 'Y' TO WS-EOF-F200                                     
+             GO TO 300-EXIT.                                                    
+           ADD  1                    TO WS-READ-CNT-F200.                       
+           MOVE F200-DTE-ALLOC       TO WS-F200-DTE-ALLOC.                      
+           MOVE F200-NUM-NT-ZONE     TO WS-F200-NT-ZONE.                        
+           MOVE F200-NUM-FLAT-TYPE   TO WS-F200-FLAT-TYPE.                      
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       400-PROCESS-ROUTINE.                                                     
+      ******************************************************************        
+                                                                                
+           PERFORM 410-GET-REGN                                                 
+              THRU 410-EXIT.                                                    
+           PERFORM 430-PROCESS-BP13F200                                         
+              THRU 430-EXIT                                                     
+             UNTIL WS-F200-KEY  NOT =  WS-F205-KEY                              
+                OR WS-EOF-F200  = 'Y'.                                          
+                                                                                
+           PERFORM 200-READ-BP13F205                                            
+              THRU 200-EXIT.                                                    
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       410-GET-REGN.                                                            
+      ******************************************************************        
+                                                                                
+           PERFORM 300-READ-BP13F200                                            
+              THRU 300-EXIT                                                     
+             UNTIL WS-F200-KEY >=  WS-F205-KEY                                  
+                OR WS-EOF-F200  = 'Y'.                                          
+                                                                                
+       410-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       430-PROCESS-BP13F200.                                                    
+      ******************************************************************        
+                                                                                
+           IF WS-F200-KEY = WS-F205-KEY                                         
+              PERFORM  500-PROCESS-BP13K800                                     
+                 THRU  500-EXIT.                                                
+                                                                                
+           PERFORM 300-READ-BP13F200                                            
+              THRU 300-EXIT.                                                    
+                                                                                
+       430-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       500-PROCESS-BP13K800.                                                    
+      ******************************************************************        
+                                                                                
+           MOVE F200-NUM-REGN TO K800-NUM-REGN.                                 
+                                                                                
+           READ BP13K800.                                                       
+                                                                                
+           IF BP13K800-STATUS = 00                                              
+              ADD 1 TO WS-READ-CNT-K800                                         
+                                                                                
+              IF K800-NUM-SCH-ACC = SPACES OR ZEROES OR LOW-VALUES              
+                PERFORM  520-WRITE-P13F800N  THRU 520-EXIT                      
+              ELSE                                                              
+                PERFORM  510-WRITE-P13F800S  THRU 510-EXIT                      
+              END-IF                                                            
+                                                                                
+              IF K800-NUM-CANCEL-REASON = '75' AND                              
+                 K800-NUM-FLAT-TYPE NOT = F205-NUM-FLAT-TYPE                    
+                 PERFORM 850-PRINT-L256A  THRU 850-EXIT                         
+                 GO TO 500-EXIT                                                 
+              END-IF                                                            
+                                                                                
+              IF (K800-NUM-STATUS      = 'C') OR                                
+                 (K800-NUM-ALLO-SCHEME = 'WIS') OR                              
+                 (K800-NUM-SCH-ACC NOT = SPACES AND                             
+                                         ZEROES AND LOW-VALUES) OR              
+                 (F205-DTE-BALLOT  NOT = K800-DTE-BALLOT)  OR                   
+                 (K800-NUM-EXEC-COND-TAG = 'C')                                 
+                 GO TO 500-EXIT                                                 
+              END-IF                                                            
+           ELSE                                                                 
+           IF BP13K800-STATUS = 23                                              
+              DISPLAY 'RECORD NOT FOUND IN BP13K800 ' K800-NUM-REGN             
+              GO TO    500-EXIT                                                 
+           ELSE                                                                 
+              DISPLAY 'ERROR READING BP13K800, STATUS ' BP13K800-STATUS         
+                      '              K800-NUM-REGN  = ' K800-NUM-REGN           
+              MOVE     BP13K800-STATUS    TO   RETURN-CODE                      
+              PERFORM  900-CLOSE-ROUTINE  THRU 900-EXIT.                        
+                                                                                
+                                                                                
+      *----------------------------------------------------------*              
+      *    CHECK WITH BM06K110 BEFORE TAGGING STATUS AS 'C'      *              
+      *----------------------------------------------------------*              
+           MOVE F200-NUM-REGN  TO K110-REGN-NO.                                 
+                                                                                
+           READ BM06K110 KEY IS K110-REGN-NO.                                   
+                                                                                
+           IF BM06K110-STATUS = 23                                              
+              ADD      1  TO    WS-NFD-CNT-K110                                 
+              PERFORM  550-UPDATE-BP13K800                                      
+                 THRU  550-EXIT                                                 
+              PERFORM  700-WRITE-BP13F310                                       
+                 THRU  700-EXIT                                                 
+           ELSE                                                                 
+           IF BM06K110-STATUS = 00                                              
+              ADD      1  TO    WS-FND-CNT-K110                                 
+              PERFORM  800-PRINT-L256                                           
+                 THRU  800-EXIT                                                 
+           ELSE                                                                 
+              DISPLAY 'ERROR READING BM06K110, STATUS ' BM06K110-STATUS         
+                      '              K110-NUM-REGN  = ' K800-NUM-REGN.          
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       510-WRITE-P13F800S.                                                      
+      ******************************************************************        
+                                                                                
+           WRITE P13F800S-REC FROM BP13K800-MASTER.                             
+           ADD 1 TO WS-WRITE-CNT-F800S.                                         
+                                                                                
+       510-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       520-WRITE-P13F800N.                                                      
+      ******************************************************************        
+                                                                                
+           WRITE P13F800N-REC FROM BP13K800-MASTER.                             
+           ADD 1 TO WS-WRITE-CNT-F800N.                                         
+                                                                                
+       520-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       550-UPDATE-BP13K800.                                                     
+      ******************************************************************        
+                                                                                
+           MOVE  SPACES                TO    K800-NUM-HALF-IDP.                 
+                                                                                
+           EVALUATE K800-NUM-ALLOC-TAG                                          
+              WHEN 'NF'                                                         
+                 MOVE 'G1' TO K800-NUM-CANCEL-REASON                            
+              WHEN 'NC'                                                         
+                 MOVE 'G2' TO K800-NUM-CANCEL-REASON                            
+              WHEN 'NI'                                                         
+                 MOVE 'G3' TO K800-NUM-CANCEL-REASON                            
+              WHEN 'FN'                                                         
+                 MOVE '27' TO K800-NUM-CANCEL-REASON                            
+              WHEN 'SF'                                                         
+                 MOVE 'G4' TO K800-NUM-CANCEL-REASON                            
+              WHEN 'SC'                                                         
+                 MOVE 'G5' TO K800-NUM-CANCEL-REASON                            
+              WHEN 'SI'                                                         
+                 MOVE 'G6' TO K800-NUM-CANCEL-REASON                            
+           END-EVALUATE.                                                        
+                                                                                
+           MOVE    'C'                 TO    K800-NUM-STATUS.                   
+           MOVE  FUNCTION CURRENT-DATE TO    WS-CURRENT-DATE.                   
+           MOVE     WS-CURRENT-DATE    TO    K800-DTE-CANCEL                    
+                                             K800-DTE-UPDATE.                   
+           REWRITE BP13K800-MASTER.                                             
+                                                                                
+           IF BP13K800-STATUS = 00                                              
+              CONTINUE                                                          
+           ELSE                                                                 
+           IF BP13K800-STATUS = 23                                              
+              DISPLAY 'RECORD NOT FOUND IN BP13K800 ' K800-NUM-REGN             
+              GO TO    550-EXIT                                                 
+           ELSE                                                                 
+              DISPLAY 'ERROR UPDATE BP13K800, STATUS = ' BP13K800-STATUS        
+                      '             K800-NUM-REGN    = ' K800-NUM-REGN          
+              MOVE     BP13K800-STATUS   TO   RETURN-CODE                       
+              PERFORM  900-CLOSE-ROUTINE THRU 900-EXIT.                         
+                                                                                
+           ADD 1 TO WS-WRITE-CNT-K800.                                          
+                                                                                
+           PERFORM 710-WRITE-CDB         THRU 710-EXIT.                         
+           PERFORM 600-PROCESS-BP13K840  THRU 600-EXIT.                         
+                                                                                
+       550-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       600-PROCESS-BP13K840.                                                    
+      ******************************************************************        
+           MOVE K800-NUM-REGN TO K840-NUM-REGN.                                 
+                                                                                
+           READ BP13K840.                                                       
+                                                                                
+           IF BP13K840-STATUS = 00 OR 02                                        
+              CONTINUE                                                          
+           ELSE                                                                 
+           IF BP13K840-STATUS = 23                                              
+              DISPLAY 'RECORD NOT FOUND IN BP13K840 = ' BP13K840-STATUS         
+                      '           K840-KEY-FLD      = ' K840-NUM-REGN           
+              GO TO    600-EXIT                                                 
+           ELSE                                                                 
+              DISPLAY 'ERROR READING BP13K840, STATUS ' BP13K840-STATUS         
+              MOVE     BP13K840-STATUS   TO    RETURN-CODE                      
+              PERFORM  900-CLOSE-ROUTINE THRU  900-EXIT.                        
+                                                                                
+           MOVE  WS-CURRENT-DATE   TO    K840-DTE-UPDATE                        
+                                         K840-DTE-CANCEL.                       
+           MOVE  K800-NUM-NRIC1    TO    K840-NUM-NRIC1.                        
+                                                                                
+           IF K800-NUM-NRIC2 = SPACES OR LOW-VALUES                             
+              MOVE '#'             TO K840-NUM-NRIC2(1:1)                       
+              MOVE K800-NUM-REGN   TO K840-NUM-NRIC2(2:8)                       
+           ELSE                                                                 
+              MOVE K800-NUM-NRIC2  TO    K840-NUM-NRIC2.                        
+                                                                                
+           IF K800-NUM-NRIC3 = SPACES OR LOW-VALUES                             
+              MOVE '#'             TO K840-NUM-NRIC3(1:1)                       
+              MOVE K800-NUM-REGN   TO K840-NUM-NRIC3(2:8)                       
+           ELSE                                                                 
+              MOVE K800-NUM-NRIC3  TO    K840-NUM-NRIC3.                        
+                                                                                
+           IF K800-NUM-NRIC4 = SPACES OR LOW-VALUES                             
+              MOVE '#'             TO K840-NUM-NRIC4(1:1)                       
+              MOVE K800-NUM-REGN   TO K840-NUM-NRIC4(2:8)                       
+           ELSE                                                                 
+              MOVE K800-NUM-NRIC4  TO    K840-NUM-NRIC4.                        
+                                                                                
+           MOVE 'P13C256'          TO    K840-NUM-USERID.                       
+           MOVE  '27'              TO    K840-NUM-CANCEL.                       
+                                                                                
+           PERFORM 650-REWRITE-BP13K840  THRU 650-EXIT.                         
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       650-REWRITE-BP13K840.                                                    
+      ******************************************************************        
+                                                                                
+           REWRITE BP13K840-REC.                                                
+                                                                                
+           IF BP13K840-STATUS = 00 OR 02                                        
+              CONTINUE                                                          
+           ELSE                                                                 
+              DISPLAY 'ERROR UPDATE BP13K840, STATUS = ' BP13K840-STATUS        
+                      '             K840-KEY-FLD     = ' K840-NUM-REGN          
+              MOVE     BP13K840-STATUS   TO   RETURN-CODE                       
+              PERFORM  900-CLOSE-ROUTINE THRU 900-EXIT.                         
+                                                                                
+           ADD 1 TO WS-REWRITE-CNT-K840.                                        
+                                                                                
+       650-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       700-WRITE-BP13F310.                                                      
+      ******************************************************************        
+           MOVE    SPACES            TO   BP13F310-TRANS-REC.                   
+           MOVE    F200-NUM-REGN     TO   F310-REGN-NO.                         
+           MOVE    'UM'              TO   F310-CDE-TRANS.                       
+           MOVE    WS-CURRENT-DATE   TO   F310-DTE-TRANS                        
+                                          F310-DTE-UPDATE.                      
+           MOVE    'BP13C256'        TO   F310-USERID.                          
+                                                                                
+           WRITE BP13F310-TRANS-REC.                                            
+                                                                                
+           ADD 1 TO WS-WRITE-CNT-F310.                                          
+                                                                                
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       710-WRITE-CDB.                                                           
+      ******************************************************************        
+                                                                                
+           PERFORM 720-START-BP13K820    THRU 720-EXIT.                         
+           PERFORM 730-READNEXT-BP13K820 THRU 730-EXIT                          
+                 UNTIL WS-K820-EOF = 'Y'.                                       
+                                                                                
+       710-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       720-START-BP13K820.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE 'N'           TO  WS-K820-EOF.                                  
+           MOVE K800-NUM-REGN TO  K820-NUM-REGN.                                
+           MOVE SPACES        TO  K820-NUM-NRIC.                                
+                                                                                
+           START BP13K820 KEY >= K820-KEY-FLD                                   
+           IF BP13K820-STATUS = ZEROS OR 02                                     
+              CONTINUE                                                          
+           ELSE                                                                 
+              DISPLAY 'START BROWSE ERROR, BP13K820 STATUS IS '                 
+                      BP13K820-STATUS                                           
+              MOVE BP13K820-STATUS          TO RETURN-CODE                      
+              PERFORM  900-CLOSE-ROUTINE THRU 900-EXIT                          
+           END-IF.                                                              
+                                                                                
+       720-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       730-READNEXT-BP13K820.                                                   
+      ******************************************************************        
+                                                                                
+           READ BP13K820 NEXT                                                   
+                AT END                                                          
+                   MOVE 'Y'      TO WS-K820-EOF                                 
+           END-READ.                                                            
+                                                                                
+           IF K820-NUM-REGN  = K800-NUM-REGN                                    
+              PERFORM 740-WRITE-F915   THRU 740-EXIT                            
+           ELSE                                                                 
+              MOVE 'Y'      TO WS-K820-EOF                                      
+           END-IF.                                                              
+                                                                                
+       730-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       740-WRITE-F915.                                                          
+      ******************************************************************        
+                                                                                
+           IF K820-NUM-CSTMR-SOURCE = SPACES OR LOW-VALUES                      
+              GO TO 740-EXIT                                                    
+           END-IF.                                                              
+                                                                                
+           MOVE SPACES                   TO   BP13F915-REC.                     
+           INITIALIZE                         BP13F915-REC.                     
+                                                                                
+           MOVE  'TE'                    TO   F915-TXN-TYPE.                    
+           MOVE  'P'                     TO   F915-CSTMR-TYPE.                  
+           MOVE  'BP13'                  TO   F915-NUM-UPDATE-SOURCE.           
+           MOVE  'BP13C256'              TO   F915-NUM-UPDATE-USERID.           
+                                                                                
+           MOVE  K820-NUM-CSTMR-SOURCE   TO   F915-NUM-CSTMR-SOURCE.            
+                                                                                
+           PERFORM 750-CONVERT-CUSTOMER-ROLE  THRU 750-EXIT.                    
+           MOVE  K820-NUM-REGN           TO   F915-NUM-BSNS-REF.                
+                                                                                
+           STRING K800-DTE-CANCEL(1:4) '-'                                      
+                  K800-DTE-CANCEL(5:2) '-'                                      
+                  K800-DTE-CANCEL(7:2)                                          
+                  DELIMITED BY SIZE INTO                                        
+                  F915-DTE-ROLE-END                                             
+           END-STRING.                                                          
+                                                                                
+           STRING WS-CURRENT-DATE(1:4) '-'                                      
+                  WS-CURRENT-DATE(5:2) '-'                                      
+                  WS-CURRENT-DATE(7:2)                                          
+                  DELIMITED BY SIZE INTO                                        
+                  F915-DTE-UPDATE-SOURCE                                        
+           END-STRING.                                                          
+                                                                                
+           WRITE BP13F915-REC.                                                  
+           ADD 1 TO WS-WRITE-CNT-F915.                                          
+                                                                                
+       740-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       750-CONVERT-CUSTOMER-ROLE.                                               
+      ******************************************************************        
+                                                                                
+           IF K820-NUM-NRIC = K800-NUM-NRIC1                                    
+               MOVE '011'                 TO F915-NUM-ROLE                      
+           ELSE                                                                 
+           IF (K820-NUM-NRIC = K800-NUM-NRIC2) OR                               
+              (K820-NUM-NRIC = K800-NUM-NRIC3) OR                               
+              (K820-NUM-NRIC = K800-NUM-NRIC4)                                  
+               MOVE '012'                 TO F915-NUM-ROLE                      
+           ELSE                                                                 
+               MOVE '013'                 TO F915-NUM-ROLE                      
+           END-IF.                                                              
+                                                                                
+       750-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       800-PRINT-L256.                                                          
+      ******************************************************************        
+           IF WS-CNT-LINE > 40                                                  
+              PERFORM 825-PRINT-HEADER                                          
+                THRU  825-EXIT                                                  
+              MOVE 0  TO WS-CNT-LINE                                            
+           END-IF.                                                              
+                                                                                
+           ADD  1                     TO  WS-WRITE-CNT-L256.                    
+           MOVE K110-REGN-NO          TO  L256-PRT-REGN-NO.                     
+                                                                                
+           MOVE K110-SCHEME           TO  L256-PRT-SCHEME.                      
+           MOVE K110-ACC              TO  L256-PRT-ACC.                         
+           MOVE K110-CHK              TO  L256-PRT-CHK.                         
+           MOVE K110-ACC-TYPE         TO  L256-PRT-ACC-TYPE.                    
+                                                                                
+           MOVE K800-NUM-ALLO-SCHEME  TO  L256-PRT-ALLO-SCHEME.                 
+                                                                                
+           STRING  K110-DTE-ACCEPTANCE(7:2) '/'                                 
+                   K110-DTE-ACCEPTANCE(5:2) '/'                                 
+                   K110-DTE-ACCEPTANCE(1:4)                                     
+           DELIMITED BY SIZE INTO L256-PRT-ACCEPT.                              
+                                                                                
+           WRITE L256-PRT-REC FROM L256-PRT-DETAIL AFTER ADVANCING 1.           
+                                                                                
+           ADD 1  TO WS-CNT-LINE.                                               
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       825-PRINT-HEADER.                                                        
+      ******************************************************************        
+           ADD     1                  TO    WS-CNT-PAGE.                        
+           MOVE    WS-CNT-PAGE        TO    L256-NUM-PAGE.                      
+           MOVE    ZERO               TO    WS-CNT-LINE.                        
+           MOVE    SPACES             TO    L256-PRT-REC.                       
+                                                                                
+           MOVE  FUNCTION CURRENT-DATE TO    WS-CURRENT-DATE.                   
+           MOVE    WS-CURRENT-DD      TO    WS-EDITED-DD.                       
+           MOVE    WS-CURRENT-MM      TO    WS-EDITED-MM.                       
+           MOVE    WS-CURRENT-CC      TO    WS-EDITED-CC.                       
+           MOVE    WS-CURRENT-YY      TO    WS-EDITED-YY.                       
+           MOVE    WS-EDITED-DATE     TO    L256-PRT-DATE.                      
+                                                                                
+           WRITE L256-PRT-REC  AFTER  PAGE.                                     
+           WRITE L256-PRT-REC   FROM  L256-HDG-1  AFTER  ADVANCING 2.           
+           WRITE L256-PRT-REC   FROM  L256-HDG-2  AFTER  ADVANCING 2.           
+           WRITE L256-PRT-REC   FROM  L256-HDG-2A AFTER  ADVANCING 1.           
+           WRITE L256-PRT-REC   FROM  L256-HDG-3  AFTER  ADVANCING 2.           
+           WRITE L256-PRT-REC   FROM  L256-HDG-3A AFTER  ADVANCING 1.           
+           MOVE  SPACES           TO  L256-PRT-REC.                             
+           WRITE L256-PRT-REC  AFTER  ADVANCING 1.                              
+                                                                                
+       825-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       850-PRINT-L256A.                                                         
+      ******************************************************************        
+           IF WS-CNT-LINEA > 40                                                 
+              PERFORM 875-PRINT-HEADER                                          
+                THRU  875-EXIT                                                  
+              MOVE 0  TO WS-CNT-LINEA                                           
+           END-IF.                                                              
+                                                                                
+           MOVE F200-NUM-REGN       TO K820-NUM-REGN                            
+           MOVE K800-NUM-NRIC1      TO K820-NUM-NRIC                            
+           READ BP13K820.                                                       
+           IF BP13K820-STATUS = 00                                              
+              STRING K820-NUM-NRIC ' / ' K820-NME-OCCP                          
+                  DELIMITED BY SIZE INTO L256A-PRT-NAME                         
+           ELSE                                                                 
+              STRING K820-NUM-NRIC ' /  NOT FOUND IN BP13K820 '                 
+                  DELIMITED BY SIZE INTO L256A-PRT-NAME                         
+           END-IF.                                                              
+           ADD  1                     TO  WS-WRITE-CNT-L256A.                   
+           MOVE K800-NUM-REGN         TO  L256A-PRT-REGN-NO.                    
+                                                                                
+      *    MOVE                       TO  L256A-PRT-NAME.                       
+           MOVE F205-NUM-FLAT-TYPE    TO  L256A-PRT-FLAT-TYPE                   
+           MOVE K800-NUM-FLAT-TYPE    TO  L256A-PRT-ROOM-TYPE                   
+                                                                                
+           STRING  F205-DTE-BALLOT(5:2) '/'                                     
+                   F205-DTE-BALLOT(1:4)                                         
+           DELIMITED BY SIZE INTO L256A-PRT-DTE-BALLOT.                         
+                                                                                
+           WRITE L256A-PRT-REC FROM L256A-PRT-DETAIL AFTER ADVANCING 1.         
+                                                                                
+           ADD 1  TO WS-CNT-LINEA.                                              
+                                                                                
+       850-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       875-PRINT-HEADER.                                                        
+      ******************************************************************        
+           ADD     1                  TO    WS-CNT-PAGEA.                       
+           MOVE    WS-CNT-PAGEA       TO    L256A-NUM-PAGE.                     
+           MOVE    ZERO               TO    WS-CNT-LINEA.                       
+           MOVE    SPACES             TO    L256A-PRT-REC.                      
+                                                                                
+           MOVE  FUNCTION CURRENT-DATE TO    WS-CURRENT-DATE.                   
+           MOVE    WS-CURRENT-DD      TO    WS-EDITED-DD.                       
+           MOVE    WS-CURRENT-MM      TO    WS-EDITED-MM.                       
+           MOVE    WS-CURRENT-CC      TO    WS-EDITED-CC.                       
+           MOVE    WS-CURRENT-YY      TO    WS-EDITED-YY.                       
+           MOVE    WS-EDITED-DATE     TO    L256A-PRT-DATE.                     
+                                                                                
+           WRITE L256A-PRT-REC  AFTER  PAGE.                                    
+           WRITE L256A-PRT-REC   FROM  L256A-HDG-1  AFTER  ADVANCING 2.         
+           WRITE L256A-PRT-REC   FROM  L256A-HDG-2  AFTER  ADVANCING 1.         
+           WRITE L256A-PRT-REC   FROM  L256A-HDG-2A AFTER  ADVANCING 1.         
+           WRITE L256A-PRT-REC   FROM  L256A-HDG-3  AFTER  ADVANCING 2.         
+           WRITE L256A-PRT-REC   FROM  L256A-HDG-4.                             
+           WRITE L256A-PRT-REC   FROM  L256A-HDG-3A AFTER  ADVANCING 1.         
+           MOVE  SPACES           TO  L256A-PRT-REC.                            
+           WRITE L256A-PRT-REC  AFTER  ADVANCING 1.                             
+                                                                                
+       875-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       900-CLOSE-ROUTINE.                                                       
+      ******************************************************************        
+           IF WS-WRITE-CNT-L256 NOT = ZEROES                                    
+              MOVE  WS-WRITE-CNT-L256 TO    L256-PRT-TOTAL                      
+              WRITE L256-PRT-REC      FROM  L256-HDG-LINE     AFTER 3           
+              WRITE L256-PRT-REC      FROM  L256-PRT-CONCLUDE AFTER 1           
+              MOVE  SPACES            TO    L256-PRT-REC                        
+              WRITE L256-PRT-REC      FROM  L256-HDG-LINE     AFTER 1           
+           END-IF.                                                              
+                                                                                
+           CLOSE BP13F310                                                       
+                 BP13F200                                                       
+                 BP13F205                                                       
+                 BP13K800                                                       
+                 P13F800N                                                       
+                 P13F800S                                                       
+                 BP13K820                                                       
+                 BP13F915                                                       
+                 BP13K840                                                       
+                 BM06K110                                                       
+                 P13L256A                                                       
+                 BP13L256.                                                      
+                                                                                
+           IF BP13K800-STATUS NOT = 00                                          
+              DISPLAY 'ERROR CLOSING BP13K800, STATUS ' BP13K800-STATUS         
+              MOVE     BP13K800-STATUS   TO    RETURN-CODE                      
+           END-IF.                                                              
+                                                                                
+           IF BP13K840-STATUS NOT = 00                                          
+              DISPLAY 'ERROR CLOSING BP13K840, STATUS ' BP13K840-STATUS         
+              MOVE     BP13K840-STATUS   TO    RETURN-CODE                      
+           END-IF.                                                              
+                                                                                
+                                                                                
+           DISPLAY '                                         '.                 
+           DISPLAY '*****     BP13C256 CONTROL LIST     *****'.                 
+           DISPLAY '                                         '.                 
+           DISPLAY 'NO OF REC READ  FROM BP13F205 = ' WS-READ-CNT-F205.         
+           DISPLAY 'NO OF REC READ  FROM BP13F200 = ' WS-READ-CNT-F200.         
+           DISPLAY 'NO OF REC READ  FROM BP13K800 = ' WS-READ-CNT-K800.         
+           DISPLAY 'NO OF REC REWRITE TO BP13K800 = ' WS-WRITE-CNT-K800.        
+           DISPLAY 'NO OF REC WRITTEN TO P13F800N = '                           
+                                                    WS-WRITE-CNT-F800N.         
+           DISPLAY 'NO OF REC WRITTEN TO P13F800S = '                           
+                                                    WS-WRITE-CNT-F800S.         
+           DISPLAY 'NO OF REC REWRITE TO BP13K840 = '                           
+                                                    WS-REWRITE-CNT-K840.        
+           DISPLAY 'NO OF REC WRITE   TO BP13F310 = ' WS-WRITE-CNT-F310.        
+           DISPLAY 'NO OF REC WRITE   TO BP13F915 = ' WS-WRITE-CNT-F915.        
+           DISPLAY '                                         '.                 
+           DISPLAY 'NO OF REC NOT FND IN BM06K110 = ' WS-NFD-CNT-K110.          
+           DISPLAY 'NO OF REC FOUND   IN BM06K110 = ' WS-FND-CNT-K110.          
+           DISPLAY '                                         '.                 
+           DISPLAY 'NO OF REC WRITE  TO BP13L256 = ' WS-WRITE-CNT-L256.         
+           DISPLAY 'NO OF REC WRITE  TO P13L256A = ' WS-WRITE-CNT-L256A.        
+                                                                                
+                                                                                
+       900-EXIT.                                                                
+           STOP RUN.                                                            
+

@@ -1,0 +1,648 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CC04.                                                 
+       AUTHOR.        SHARON DUMDUM.                                            
+       DATE-WRITTEN.  20 APRIL 2006.                                            
+      ****************************************************************          
+      * OBJECTIVE - TO RAISE STANDARD DEBIT FOR INSTALMENT           *          
+      *             FOR CASES WITH OUTSTANDING LOAN.                 *          
+      *                                                              *          
+      * SUBROUTINE     - NIL                                         *          
+      *                                                              *          
+      * IDENTICAL PGM  - AB03C152                                    *          
+      * OUTPUT FILE    - BP13F125                                     *         
+      *                                                              *          
+      *--------------------------------------------------------------*          
+      *  CHGREQ    DATE    BY  AMENDMENTS/ENHANCEMENTS               *          
+      * -------- -------- ---- ------------------------------------- *          
+      * BP132772 20042006 SD10 NEW PROGRAM                           *          
+      * BP132864 19062006 BA3  GET CURRENT DATE FROM SY02F001        *          
+      * BP132914 26092006 BA3  CHANGE REPORT HEADING FOR 'DTE LOAN   *          
+      *                        COMMENCE' AND 'LOAN GRANTED'          *          
+      * BP132914 06092006 BA3  INCLUDED INSTAL EFF DATE.             *          
+      *                        CHANGE FD00-AMT-LOAN-GRANTED TO       *          
+      *                        FD00-AMT-LOAN-DISBURSED               *          
+      * BP132914 02112006 SD10 INCLUDE PREV MTH & YR IN REPORT TITLE *          
+      * BP132914 21112006 BA3  CHANGE PREV MTH & YR FROM REPORT TITLE*          
+      *                        TO CURRENT MONTH AND YEAR             *          
+      * BP132888 03032007 SD10 TO CHANGE ACCESS MODE OF BP13KD65 TO  *          
+      *                        DYNAMIC                               *          
+      * BP133095 22082007 BA3  ROUNDED COMPUTATION FOR NUM-MTH-INSTAL*          
+      * BP133115 16102007 BA3  INCLUDED NUM-LOAN-SCH INTO THE OUTPUT *          
+      * BP133091 16112007 RB12 EXPAND KD00 LENGTH FR 1200 TO 1600    *          
+      * BP133209 05022008 ED1  MOVE 0 TO MTH-INST IF AMT-ARR-INS < 0 *          
+      *                      & BYPASS PROCESS IF CURDTE >= DTE-REPUD *          
+      * BP133450 24092008 JB8  TO CATER FOR FD00-DTE-EFF-TRANSFER     *         
+      * BP133588 28042009 JB8  TO RAISE THE RIGHT INSTAL              *         
+      * BP133638 29072009 JB8  TO REMOVE READING OF KD43              *         
+      * BP133662 26102009 JB8  TO CATER FOR 'X' ACCOUNT               *         
+      * BP134154 02032011 JB8  TO CATER FOR RE-FINANCE DATE           *         
+      * BP134245 16092011 JB8  TO CATER FOR LOWER LOAN-BALANCE        *         
+      ****************************************************************          
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT SY02F001  ASSIGN        TO SY02F001.                          
+                                                                                
+           SELECT  BP13FD00  ASSIGN  TO   BP13FD00.                             
+                                                                                
+           SELECT  BP13KD00  ASSIGN  TO   BP13KD00                              
+                             ORGANIZATION IS INDEXED                            
+                             RECORD KEY   IS KD00-KEY-FLD                       
+                             FILE STATUS  IS KD00-STATUS                        
+                             ACCESS MODE  IS RANDOM.                            
+                                                                                
+           SELECT  BP13KD65  ASSIGN  TO   BP13KD65                              
+                             ORGANIZATION IS INDEXED                            
+                             RECORD KEY   IS KD65-CDE-FILEID                    
+                             FILE STATUS  IS KD65-STATUS                        
+                             ACCESS MODE  IS DYNAMIC.                           
+                                                                                
+           SELECT  BP13F125  ASSIGN  TO   BP13F125.                             
+                                                                                
+           SELECT  BP13LC04  ASSIGN  TO   BP13LC04.                             
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+       COPY SY02F001.                                                           
+                                                                                
+       FD   BP13FD00                   BLOCK  CONTAINS    0 RECORDS             
+                                       RECORD CONTAINS 1600 CHARACTERS          
+                                       LABEL  RECORDS  ARE  STANDARD            
+                                       RECORDING MODE  IS   F.                  
+       COPY BP13FD00.                                                           
+                                                                                
+       FD   BP13KD00                   RECORD CONTAINS 1600 CHARACTERS.         
+       COPY BP13KD00.                                                           
+                                                                                
+       FD   BP13KD65                   RECORD CONTAINS  200 CHARACTERS.         
+       COPY BP13KD65.                                                           
+                                                                                
+       FD   BP13F125                   BLOCK  CONTAINS    0 RECORDS             
+                                       RECORD CONTAINS  150 CHARACTERS          
+                                       LABEL  RECORDS  ARE  STANDARD            
+                                       RECORDING MODE  IS   F.                  
+       COPY BP13F125.                                                           
+                                                                                
+                                                                                
+       FD   BP13LC04                   BLOCK  CONTAINS    0 RECORDS             
+                                       RECORD CONTAINS  132 CHARACTERS          
+                                       LABEL  RECORD   IS   STANDARD            
+                                       RECORDING MODE  IS   F.                  
+       01  BP13LC04-REC      PIC X(132).                                        
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  VARIABLES.                                                           
+           05  KD00-STATUS               PIC 99       VALUE 0.                  
+           05  KD65-STATUS               PIC 99       VALUE 0.                  
+           05  WS-UPDATE-KD00            PIC X        VALUE SPACE.              
+           05  WS-OLD-INST               PIC S9(6)V99 VALUE 0.                  
+           05  WS-ARR-INST               PIC S9(6)V99 VALUE 0.                  
+           05  WS-INST-DIFF              PIC S9(7)V99 VALUE 0.                  
+           05  WS-PAGE                   PIC 9(4) VALUE ZEROES.                 
+           05  WS-SNO                    PIC 9(4) VALUE ZEROES.                 
+           05  WS-LINE                   PIC 9(2) VALUE 60.                     
+           05  WS-RAISE-TAG              PIC X(1) VALUE SPACE.                  
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-CNT-READ-KD00          PIC 9(7)  VALUE 0.                     
+           05  WS-CNT-READ-FD00          PIC 9(7)  VALUE 0.                     
+           05  WS-CNT-BYPASS-FD00        PIC 9(7)  VALUE 0.                     
+           05  WS-CNT-UPD-KD00           PIC 9(7)  VALUE 0.                     
+           05  WS-CNT-WRITTEN-F125       PIC 9(7)  VALUE 0.                     
+           05  WS-CNT-UPD-KD65           PIC 9(7)  VALUE 0.                     
+                                                                                
+       01  WS-CURR-CYMD.                                                        
+           05 WS-CURR-CCYYMM.                                                   
+              10  WS-CURR-CC             PIC 9(2)  VALUE 0.                     
+              10  WS-CURR-YYMM.                                                 
+                  15 WS-CURR-YY          PIC 9(2)  VALUE 0.                     
+                  15 WS-CURR-MM          PIC 9(2)  VALUE 0.                     
+           05 WS-CURR-DD                 PIC 9(2)  VALUE 0.                     
+                                                                                
+       01  WS-TOD-DTE.                                                          
+           05 WS-TOD-DTE-CCYY            PIC 9(4).                              
+           05 WS-TOD-DTE-MM              PIC 9(2).                              
+           05 WS-TOD-DTE-DD              PIC 9(2).                              
+                                                                                
+       01  WS-PREV-DTE-CCYYMM.                                                  
+           05  WS-PREV-DTE-CY.                                                  
+               10  WS-PREV-DTE-CC        PIC 9(2)  VALUE 0.                     
+               10  WS-PREV-DTE-YY        PIC 9(2)  VALUE 0.                     
+           05  WS-PREV-DTE-CCYY REDEFINES WS-PREV-DTE-CY PIC 9(4).              
+           05  WS-PREV-DTE-MM            PIC 9(2)  VALUE 0.                     
+                                                                                
+       01  WS-DTE-CURR-FIN.                                                     
+           05  WS-DTE-CURR-FIN-CCYY      PIC 9(4).                              
+           05  WS-DTE-CURR-FIN-MM        PIC 9(2).                              
+                                                                                
+           05  WS-DTE-REPUD-CHAR         PIC X(08) VALUE SPACES.                
+           05  WS-DTE-REPUD   REDEFINES WS-DTE-REPUD-CHAR                       
+                                         PIC 9(08).                             
+                                                                                
+      *--------------------------------------------------------------           
+      *   REPORT LAYOUT                                                         
+      *--------------------------------------------------------------           
+       01  LC04-PR-HEAD-01.                                                     
+           05  LC04-RPTNAME        PIC X(8)      VALUE 'BP13LC04'.              
+           05  FILLER              PIC X(5)      VALUE SPACES .                 
+           05  FILLER              PIC X(8)      VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(24)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER              PIC X(17)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE :'.                
+           05  LC04-DATE           PIC X(10).                                   
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'PAGE : '.               
+           05  LC04-PRT-PAGE       PIC ZZZZ9 .                                  
+                                                                                
+       01  LC04-PR-HEAD-02A.                                                    
+           05  FILLER              PIC X(47)     VALUE SPACES .                 
+           05  FILLER              PIC X(50)     VALUE                          
+               'REPORT ON STANDARD DEBIT RAISED FOR'.                           
+           05  FILLER              PIC X(28)     VALUE SPACES.                  
+                                                                                
+       01  LC04-PR-HEAD-02B.                                                    
+           05  FILLER              PIC X(38)     VALUE SPACES .                 
+           05  FILLER              PIC X(47)     VALUE                          
+               'INSTALMENT FOR CASES WITH OUTSTANDING LOAN FOR '.               
+           05  LC04-PREV-MTH       PIC X(04).                                   
+           05  LC04-PREV-YY        PIC X(04).                                   
+           05  FILLER              PIC X(39)     VALUE SPACES.                  
+                                                                                
+       01  LC04-PR-HEAD-03.                                                     
+           05  FILLER              PIC X(04)     VALUE                          
+               'SNO'.                                                           
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(08)     VALUE                          
+               'REGN-NO'.                                                       
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(11)     VALUE                          
+               'SCH-ACCT-NO'.                                                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(11)     VALUE                          
+               'D-LOAN-COMM'.                                                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(21)     VALUE                          
+               'LOAN-DISBURSED-TODATE'.                                         
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE                          
+               'LOAN-BALANCE'.                                                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE                          
+               'D-INSTAL-EFF'.                                                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE                          
+               'AMT-INSTAL'.                                                    
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE                          
+               'ARR-INSTAL'.                                                    
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE                          
+               'NUM-MTH-INST'.                                                  
+                                                                                
+       01  LC04-PR-HEAD-04.                                                     
+           05  FILLER              PIC X(04) VALUE ALL '-'.                     
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(08) VALUE ALL '-'.                     
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(11) VALUE ALL '-'.                     
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(11) VALUE ALL '-'.                     
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(21) VALUE ALL '-'.                     
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(12) VALUE ALL '-'.                     
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(12) VALUE ALL '-'.                     
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(10) VALUE ALL '-'.                     
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(10) VALUE ALL '-'.                     
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(12) VALUE ALL '-'.                     
+                                                                                
+       01  LC04-PR-DTL.                                                         
+           05  LC04-PRT-SNO        PIC ZZZ9  VALUE ZEROES.                      
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  LC04-REGN-NO        PIC X(08) VALUE SPACES.                      
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  LC04-SCH-ACCT       PIC X(11) VALUE SPACES.                      
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  LC04-DTE-LOAN-COMMENCE                                           
+                                   PIC X(10) VALUE SPACES.                      
+           05  FILLER              PIC X(08) VALUE SPACES.                      
+           05  LC04-LOAN-GRANTED   PIC Z,ZZZ,ZZ9.99.                            
+           05  FILLER              PIC X(06) VALUE SPACES.                      
+           05  LC04-LOAN-BAL       PIC Z,ZZZ,ZZ9.99.                            
+           05  LC04-LOAN-BAL-SG    PIC X     VALUE SPACE.                       
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  LC04-INSTAL-EFF-DTE PIC X(10) VALUE SPACES.                      
+           05  FILLER              PIC X(03) VALUE SPACES.                      
+           05  LC04-AMT-INSTAL     PIC ZZZ,ZZ9.99.                              
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  LC04-ARR-INSTAL     PIC ZZZ,ZZ9.99.                              
+           05  LC04-ARR-INSTAL-SG  PIC X     VALUE SPACE.                       
+           05  FILLER              PIC X(04) VALUE SPACES.                      
+           05  LC04-NUM-MTH-INSTAL PIC Z9.99.                                   
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+      ****************************************************************          
+       0000-MAIN-PARA.                                                          
+      ****************************************************************          
+                                                                                
+           PERFORM 1000-START-UP         THRU 1000-EXIT.                        
+           PERFORM 2000-READ-BP13FD00    THRU 2000-EXIT.                        
+           PERFORM 4000-PROCESS-REC      THRU 4000-EXIT                         
+                   UNTIL FD00-NUM-SCH-ACCNT = HIGH-VALUES.                      
+           PERFORM 5000-UPDATE-BP13KD65  THRU 5000-EXIT.                        
+           PERFORM 9999-WRAP-UP.                                                
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       1000-START-UP.                                                           
+      ****************************************************************          
+                                                                                
+           OPEN INPUT  BP13FD00                                                 
+                       SY02F001                                                 
+                I-O    BP13KD00                                                 
+                       BP13KD65                                                 
+                OUTPUT BP13F125                                                 
+                       BP13LC04.                                                
+                                                                                
+           IF  KD00-STATUS NOT = 0 AND 97                                       
+               DISPLAY 'OPEN FAILED FOR BP13KD00 ' KD00-STATUS                  
+               MOVE KD00-STATUS TO RETURN-CODE                                  
+               GO TO 9999-WRAP-UP.                                              
+                                                                                
+           IF  KD65-STATUS NOT = 0 AND 97                                       
+               DISPLAY 'OPEN FAILED FOR BP13KD65 ' KD65-STATUS                  
+               MOVE KD65-STATUS TO RETURN-CODE                                  
+               GO TO 9999-WRAP-UP.                                              
+                                                                                
+           PERFORM 1500-READ-SY02F001   THRU 1500-EXIT.                         
+           STRING WS-TOD-DTE(7:2) '/'                                           
+                  WS-TOD-DTE(5:2) '/'                                           
+                  WS-TOD-DTE(1:4)                                               
+                  DELIMITED BY SIZE INTO LC04-DATE.                             
+           MOVE F001-TXT-CURRENT-MTH(1:3) TO   LC04-PREV-MTH.                   
+           MOVE F001-DTE-CURRENT(1:4)     TO   LC04-PREV-YY.                    
+                                                                                
+           MOVE WS-TOD-DTE               TO   WS-CURR-CYMD.                     
+           MOVE 01                       TO   WS-CURR-DD.                       
+                                                                                
+           COMPUTE WS-PREV-DTE-CCYY = WS-TOD-DTE-CCYY.                          
+           COMPUTE WS-PREV-DTE-MM = WS-TOD-DTE-MM - 1.                          
+                                                                                
+           IF WS-PREV-DTE-MM = 0                                                
+              MOVE 12                    TO   WS-PREV-DTE-MM                    
+              SUBTRACT 1                 FROM WS-PREV-DTE-CCYY                  
+           END-IF.                                                              
+                                                                                
+           MOVE 'KD65'             TO KD65-CDE-FILEID.                          
+           READ BP13KD65.                                                       
+                                                                                
+           IF KD65-STATUS = 0                                                   
+              CONTINUE                                                          
+           ELSE                                                                 
+              IF KD65-STATUS = 23                                               
+                 DISPLAY 'RECORD NOT FOUND IN BP13KD65 ' KD65-CDE-FILEID        
+              ELSE                                                              
+                 DISPLAY 'READ FAILED FOR BP13KD65 ' KD65-CDE-FILEID            
+                         'STATUS IS ' KD65-STATUS                               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           MOVE KD65-DTE-BAL-CLOSE TO WS-DTE-CURR-FIN.                          
+                                                                                
+           ADD 1 TO WS-DTE-CURR-FIN-MM.                                         
+                                                                                
+           IF WS-DTE-CURR-FIN-MM > 12                                           
+              MOVE 1 TO WS-DTE-CURR-FIN-MM                                      
+              ADD  1 TO WS-DTE-CURR-FIN-CCYY                                    
+           END-IF.                                                              
+                                                                                
+           IF ( WS-DTE-CURR-FIN NOT = WS-TOD-DTE (1:6) ) OR                     
+              ( KD65-DTE-INT-POSTNG NOT = WS-TOD-DTE (1:6) )                    
+              DISPLAY 'CANNOT RAISE STD DEBIT : BALANCE NOT CLOSED/'            
+                      'INTEREST NOT RAISED'                                     
+              MOVE 44 TO RETURN-CODE                                            
+              PERFORM 9999-WRAP-UP                                              
+           END-IF.                                                              
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ****************************************************************          
+       1500-READ-SY02F001.                                                      
+      ****************************************************************          
+                                                                                
+           READ SY02F001.                                                       
+           MOVE F001-DTE-CURRENT      TO WS-TOD-DTE.                            
+                                                                                
+       1500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *================================================================*        
+      *  FOR DEFERMENT CASES, DEFER DATE MUST BE DUE TO CEASE RAISING  *        
+      *================================================================*        
+                                                                                
+      ****************************************************************          
+       2000-READ-BP13FD00.                                                      
+      ****************************************************************          
+                                                                                
+           READ BP13FD00 AT END                                                 
+                MOVE HIGH-VALUE TO FD00-NUM-SCH-ACCNT                           
+                GO TO 2000-EXIT.                                                
+           ADD 1 TO WS-CNT-READ-FD00.                                           
+                                                                                
+           IF FD00-CDE-ACCT-STAT NOT = 'C'                                      
+              ADD 1 TO WS-CNT-BYPASS-FD00                                       
+              GO TO 2000-READ-BP13FD00.                                         
+                                                                                
+           IF FD00-AMT-INSTAL NOT NUMERIC                                       
+              MOVE ZEROES      TO FD00-AMT-INSTAL                               
+           END-IF.                                                              
+                                                                                
+           IF FD00-AMT-INSTAL = 0                                               
+              ADD 1 TO WS-CNT-BYPASS-FD00                                       
+              GO TO 2000-READ-BP13FD00.                                         
+                                                                                
+           IF FD00-AMT-LOAN-BAL NOT NUMERIC                                     
+              MOVE ZEROES      TO FD00-AMT-LOAN-BAL                             
+           END-IF.                                                              
+                                                                                
+           IF FD00-AMT-LOAN-BAL <= 0                                            
+              ADD 1 TO WS-CNT-BYPASS-FD00                                       
+              GO TO 2000-READ-BP13FD00.                                         
+                                                                                
+           IF FD00-AMT-ARR-INSTAL NOT NUMERIC                                   
+              MOVE ZEROES    TO FD00-AMT-ARR-INSTAL                             
+           END-IF.                                                              
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       4000-PROCESS-REC.                                                        
+      ****************************************************************          
+                                                                                
+           IF FD00-DTE-EFF-TRANSFER NOT = SPACES AND LOW-VALUES                 
+              PERFORM 2000-READ-BP13FD00   THRU 2000-EXIT                       
+              GO TO 4000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           IF FD00-DTE-REPUDIATE NOT = SPACES AND LOW-VALUES AND ZEROES         
+              PERFORM 2000-READ-BP13FD00   THRU 2000-EXIT                       
+              GO TO 4000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           IF FD00-DTE-REFINANCE NOT = SPACES AND LOW-VALUES AND ZEROES         
+              PERFORM 2000-READ-BP13FD00   THRU 2000-EXIT                       
+              GO TO 4000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           PERFORM 6000-PROCESS-RAISE-INST THRU 6000-EXIT                       
+           IF WS-RAISE-TAG = 'Y'                                                
+              PERFORM 7000-PRINT-REC       THRU 7000-EXIT                       
+           END-IF                                                               
+                                                                                
+           PERFORM 2000-READ-BP13FD00      THRU 2000-EXIT.                      
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       5000-UPDATE-BP13KD65.                                                    
+      ****************************************************************          
+                                                                                
+           MOVE WS-CURR-CC  TO KD65-DTE-INST-CC.                                
+           MOVE WS-CURR-YY  TO KD65-DTE-INST-YY.                                
+           MOVE WS-CURR-MM  TO KD65-DTE-INST-MM.                                
+                                                                                
+           REWRITE BP13KD65-REC.                                                
+           ADD 1 TO WS-CNT-UPD-KD65.                                            
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       6000-PROCESS-RAISE-INST.                                                 
+      ****************************************************************          
+                                                                                
+           MOVE ZEROES       TO WS-ARR-INST                                     
+                                WS-INST-DIFF                                    
+           MOVE 'Y'          TO WS-RAISE-TAG                                    
+                                                                                
+           IF FD00-AMT-LOAN-BAL <= FD00-AMT-INSTAL AND                          
+              FD00-AMT-LOAN-BAL <= FD00-AMT-ARR-INSTAL                          
+              MOVE 'N'                     TO WS-RAISE-TAG                      
+              GO TO 6000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           COMPUTE WS-OLD-INST = FD00-AMT-ARR-INSTAL                            
+           COMPUTE WS-ARR-INST = FD00-AMT-ARR-INSTAL + FD00-AMT-INSTAL.         
+           IF WS-ARR-INST > FD00-AMT-LOAN-BAL                                   
+              COMPUTE FD00-AMT-ARR-INSTAL = FD00-AMT-LOAN-BAL                   
+           ELSE                                                                 
+              COMPUTE FD00-AMT-ARR-INSTAL = WS-ARR-INST                         
+           END-IF.                                                              
+           COMPUTE WS-INST-DIFF = FD00-AMT-ARR-INSTAL - WS-OLD-INST             
+                                                                                
+           IF FD00-AMT-ARR-INSTAL < 0                                           
+              MOVE ZEROES            TO FD00-NUM-MTH-INSTAL                     
+           ELSE                                                                 
+              IF FD00-AMT-ARR-INSTAL NOT = 0                                    
+                 COMPUTE FD00-NUM-MTH-INSTAL ROUNDED =                          
+                         FD00-AMT-ARR-INSTAL / WS-INST-DIFF                     
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 6300-UPDATE-BP13KD00        THRU 6300-EXIT.                  
+           PERFORM 6400-WRITE-BP13F125         THRU 6400-EXIT.                  
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       6300-UPDATE-BP13KD00.                                                    
+      ****************************************************************          
+                                                                                
+           MOVE SPACES             TO KD00-KEY-FLD.                             
+           MOVE FD00-NUM-REGN      TO KD00-NUM-REGN.                            
+           READ BP13KD00 KEY IS KD00-KEY-FLD.                                   
+                                                                                
+           IF KD00-STATUS = 0                                                   
+              ADD 1 TO WS-CNT-READ-KD00                                         
+           ELSE                                                                 
+              IF KD00-STATUS = 23                                               
+                 DISPLAY 'RECORD NOT FOUND IN BP13KD00 ' KD00-NUM-REGN          
+              ELSE                                                              
+                 DISPLAY 'READ FAILED FOR BP13KD00 ' KD00-NUM-REGN              
+                         'STATUS IS ' KD00-STATUS                               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           MOVE SPACES            TO WS-UPDATE-KD00.                            
+           IF FD00-AMT-ARR-INSTAL IS NUMERIC AND                                
+              FD00-AMT-ARR-INSTAL NOT = KD00-AMT-ARR-INSTAL                     
+              MOVE 'Y'                   TO WS-UPDATE-KD00                      
+              MOVE FD00-AMT-ARR-INSTAL   TO KD00-AMT-ARR-INSTAL                 
+           END-IF.                                                              
+                                                                                
+           IF FD00-NUM-MTH-INSTAL IS NUMERIC AND                                
+              FD00-NUM-MTH-INSTAL NOT = KD00-NUM-MTH-INSTAL                     
+              MOVE 'Y'                   TO WS-UPDATE-KD00                      
+              MOVE FD00-NUM-MTH-INSTAL   TO KD00-NUM-MTH-INSTAL                 
+           END-IF.                                                              
+                                                                                
+           IF WS-UPDATE-KD00 = 'Y'                                              
+              REWRITE BP13KD00-REC                                              
+              IF KD00-STATUS = 0                                                
+                 ADD 1 TO WS-CNT-UPD-KD00                                       
+              ELSE                                                              
+                 DISPLAY 'REWRITE FAILED FOR BP13KD00 ' KD00-NUM-REGN           
+                         'STATUS IS ' KD00-STATUS                               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       6300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       6400-WRITE-BP13F125.                                                     
+      ****************************************************************          
+                                                                                
+           MOVE SPACES              TO BP13F125-CASHTRAN.                       
+           INITIALIZE                  BP13F125-CASHTRAN.                       
+                                                                                
+           MOVE FD00-NUM-REGN       TO F125-NUM-REGN.                           
+           MOVE WS-CURR-CYMD        TO F125-DTE-POST                            
+                                       F125-DTE-TRANS.                          
+           MOVE ZEROES              TO F125-COUNT-HISTORY.                      
+           IF WS-INST-DIFF IS NUMERIC                                           
+              MOVE WS-INST-DIFF     TO F125-AMT-RECEIPT                         
+           END-IF.                                                              
+                                                                                
+           MOVE 'D'                 TO F125-CDE-CRDR.                           
+           MOVE FD00-NUM-SCH-ACCNT  TO F125-NUM-SCH-ACCT.                       
+           MOVE 'INS'               TO F125-CDE-PAYMENT-TYPE.                   
+           MOVE '61'                TO F125-CDE-TRANS-TYPE.                     
+           MOVE FD00-CDE-LOAN-SCH   TO F125-NUM-LOAN-SCH.                       
+                                                                                
+           WRITE BP13F125-CASHTRAN.                                             
+           ADD 1 TO WS-CNT-WRITTEN-F125.                                        
+                                                                                
+       6400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       7000-PRINT-REC.                                                          
+      ****************************************************************          
+                                                                                
+           IF WS-LINE > 50                                                      
+              ADD 1 TO WS-PAGE                                                  
+              MOVE WS-PAGE TO LC04-PRT-PAGE                                     
+              WRITE BP13LC04-REC FROM LC04-PR-HEAD-01  AFTER PAGE               
+              WRITE BP13LC04-REC FROM LC04-PR-HEAD-02A AFTER 2                  
+              WRITE BP13LC04-REC FROM LC04-PR-HEAD-02B AFTER 1                  
+              WRITE BP13LC04-REC FROM LC04-PR-HEAD-03  AFTER 2                  
+              WRITE BP13LC04-REC FROM LC04-PR-HEAD-04                           
+              MOVE SPACES TO BP13LC04-REC                                       
+              WRITE BP13LC04-REC                                                
+              MOVE  5 TO WS-LINE                                                
+           END-IF.                                                              
+                                                                                
+           MOVE FD00-NUM-REGN         TO LC04-REGN-NO.                          
+           MOVE FD00-NUM-SCH-ACCNT    TO LC04-SCH-ACCT.                         
+           STRING FD00-DTE-LOAN-COMM(7:2) '/'                                   
+                  FD00-DTE-LOAN-COMM(5:2) '/'                                   
+                  FD00-DTE-LOAN-COMM(1:4)                                       
+                  DELIMITED BY SIZE                                             
+             INTO LC04-DTE-LOAN-COMMENCE.                                       
+           MOVE SPACES                TO LC04-LOAN-BAL-SG                       
+                                         LC04-ARR-INSTAL-SG.                    
+           MOVE FD00-AMT-LOAN-DISBURSED                                         
+                                      TO LC04-LOAN-GRANTED.                     
+           MOVE FD00-AMT-LOAN-BAL     TO LC04-LOAN-BAL.                         
+           IF FD00-AMT-LOAN-BAL < 0                                             
+              MOVE '-'                TO LC04-LOAN-BAL-SG                       
+           END-IF.                                                              
+                                                                                
+           STRING FD00-DTE-INSTAL-EFF(7:2) '/'                                  
+                  FD00-DTE-INSTAL-EFF(5:2) '/'                                  
+                  FD00-DTE-INSTAL-EFF(1:4)                                      
+                  DELIMITED BY SIZE                                             
+             INTO LC04-INSTAL-EFF-DTE.                                          
+                                                                                
+           MOVE FD00-AMT-INSTAL       TO LC04-AMT-INSTAL.                       
+           MOVE FD00-AMT-ARR-INSTAL   TO LC04-ARR-INSTAL.                       
+           IF FD00-AMT-ARR-INSTAL < 0                                           
+              MOVE '-'                TO LC04-ARR-INSTAL-SG                     
+           END-IF.                                                              
+           MOVE FD00-NUM-MTH-INSTAL   TO LC04-NUM-MTH-INSTAL.                   
+                                                                                
+           ADD 1              TO WS-SNO.                                        
+           MOVE WS-SNO        TO LC04-PRT-SNO.                                  
+           WRITE BP13LC04-REC FROM LC04-PR-DTL.                                 
+           ADD 1 TO WS-LINE.                                                    
+                                                                                
+       7000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       9999-WRAP-UP.                                                            
+      ****************************************************************          
+                                                                                
+           DISPLAY SPACES.                                                      
+           DISPLAY '******* CONTROL   TOTALS ********'.                         
+           DISPLAY 'PROGRAM-ID : BP13CC04'.                                     
+           DISPLAY '---------------------'.                                     
+           DISPLAY 'NUMBER OF BP13FD00 RECORDS READ          : '                
+                    WS-CNT-READ-FD00.                                           
+           DISPLAY 'NUMBER OF BP13FD00 RECORDS BYPASS        : '                
+                    WS-CNT-BYPASS-FD00.                                         
+           DISPLAY 'NUMBER OF BP13KD00 RECORDS READ          : '                
+                    WS-CNT-READ-KD00.                                           
+           DISPLAY 'NUMBER OR BP13KD00 RECORDS UPDATED       : '                
+                    WS-CNT-UPD-KD00.                                            
+           DISPLAY 'NUMBER OR BP13F125 RECORDS WRITTEN       : '                
+                    WS-CNT-WRITTEN-F125.                                        
+           DISPLAY 'NUMBER OR BP13KD65 RECORDS UPDATED       : '                
+                    WS-CNT-UPD-KD65.                                            
+                                                                                
+           CLOSE SY02F001                                                       
+                 BP13FD00                                                       
+                 BP13KD00                                                       
+                 BP13KD65                                                       
+                 BP13F125                                                       
+                 BP13LC04.                                                      
+                                                                                
+           IF  KD65-STATUS NOT = 0                                              
+               DISPLAY 'CLOSE FAILED FOR BP13KD65 ' KD65-STATUS.                
+                                                                                
+           IF  KD00-STATUS NOT = 0                                              
+               DISPLAY 'CLOSE FAILED FOR BP13KD00 ' KD00-STATUS.                
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+

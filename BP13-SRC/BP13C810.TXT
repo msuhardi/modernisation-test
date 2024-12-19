@@ -1,0 +1,309 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C810.                                                 
+      *AUTHOR.        YPH.                                                      
+      *DATE-WRITTEN.  30/12/91.                                                 
+      *========================================================*                
+      * SYSTEM OF COMMITMENT (BP13)                            *                
+      *========================================================*                
+      *    OBJECTIVE :                                         *                
+      *      1.  USE EX-LESSEE NRIC TO MATCH RESALE HISTORY    *                
+      *          FILE, IF FOUND, RESALE DUE TO TCP OR HUDC     *                
+      *          SCHEME, CHECK DATE SOLD TO SELLER WITH DATE   *                
+      *          OF APPLICATION, IF LESS THAN 5 YRS, UPDATE AS *                
+      *          'N' - INELIGIBLE.                             *                
+      *                                                        *                
+      *--------------------------------------------------------*                
+      * CHG-NO    BY  DATE    DESCRIPTION                      *                
+      * -------  ---  ------  -----------                      *                
+      * C940014  YCH  111094  CHANGE OF KEY FIELD              *                
+      *BP130323  LSB  260597  NO CHG, KEEP FOR EC OPEN CATEGORY*                
+      *                       ADD 'OL' 'ON' 'OP' TO TCP/HUDC   *                
+      *                       CHECKING ON RESALE CODE          *                
+      * BP130171 SSS  070198  CHG BB12 TO BB24                 *                
+      * BP130445 SSS  060298  EXPAND F558 RECL FROM 150 TO 400 *                
+      * BP130897 AKT  040800  EXPAND F558 RECL FROM 400 TO 600 *                
+      *========================================================*                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT BP13F558   ASSIGN TO BP13F558.                                
+                                                                                
+           SELECT BB24K510  ASSIGN TO BB24K510                                  
+                  ORGANIZATION     IS INDEXED                                   
+                  ACCESS MODE      IS DYNAMIC                                   
+                  RECORD KEY       IS K510-KEY-FLD                              
+                  FILE STATUS      IS BB24K510-STATUS.                          
+                                                                                
+           SELECT BB24K500  ASSIGN TO BB24K500                                  
+                  ORGANIZATION     IS INDEXED                                   
+                  ACCESS MODE      IS RANDOM                                    
+                  RECORD KEY       IS K500-KEY-FLD                              
+                  FILE STATUS      IS BB24K500-STATUS.                          
+                                                                                
+           SELECT P13F558O  ASSIGN TO P13F558O.                                 
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F558                                                            
+            RECORD CONTAINS 600 CHARACTERS                                      
+            BLOCK  CONTAINS 0   RECORDS                                         
+            LABEL  RECORDS ARE  STANDARD                                        
+            RECORDING MODE IS F.                                                
+       COPY BP13F558.                                                           
+                                                                                
+       FD   P13F558O                                                            
+            RECORD CONTAINS 600 CHARACTERS                                      
+            BLOCK  CONTAINS 0   RECORDS                                         
+            LABEL  RECORDS ARE  STANDARD                                        
+            RECORDING MODE IS F.                                                
+                                                                                
+       01   P13F558O-REC            PIC X(600).                                 
+                                                                                
+       FD   BB24K500                                                            
+            RECORD CONTAINS 1700 CHARACTERS.                                    
+       COPY BB24K500.                                                           
+                                                                                
+       FD   BB24K510                                                            
+            RECORD CONTAINS 50 CHARACTERS.                                      
+       COPY BB24K510.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+       01  BB24K500-STATUS          PIC 9(2)    VALUE ZEROES.                   
+       01  BB24K510-STATUS          PIC 9(2)    VALUE ZEROES.                   
+                                                                                
+       01  WS-K510-READ             PIC 9(8)    VALUE 0.                        
+       01  WS-K500-READ             PIC 9(8)    VALUE 0.                        
+       01  WS-F558-READ             PIC 9(8)    VALUE 0.                        
+       01  WS-OUTPUT-CNT            PIC 9(8)    VALUE 0.                        
+       01  WS-BYPASS                PIC 9(8)    VALUE 0.                        
+       01  WS-MR-NRIC               PIC 9(8)    VALUE 0.                        
+       01  WS-NMR-NRIC              PIC 9(8)    VALUE 0.                        
+       01  WS-K510-NOTFD            PIC X       VALUE 'N'.                      
+       01  WS-REQUIRE-CHK           PIC X       VALUE 'N'.                      
+      *01  WS-MULTIPLE-RESALE       PIC 9       VALUE 0.                        
+       01  WS-OCCP-MTH              PIC 9(4)    VALUE 0.                        
+                                                                                
+       01  WS-HDB-REF              PIC X(11)    VALUE SPACES.                   
+       01  WS-CDE-RESALE-STATUS    PIC X(3)     VALUE SPACES.                   
+                                                                                
+       01  WS-SOLD-DATE.                                                        
+           05 WS-SOLD-CC           PIC 99.                                      
+           05 WS-SOLD-YY           PIC 99.                                      
+           05 WS-SOLD-MM           PIC 99.                                      
+           05 WS-SOLD-DD           PIC 99.                                      
+                                                                                
+       01  EOF-BB24K510            PIC X        VALUE 'N'.                      
+       01  EOF-BB24K500            PIC X        VALUE 'N'.                      
+       01  EOF-BP13F558            PIC X        VALUE 'N'.                      
+                                                                                
+       01  WS-CUR-DATE.                                                         
+           05  WS-YY               PIC 99.                                      
+           05  WS-MM               PIC 99.                                      
+           05  WS-DD               PIC 99.                                      
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       000-MAIN.                                                                
+      *-------------------------------------------------------------            
+           OPEN INPUT  BB24K510                                                 
+                       BB24K500                                                 
+                       BP13F558                                                 
+                OUTPUT P13F558O.                                                
+                                                                                
+           IF BB24K510-STATUS NOT = ZEROS AND 97                                
+               DISPLAY 'FILE BB24K510 OPEN ERROR'                               
+               DISPLAY 'ERROR STATUS = ' BB24K510-STATUS                        
+               MOVE BB24K510-STATUS TO RETURN-CODE                              
+               PERFORM 900-CLOSE-ROUTINE.                                       
+                                                                                
+           IF BB24K500-STATUS NOT = ZEROS AND 97                                
+               DISPLAY 'FILE BB24K500 OPEN ERROR'                               
+               DISPLAY 'ERROR STATUS = ' BB24K500-STATUS                        
+               MOVE BB24K500-STATUS TO RETURN-CODE                              
+               PERFORM 900-CLOSE-ROUTINE.                                       
+                                                                                
+           ACCEPT WS-CUR-DATE FROM DATE.                                        
+                                                                                
+           PERFORM 100-READ-F558-REC THRU 100-EXIT.                             
+           PERFORM 200-PROCESS-REC   THRU 200-EXIT                              
+                   UNTIL EOF-BP13F558 = 'Y'                                     
+                     OR  F558-NUM-NRIC = HIGH-VALUE.                            
+           PERFORM 900-CLOSE-ROUTINE.                                           
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       100-READ-F558-REC.                                                       
+      *-------------------------------------------------------------            
+           READ BP13F558 AT END MOVE 'Y' TO EOF-BP13F558                        
+                MOVE HIGH-VALUE TO F558-NUM-NRIC                                
+                GO TO 100-EXIT.                                                 
+           ADD 1 TO WS-F558-READ.                                               
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       200-PROCESS-REC.                                                         
+      *-------------------------------------------------------------            
+      *    MOVE 0             TO WS-MULTIPLE-RESALE.                            
+           MOVE 'N'           TO WS-K510-NOTFD.                                 
+           MOVE 'N'           TO WS-REQUIRE-CHK.                                
+           MOVE SPACES        TO K510-KEY-FLD.                                  
+           MOVE F558-NUM-NRIC TO K510-NUM-UIN.                                  
+                                                                                
+           START BB24K510 KEY >=  K510-KEY-FLD.                                 
+                                                                                
+           IF  BB24K510-STATUS = ZEROES                                         
+               PERFORM 210-READ-BB24K510 THRU 210-EXIT                          
+                  UNTIL K510-NUM-UIN NOT = F558-NUM-NRIC                        
+                    OR  WS-K510-NOTFD = 'Y'                                     
+                                                                                
+               PERFORM 300-COMPUTE-OCCUP-PERIOD THRU 300-EXIT                   
+               WRITE P13F558O-REC FROM BP13F558-REC                             
+               ADD 1   TO WS-OUTPUT-CNT                                         
+               ADD 1 TO WS-MR-NRIC                                              
+           ELSE                                                                 
+               PERFORM 205-RECORD-NOTFD-RESALE THRU 205-EXIT.                   
+                                                                                
+       200-READ-NEXT.                                                           
+      *-------------------------------------------------------------            
+            PERFORM 100-READ-F558-REC THRU 100-EXIT.                            
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       205-RECORD-NOTFD-RESALE.                                                 
+      *-------------------------------------------------------------            
+           WRITE P13F558O-REC FROM BP13F558-REC.                                
+           ADD 1 TO WS-OUTPUT-CNT.                                              
+           ADD 1 TO WS-NMR-NRIC.                                                
+                                                                                
+       205-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------*                
+      * FOR REQUESTS FOR ALREADY CONSIDERED UPGRADER (G),      *                
+      *    FROM SMS MATCHING, THEY WILL BE MATCHED WITH RECORDS*                
+      *    IN RESALE FILE.                                     *                
+      *                                                        *                
+      * REQUESTS WHICH MATCH RESALE RECORDS WILL BE CONSIDERED *                
+      * AS ELIGIBLE FOR 5 YR                                   *                
+      *      'CL' - TCP SOLD 1ST FLAT                          *                
+      *      'CN' - TCP SOLD 1ST FLAT & PREMIUM NOT PAID       *                
+      *      'CP' - TCP SOLD 1ST FLAT & PREMIUM PAID           *                
+      *      '2L' - TCP SOLD 2ND FLAT                          *                
+      *      '2N' - TCP SOLD 2ND FLAT & PREMIUM NOT PAID       *                
+      *      '2P' - TCP SOLD 2ND FLAT & PREMIUM PAID           *                
+      *      'H1' - RESALE HUDC < 5 YR                         *                
+      *                                                        *                
+      *--------------------------------------------------------*                
+       210-READ-BB24K510.                                                       
+      *-------------------------------------------------------------            
+           READ BB24K510 NEXT AT END MOVE HIGH-VALUE TO K510-KEY-FLD            
+                                     GO TO 210-EXIT.                            
+                                                                                
+           ADD 1 TO WS-K510-READ.                                               
+           IF  (F558-NUM-NRIC = K510-NUM-UIN) AND                               
+               (K510-CDE-STATUS = 'P' OR                                        
+                K510-CDE-STATUS = 'S')                                          
+      *         ADD 1 TO WS-MULTIPLE-RESALE                                     
+                PERFORM 211-READ-BB24K500 THRU 211-EXIT.                        
+                                                                                
+       210-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *------                                                                   
+      *  RESALE STATUS                                                          
+      *    'CL'=TCF SOLD 1ST FLAT LEVY PAID                                     
+      *    'CN'=TCF SOLD 1ST FLAT PREMIUM NOT PAID                              
+      *    'CP'=TCF SOLD 1ST FLAT PREMIUM PAID                                  
+      *    '2L'=TCF SOLD 2ND FLAT LEVY PAID                                     
+      *    '2N'=TCF SOLD 2ND FLAT PREMIUM NOT PAID                              
+      *    '2P'=TCF SOLD 2ND FLAT PREMIUM PAID                                  
+      *    'H1'=RESALE OF HUDC IN OM(OCCUPATION < 5 YEARS)                      
+      *    '2D'=TCF SOLD 2ND FLAT OPT TO PURCHASE PRIVATE HOUSING               
+      *------                                                                   
+                                                                                
+       211-READ-BB24K500.                                                       
+      *-------------------------------------------------------------            
+           MOVE K510-NUM-HDB-REF   TO K500-NUM-HDB-REF.                         
+           MOVE K510-DTE-APPROVAL  TO K500-DTE-APPROVAL.                        
+           READ BB24K500.                                                       
+                                                                                
+           ADD 1 TO WS-K500-READ.                                               
+           IF  BB24K500-STATUS = ZEROES                                         
+               IF K500-CDE-RESALE-STATUS = 'CL ' OR 'CN ' OR 'CP ' OR           
+                                           '2L ' OR '2N ' OR '2P ' OR           
+                                           'H1 ' OR '2D ' OR                    
+                                           'OL ' OR 'ON ' OR 'OP '              
+                   MOVE K500-DTE-SOLD-TO-SELLER TO WS-SOLD-DATE                 
+                   MOVE K500-NUM-HDB-REF        TO WS-HDB-REF                   
+                   MOVE K500-CDE-RESALE-STATUS  TO WS-CDE-RESALE-STATUS         
+                   MOVE 'Y'                     TO WS-REQUIRE-CHK               
+               ELSE                                                             
+                   NEXT SENTENCE                                                
+           ELSE                                                                 
+               MOVE 'Y' TO WS-K510-NOTFD                                        
+               DISPLAY 'RECORD NOT FOUND IN BB24K500 ' F558-NUM-NRIC            
+                       '--> ' K510-DTE-APPROVAL                                 
+                       '--> ' K510-NUM-HDB-REF.                                 
+                                                                                
+       211-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       300-COMPUTE-OCCUP-PERIOD.                                                
+      *-------------------------------------------------------------            
+           IF WS-REQUIRE-CHK = 'N'                                              
+              GO TO 300-EXIT.                                                   
+                                                                                
+           IF WS-SOLD-DATE IS NOT NUMERIC                                       
+               MOVE ZEROS TO WS-SOLD-DATE.                                      
+                                                                                
+           IF  WS-SOLD-DATE > ZEROS                                             
+               COMPUTE WS-OCCP-MTH = (WS-YY * 12 + WS-MM) -                     
+                                 (WS-SOLD-YY * 12 + WS-SOLD-MM).                
+                                                                                
+           IF WS-OCCP-MTH > 59                                                  
+               MOVE 'Y' TO F558-NUM-5YR-OCCUPN                                  
+            ELSE                                                                
+               MOVE 'N' TO F558-NUM-5YR-OCCUPN.                                 
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       900-CLOSE-ROUTINE.                                                       
+      *-------------------------------------------------------------            
+           DISPLAY ' '.                                                         
+           DISPLAY '*-----------------------------------------------*'.         
+           DISPLAY 'BP13C810                 CURR-DATE : ' WS-CUR-DATE.         
+           DISPLAY 'MATCH NRIC IN REQUEST FILE WITH RESALE FILE'.               
+           DISPLAY ' '.                                                         
+           DISPLAY 'NO OF RECORDS READ FROM F558   ' WS-F558-READ.              
+           DISPLAY 'NO OF RECORDS READ FROM K500   ' WS-K500-READ.              
+           DISPLAY 'NO OF RECORDS READ FROM B12K510' WS-K510-READ.              
+           DISPLAY 'NO OF RECORDS OUTPUT BP13F558  ' WS-OUTPUT-CNT.             
+           DISPLAY 'NO OF RECORDS NOT MATCH        ' WS-NMR-NRIC.               
+           DISPLAY 'NO OF RECORDS MATCH            ' WS-MR-NRIC.                
+                                                                                
+           CLOSE P13F558O                                                       
+                 BP13F558                                                       
+                 BB24K500                                                       
+                 BB24K510.                                                      
+                                                                                
+           IF  BB24K510-STATUS NOT = 00 AND 97                                  
+               DISPLAY 'CLOSING ERROR '                                         
+               DISPLAY 'BB24K510-STATUS ' BB24K510-STATUS.                      
+           IF  BB24K500-STATUS NOT = 00 AND 97                                  
+               DISPLAY 'CLOSING ERROR '                                         
+               DISPLAY 'BB24K500-STATUS ' BB24K500-STATUS.                      
+           STOP RUN.                                                            
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+

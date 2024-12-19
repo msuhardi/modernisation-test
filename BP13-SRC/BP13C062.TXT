@@ -1,0 +1,955 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C062.                                                 
+      *AUTHOR.        BALAKRISHNAN S.                                           
+      *DATE-WRITTEN.  22/02/2000.                                               
+      ******************************************************************        
+      *                 SYSTEM OF COMMITMENT(BP13)                     *        
+      *================================================================*        
+      * OBJECTIVES : 1) UPDATE SLS FLATS INFORMATION IN BP13F558 BY    *        
+      *              MATCHING NRIC OF SOC WITH BR05 OF SLS             *        
+      *              2) GET SUBLET INFORMATION FROM AB03 SMS SYSTEM    *        
+      *              3) READ BP13F713 TO DETERMINE QTR MATCH OR DAILY  *        
+      *                 MATCH, IF QTR USE BALLOT DATE, IF DAILY USE    *        
+      *                 DTE-REGN                                       *        
+      *================================================================*        
+      * COMPUTE HOUSEHOLD CHECK,                                       *        
+      *  IF K100-NUM-SRNDR = 'SU'                                      *        
+      *     USE K100-DTE-APPLY - K100-DTE-SALE-EFF                     *        
+      *  IF K100-NUM-SRNDR = 'CI'                                      *        
+      *     USE K100-DTE-FLAT-REVEST - K100-DTE-SALE-EFF               *        
+      *                                                                *        
+      * COMPUTE 10-YR, USE DTE-BALLOT OR DTE-REGN - DTE-SALE-EFF       *        
+      * IF DTE-SALE-EFF = SPACES, CHECK FURTHER                        *        
+      *  IF K100-NUM-SRNDR = 'SU'                                      *        
+      *     USE K100-DTE-APPLY                                         *        
+      *  IF K100-NUM-SRNDR = 'CI'                                      *        
+      *     USE K100-DTE-FLAT-REVEST                                   *        
+      *                                                                *        
+      *  FOR FT =< 02, SALES-TYPE=2B, SUBJECT TO 5-YEARS TIME BAR.     *        
+      *================================================================*        
+      * FILE DESCRIPTION :-                                            *        
+      *                                                                *        
+      * DD NAME   I/O/E ACCESSMODE  RECLEN KEY          REMARKS        *        
+      *----------------------------------------------------------------*        
+      * BP13F558  I     SEQUENTIAL   400   REGN,NRIC                   *        
+      * BP13F713  I     SEQUENTIAL   20                                *        
+      * BR05K100  I     RANDOM       100   SCH-ACC,NRIC                *        
+      * AB03K300  I     RANDOM       100                               *        
+      * P13F558A  O     SEQUENTIAL   400                 ALL RECORDS   *        
+      * P13F558B  O     SEQUENTIAL   400                 ONLY UPDATED  *        
+      *                                                                *        
+      *================================================================*        
+      * CHG-NO   BY  DATE      DESCRIPTION                             *        
+      * -------- --  --------  -----------                             *        
+      * BP130771 SB  02/11/00  NEW PROGRAM                             *        
+      * BP130919 LSB 05/01/01  MOVE DTE-REGN FR BP13F558 FOR 10YR-CHK  *        
+      * BP130968 AKT 15/01/01  MOVE DTE-REVEST/DTE-SALES-EFF TO F558.  *        
+      * BP131064 ANC 14/01/02  CHECK FOR F558-DTE-ISSUE-REGN IF NUMERIC*        
+      * BP132038 ANC 18/12/01  CHGE K100-DTE-SALE-EFF TO K100-DTE-APPLY*        
+      * BP132121 ANC 22/03/02  REVERT BACK K100-DTE-SALE-EFF, CHANGE   *        
+      *                        K100-DTE-COMPLETION TO K100-DTE-APPLY   *        
+      * BP132463 CKK 28/01/04  MOVE WS-DTE-APPLY                       *        
+      * BP132589 SK  14/09/04  INCLUDE BR12C935 & BP13C998             *        
+      * BP132603 JF4 01/03/05  CHANGE 10-YR TIMEBAR TO 5-YR            *        
+      * BP133111 ED1 20/09/07  CORRECTED COMPUTATION OF MTH-RESIDE, TO *        
+      *                        RETRIEVE NO. OF MOS. BEFORE SUBTRACTING *        
+      * BP134111 27/06/11 ESD1 CATER FOR OPENING AND CLOSING FILE   *           
+      *                        FOR BR12C935.                        *           
+      * BP139518 EAA2 24/02/23 TO INCLUDE 6 SALES TYPE CODE IN         *        
+      *                        HOUSEHOLD DETERMINATION                 *        
+      *                        (8L/8M/8N/8R/8S/8T)                     *        
+      *================================================================*        
+       ENVIRONMENT DIVISION.                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+                                                                                
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F558 ASSIGN TO BP13F558.                                  
+                                                                                
+           SELECT BP13F713 ASSIGN TO BP13F713.                                  
+                                                                                
+           SELECT BR05K100 ASSIGN TO BR05K100                                   
+                           ACCESS MODE  IS DYNAMIC                              
+                           ORGANIZATION IS INDEXED                              
+                           RECORD KEY   IS K100-KEY-FLD                         
+                           FILE STATUS  IS BR05K100-STATUS.                     
+                                                                                
+           SELECT P13F558A ASSIGN TO P13F558A.                                  
+                                                                                
+           SELECT P13F558B ASSIGN TO P13F558B.                                  
+                                                                                
+           SELECT BP13L062 ASSIGN TO BP13L062.                                  
+                                                                                
+      ****************************************************************          
+       DATA DIVISION.                                                           
+      ****************************************************************          
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F558     BLOCK CONTAINS 0 RECORDS                               
+                         RECORD CONTAINS 600 CHARACTERS                         
+                         LABEL RECORDS ARE STANDARD                             
+                         RECORDING MODE IS F.                                   
+       COPY BP13F558.                                                           
+                                                                                
+       FD   BP13F713     BLOCK CONTAINS 0 RECORDS                               
+                         RECORD CONTAINS 20  CHARACTERS                         
+                         LABEL RECORDS ARE STANDARD                             
+                         RECORDING MODE IS F.                                   
+       COPY BP13F713.                                                           
+                                                                                
+       FD   BR05K100.                                                           
+       COPY BR05K100.                                                           
+                                                                                
+       FD   P13F558A     RECORD CONTAINS 600 CHARACTERS                         
+                         LABEL RECORDS ARE STANDARD                             
+                         RECORDING MODE IS F.                                   
+       01  P13F558A-REC                   PIC X(600).                           
+                                                                                
+       FD   P13F558B     RECORD CONTAINS 600 CHARACTERS                         
+                         LABEL RECORDS ARE STANDARD                             
+                         RECORDING MODE IS F.                                   
+       01  P13F558B-REC                   PIC X(600).                           
+                                                                                
+       FD   BP13L062     BLOCK CONTAINS 0 RECORDS                               
+                         RECORD CONTAINS 132 CHARACTERS                         
+                         LABEL RECORDS ARE STANDARD                             
+                         RECORDING MODE IS F.                                   
+       01  BP13L062-REC                   PIC X(132).                           
+                                                                                
+      ****************************************************************          
+       WORKING-STORAGE SECTION.                                                 
+      ****************************************************************          
+      *----------------------*                                                  
+      * LINKAGE FOR BP13C913 *                                                  
+      *----------------------*                                                  
+       01  WS-LINK-REC.                                                         
+           05  WS-LINK-NUM-SCH-ACC.                                             
+               10  WS-LINK-NUM-SCH        PIC X(4).                             
+               10  WS-LINK-NUM-ACC        PIC X(5).                             
+           05  WS-LINK-NUM-LSECDE         PIC X(2).                             
+                                                                                
+       COPY P13COMM8.                                                           
+                                                                                
+       01  BP13F558-EOF-FLAG              PIC X(01).                            
+           88  BP13F558-EOF               VALUE 'Y'.                            
+       01  BR05K100-EOF-FLAG              PIC X(01).                            
+           88  BR05K100-EOF               VALUE 'Y'.                            
+       01  BR05K100-FND-FLAG              PIC X(01).                            
+           88  BR05K100-FND               VALUE 'Y'.                            
+       01  STORE-K100-INFO-FLAG           PIC X(01).                            
+           88  STORE-K100-INFO            VALUE 'Y'.                            
+                                                                                
+       01  BR05K100-STATUS                PIC 9(02).                            
+                                                                                
+       01  WS-CUR-DATE.                                                         
+           05  WS-CUR-CCYY                PIC 9(04).                            
+           05  WS-CUR-MM                  PIC 9(02).                            
+           05  WS-CUR-DD                  PIC 9(02).                            
+                                                                                
+       01  WS-EDT-DATE.                                                         
+           05  WS-EDT-DD                  PIC 9(02).                            
+           05  FILLER                     PIC X(01) VALUE '/'.                  
+           05  WS-EDT-MM                  PIC 9(02).                            
+           05  FILLER                     PIC X(01) VALUE '/'.                  
+           05  WS-EDT-CCYY                PIC 9(04).                            
+                                                                                
+       01  WS-END-DATE.                                                         
+           05 WS-END-CCYY                 PIC X(04) VALUE SPACES.               
+           05 WS-END-MM                   PIC X(02) VALUE SPACES.               
+                                                                                
+       01  WS-BALLOT-DATE.                                                      
+           05  WS-BALLOT-CCYY             PIC 9(04).                            
+           05  WS-BALLOT-MM               PIC 9(02).                            
+                                                                                
+       01  WS-REGN-DATE.                                                        
+           05  WS-REGN-CCYY               PIC 9(04).                            
+           05  WS-REGN-MM                 PIC 9(02).                            
+           05  WS-REGN-DD                 PIC 9(02).                            
+                                                                                
+       01  WS-DTE-END.                                                          
+           05  WS-CCYY-END                PIC 9(4).                             
+           05  WS-MM-END                  PIC 9(2).                             
+                                                                                
+       01  WS-DTE-EFF.                                                          
+           05  WS-CCYY-EFF                PIC 9(4).                             
+           05  WS-MM-EFF                  PIC 9(2).                             
+                                                                                
+       01  WS-SLS-VARS.                                                         
+           05  WS-NUM-SRNDR               PIC X(02)  VALUE SPACES.              
+           05  WS-NUM-HDB-REF             PIC X(11)  VALUE SPACES.              
+           05  WS-DTE-SLS                 PIC X(08).                            
+           05  WS-NUM-DTE-SLS REDEFINES WS-DTE-SLS.                             
+               10 WS-SLS-CCYY             PIC 9(04).                            
+               10 WS-SLS-MM               PIC 9(02).                            
+               10 WS-SLS-DD               PIC 9(02).                            
+           05  WS-DTE-APPLY               PIC X(08)  VALUE SPACES.              
+           05  WS-DTE-FLAT-REVEST         PIC X(08)  VALUE SPACES.              
+           05  WS-DTE-SALE-EFF            PIC X(08)  VALUE SPACES.              
+           05  WS-NUM-SALES-TYPE          PIC X(02)  VALUE SPACES.              
+           05  WS-FT-SLS                  PIC X(02)  VALUE SPACES.              
+           05  WS-SUBLET-SLS              PIC 9(03)  VALUE ZEROES.              
+           05  WS-MTH-RESIDE-SLS          PIC 9(03)  VALUE ZEROES.              
+           05  WS-MTH-HHTY                PIC 9(03)  VALUE ZEROES.              
+           05  WS-F558-MTH-RESIDE         PIC 9(03)  VALUE ZEROES.              
+           05  WS-F558-BF-HH              PIC X(02)  VALUE SPACES.              
+                                                                                
+           05  WS-DTE-HHTY.                                                     
+               10 WS-HHTY-CCYY            PIC 9(04).                            
+               10 WS-HHTY-MM              PIC 9(02).                            
+               10 WS-HHTY-DD              PIC 9(02).                            
+                                                                                
+           05 WS-EXEMP                    PIC 9(03) VALUE ZEROES.               
+           05 WS-MONTH-TOT                PIC 9(03) VALUE ZEROES.               
+           05 WS-MONTH                    PIC 9(03) VALUE ZEROES.               
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  BP13F558-CNT-READ          PIC 9(08) VALUE ZEROES.               
+           05  P13F558A-CNT-WRITE         PIC 9(08) VALUE ZEROES.               
+           05  P13F558B-CNT-WRITE         PIC 9(08) VALUE ZEROES.               
+           05  BR05K100-CNT-FND           PIC 9(08) VALUE ZEROES.               
+           05  BR05K100-CNT-PROCSD        PIC 9(08) VALUE ZEROES.               
+           05  WS-CNT-PAGE                PIC 9(05) VALUE ZEROES.               
+           05  WS-CNT-LINE                PIC 9(05) VALUE 60.                   
+           05  WS-CNT-SNO                 PIC 9(05) VALUE ZEROES.               
+           05  WS-CTR                     PIC 9(02) VALUE ZEROES.               
+                                                                                
+       01  WS-OTHERS.                                                           
+           05  WS-EDT-VAR                 PIC ZZ,ZZZ,ZZ9.                       
+           05  WS-SQL-CODE                PIC X(04) VALUE SPACES.               
+                                                                                
+      **  SIMPLE REPORT TO KNOW THE UPDATED DETAILS.                            
+       01  L062-HEADER1.                                                        
+           05  FILLER                     PIC X(08) VALUE 'BP13L062'.           
+           05  FILLER                     PIC X(10) VALUE '      HDB3'.         
+           05  FILLER                     PIC X(27) VALUE SPACES.               
+           05  FILLER                     PIC X(39) VALUE                       
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER                     PIC X(14) VALUE SPACES.               
+           05  FILLER                     PIC X(07) VALUE 'DATE : '.            
+           05  L062-DTE-CURRENT           PIC X(10) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE SPACES.               
+           05  FILLER                     PIC X(07) VALUE 'PAGE : '.            
+           05  L062-PAGE                  PIC ZZZZ9.                            
+                                                                                
+       01  L062-HEADER2.                                                        
+           05  FILLER                     PIC X(42) VALUE SPACES.               
+           05  FILLER                     PIC X(46) VALUE                       
+               'REPORT ON MONTH-RSD/HOUSEHOLD/5-YR WITH SLS '.                  
+           05  FILLER                     PIC X(44) VALUE SPACES.               
+                                                                                
+       01  L062-CAPTION.                                                        
+           05  FILLER                     PIC X(01) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE 'S/NO'.               
+           05  FILLER                     PIC X(04) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE 'NRIC'.               
+           05  FILLER                     PIC X(07) VALUE SPACES.               
+           05  FILLER                     PIC X(07) VALUE 'HDB-REF'.            
+           05  FILLER                     PIC X(04) VALUE SPACES.               
+           05  FILLER                     PIC X(05) VALUE 'SRNDR'.              
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(02) VALUE 'ST'.                 
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(10) VALUE 'DTE-CMPLN '.         
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(10) VALUE 'DTE-REVEST'.         
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(10) VALUE ' DTE-REGN '.         
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(08) VALUE 'DTE-SALE'.           
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(05) VALUE 'HH-M '.              
+           05  FILLER                     PIC X(05) VALUE 'BF-HH'.              
+           05  FILLER                     PIC X(01) VALUE SPACES.               
+           05  FILLER                     PIC X(05) VALUE 'AF-HH'.              
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(05) VALUE 'BF-M '.              
+           05  FILLER                     PIC X(01) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE 'AF-M'.               
+           05  FILLER                     PIC X(01) VALUE SPACES.               
+           05  FILLER                     PIC X(06) VALUE 'SUBLET'.             
+           05  FILLER                     PIC X(01) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE '5YR '.               
+           05  FILLER                     PIC X(01) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE 'FT'.                 
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+                                                                                
+       01  L062-DETAILS.                                                        
+           05  L062-CNT-SNO               PIC ZZZZ9 VALUE ZEROES.               
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  L062-NRIC                  PIC X(09) VALUE SPACES.               
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  L062-HDB-REF               PIC X(11) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE SPACES.               
+           05  L062-SRNDR                 PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(03) VALUE SPACES.               
+           05  L062-SALES-TYPE            PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  L062-DTE-APPLY             PIC X(10) VALUE SPACES.               
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  L062-DTE-REVEST            PIC X(10) VALUE SPACES.               
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  L062-DTE-REGN              PIC X(10) VALUE SPACES.               
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  L062-DTE-SALE              PIC X(10) VALUE SPACES.               
+           05  FILLER                     PIC X(01) VALUE SPACES.               
+           05  L062-HH-MTH                PIC 9(03) VALUE ZEROS.                
+           05  FILLER                     PIC X(03) VALUE SPACES.               
+           05  L062-BF-HH                 PIC X(01) VALUE SPACES.               
+           05  FILLER                     PIC X(05) VALUE SPACES.               
+           05  L062-AF-HH                 PIC X(01) VALUE SPACES.               
+           05  FILLER                     PIC X(05) VALUE SPACES.               
+           05  L062-MTH-RSD               PIC 9(03) VALUE ZEROES.               
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  L062-MTH-RSD-SLS           PIC 9(03) VALUE ZEROES.               
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  L062-SUBLET                PIC 9(03) VALUE ZEROES.               
+           05  FILLER                     PIC X(05) VALUE SPACES.               
+           05  L062-5YR                   PIC X(01) VALUE ZEROES.               
+           05  FILLER                     PIC X(03) VALUE SPACES.               
+           05  L062-FT                    PIC X(02) VALUE ZEROES.               
+           05  FILLER                     PIC X(03) VALUE SPACES.               
+                                                                                
+      *------------------------*                                                
+      *  LINKAGE FOR BP13C998                                                   
+      *------------------------*                                                
+       01  WS-LINK-REC1.                                                        
+           05 WS-LINK-NUM-NRIC           PIC X(09).                             
+                                                                                
+       COPY P13COM91.                                                           
+       COPY BR12935C.                                                           
+                                                                                
+      ****************************************************************          
+       PROCEDURE DIVISION.                                                      
+      ****************************************************************          
+                                                                                
+      *==============================================================*          
+       0000-MAIN.                                                               
+      *==============================================================*          
+                                                                                
+           PERFORM 1000-OPEN-FILES        THRU 1000-EXIT.                       
+                                                                                
+           PERFORM 2000-MAIN-ROUTINE      THRU 2000-EXIT                        
+                   UNTIL BP13F558-EOF.                                          
+                                                                                
+           PERFORM 9000-CLOSE-FILES       THRU 9000-EXIT.                       
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       1000-OPEN-FILES.                                                         
+      *==============================================================*          
+                                                                                
+           OPEN INPUT  BP13F558                                                 
+                       BP13F713                                                 
+                       BR05K100                                                 
+                OUTPUT P13F558A                                                 
+                       P13F558B                                                 
+                       BP13L062.                                                
+                                                                                
+           IF BR05K100-STATUS NOT = 0 AND 97                                    
+              DISPLAY 'BR05K100 OPEN FAIL STATUS ' BR05K100-STATUS              
+              MOVE BR05K100-STATUS TO RETURN-CODE                               
+              PERFORM 9000-CLOSE-FILES    THRU 9000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           PERFORM 6100-OPEN-BR12C935  THRU 6100-EXIT                           
+                                                                                
+           READ BP13F713 AT END                                                 
+                DISPLAY "BP13F713 IS EMPTY".                                    
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8) TO WS-CUR-DATE.                      
+                                                                                
+           MOVE WS-CUR-CCYY TO WS-EDT-CCYY   WS-END-CCYY.                       
+           MOVE WS-CUR-MM   TO WS-EDT-MM     WS-END-MM.                         
+           MOVE WS-CUR-DD   TO WS-EDT-DD                                        
+                                                                                
+           MOVE WS-EDT-DATE TO L062-DTE-CURRENT.                                
+                                                                                
+           PERFORM 1500-GET-BALLOT-DATE   THRU 1500-EXIT.                       
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       1500-GET-BALLOT-DATE.                                                    
+      *==============================================================*          
+      *--------------------------------------------------------------*          
+      * DETERMINE THE BALLOT DATE USING CURRENT-DATE                 *          
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE WS-CUR-CCYY  TO WS-BALLOT-CCYY.                                 
+                                                                                
+           IF WS-CUR-MM > 0 AND < 4                                             
+              MOVE '01' TO WS-BALLOT-MM                                         
+           ELSE                                                                 
+           IF WS-CUR-MM > 3 AND < 7                                             
+              MOVE '04' TO WS-BALLOT-MM                                         
+           ELSE                                                                 
+           IF WS-CUR-MM > 6 AND < 10                                            
+              MOVE '07' TO WS-BALLOT-MM                                         
+           ELSE                                                                 
+           IF WS-CUR-MM > 9                                                     
+              MOVE '10' TO WS-BALLOT-MM                                         
+           END-IF.                                                              
+                                                                                
+       1500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       2000-MAIN-ROUTINE.                                                       
+      *==============================================================*          
+                                                                                
+           READ BP13F558 AT END                                                 
+                MOVE 'Y' TO BP13F558-EOF-FLAG                                   
+                GO TO 2000-EXIT.                                                
+                                                                                
+           ADD 1 TO BP13F558-CNT-READ.                                          
+                                                                                
+           PERFORM 3000-PROCESS-REC       THRU 3000-EXIT.                       
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       3000-PROCESS-REC.                                                        
+      *==============================================================*          
+                                                                                
+           MOVE SPACES     TO BR05K100-FND-FLAG                                 
+                              BR05K100-EOF-FLAG.                                
+           MOVE SPACES     TO BR05K100-REC.                                     
+           MOVE '00000000' TO WS-DTE-SALE-EFF                                   
+                              WS-DTE-APPLY                                      
+                              WS-DTE-FLAT-REVEST.                               
+                                                                                
+           INITIALIZE         WS-NUM-SRNDR       WS-FT-SLS                      
+                              WS-NUM-HDB-REF     WS-SUBLET-SLS                  
+                                                 WS-MTH-RESIDE-SLS              
+                                                 WS-MTH-HHTY                    
+                              WS-NUM-SALES-TYPE  WS-F558-MTH-RESIDE.            
+                                                                                
+           PERFORM 3020-START-BR05K100    THRU 3020-EXIT.                       
+                                                                                
+           IF BR05K100-FND                                                      
+              PERFORM 4000-GET-FT-SLS     THRU 4000-EXIT                        
+                                                                                
+              IF WS-FT-SLS >  '02'                                              
+                 ADD 1   TO BR05K100-CNT-PROCSD                                 
+                 PERFORM 5000-UPDATE-BP13F558                                   
+                                          THRU 5000-EXIT                        
+                 PERFORM 8000-PRINT-BP13L062                                    
+                                          THRU 8000-EXIT                        
+              ELSE                                                              
+                 IF F558-NUM-SALES-TYPE-SLS = '2B'                              
+                    ADD 1   TO BR05K100-CNT-PROCSD                              
+                    PERFORM 5000-UPDATE-BP13F558                                
+                                             THRU 5000-EXIT                     
+                    PERFORM 8000-PRINT-BP13L062                                 
+                                             THRU 8000-EXIT                     
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      **@  **WRITE ALL RECORDS WITH/WITHOUT SLS UPDATE.                         
+           WRITE P13F558A-REC             FROM BP13F558-REC.                    
+           ADD 1 TO P13F558A-CNT-WRITE.                                         
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       3020-START-BR05K100.                                                     
+      *==============================================================*          
+                                                                                
+           MOVE F558-NUM-NRIC TO K100-NUM-UIN.                                  
+                                                                                
+           START BR05K100 KEY >= K100-NUM-UIN.                                  
+                                                                                
+           EVALUATE BR05K100-STATUS                                             
+           WHEN 00                                                              
+           WHEN 02                                                              
+                PERFORM 3040-READNEXT-BR05K100 THRU 3040-EXIT                   
+                PERFORM 3100-PROCESS-SLSREC    THRU 3100-EXIT                   
+                             UNTIL (F558-NUM-NRIC NOT = K100-NUM-UIN)           
+                             OR BR05K100-EOF                                    
+           WHEN 20                                                              
+           WHEN 23                                                              
+                MOVE 'N' TO BR05K100-FND-FLAG                                   
+           WHEN OTHER                                                           
+                DISPLAY "START BR05K100 FAIL STATUS " BR05K100-STATUS           
+                        " KEY " K100-NUM-UIN                                    
+                PERFORM 9000-CLOSE-FILES  THRU 9000-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       3020-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       3040-READNEXT-BR05K100.                                                  
+      *==============================================================*          
+                                                                                
+           READ BR05K100 NEXT RECORD                                            
+                         AT END MOVE 'Y' TO BR05K100-EOF-FLAG.                  
+                                                                                
+       3040-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       3100-PROCESS-SLSREC.                                                     
+      *==============================================================*          
+                                                                                
+           IF K100-NUM-UIN = F558-NUM-NRIC                                      
+              ADD 1   TO BR05K100-CNT-FND                                       
+              IF K100-NUM-SALES-TYP  = ( '7 ' OR '7J' OR '8A'                   
+                                              OR '8B' OR '8E'                   
+                                      OR '7C' OR '8L' OR '8M'                   
+                                      OR '8N' OR '8R' OR '8S'                   
+                                      OR '8T' )                                 
+                 CONTINUE                                                       
+              ELSE                                                              
+                 IF K100-NUM-SRNDR = 'SU' OR 'CI'                               
+                    PERFORM 3110-PROCESS-SU-CI THRU 3110-EXIT                   
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 3040-READNEXT-BR05K100 THRU 3040-EXIT.                       
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       3110-PROCESS-SU-CI.                                                      
+      *==============================================================*          
+      *--------------------------------------------------------------*          
+      * STORE LATTEST K100-DTE-REVEST INFO FOR CI RECORDS AND -      *          
+      * K100-DTE-APPLY INFO FOR SU RECORDS.                          *          
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE 'Y' TO BR05K100-FND-FLAG                                        
+                                                                                
+           MOVE 'N' TO STORE-K100-INFO-FLAG                                     
+                                                                                
+           IF K100-NUM-SRNDR = 'SU' AND                                         
+                       WS-DTE-APPLY       < K100-DTE-APPLY                      
+              SET STORE-K100-INFO       TO TRUE                                 
+           ELSE IF K100-NUM-SRNDR = 'CI' AND                                    
+                       WS-DTE-FLAT-REVEST < K100-DTE-FLAT-REVEST                
+              SET STORE-K100-INFO       TO TRUE                                 
+           END-IF.                                                              
+                                                                                
+           IF STORE-K100-INFO                                                   
+              MOVE K100-NUM-SRNDR       TO WS-NUM-SRNDR                         
+              MOVE K100-NUM-HDB-REF     TO WS-NUM-HDB-REF                       
+              MOVE K100-NUM-SALES-TYP   TO WS-NUM-SALES-TYPE                    
+              MOVE K100-DTE-SALE-EFF    TO WS-DTE-SALE-EFF                      
+              MOVE K100-DTE-APPLY       TO WS-DTE-APPLY                         
+              MOVE K100-DTE-FLAT-REVEST TO WS-DTE-FLAT-REVEST                   
+           END-IF.                                                              
+                                                                                
+       3110-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       4000-GET-FT-SLS.                                                         
+      *==============================================================*          
+      *--------------------------------------------------------------*          
+      * GET THE FLAT-TYPE USING SCHEME ACCOUNT-NO.                   *          
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE SPACES                    TO BP13COMM8-REC.                     
+           MOVE WS-NUM-HDB-REF            TO WS-LINK-REC.                       
+                                                                                
+           CALL 'BP13C913' USING WS-LINK-REC,                                   
+                                BP13COMM8-REC.                                  
+                                                                                
+           IF COMM8-CDE-SYSERR = 0                                              
+              MOVE COMM8-CDE-TYP-ACTLUSE   TO WS-FT-SLS                         
+           ELSE                                                                 
+              MOVE COMM8-CDE-SYSERR       TO WS-SQL-CODE                        
+           IF COMM8-CDE-SYSERR = 100                                            
+              DISPLAY 'SCH-ACC NOT FOUND IN PBF TABLE ' WS-SQL-CODE             
+           ELSE                                                                 
+              DISPLAY 'ERROR READING PBF TABLE ' WS-SQL-CODE                    
+           END-IF.                                                              
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       5000-UPDATE-BP13F558.                                                    
+      *==============================================================*          
+      *--------------------------------------------------------------*          
+      * UPDATE SALES INFORMATION INTO BP13F558.                                 
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE WS-NUM-SRNDR              TO F558-NUM-SRNDR-SLS.                
+           MOVE WS-NUM-HDB-REF            TO F558-NUM-HDB-REF-SLS.              
+           MOVE WS-NUM-SALES-TYPE         TO F558-NUM-SALES-TYPE-SLS.           
+           MOVE WS-FT-SLS                 TO F558-CDE-FLAT-TYPE-SLS.            
+           MOVE WS-DTE-SALE-EFF           TO F558-DTE-EFF-SALES-SLS.            
+           MOVE WS-DTE-APPLY              TO F558-DTE-REVEST-COMPLT-SLS.        
+                                                                                
+      **@  **UPDATE MONTH-RESIDE.                                               
+           IF F713-CDE-COHORT = SPACES OR LOW-VALUES                            
+              GO TO 5000-EXIT                                                   
+           ELSE                                                                 
+              PERFORM 5205-GET-MTH-RSD-HH THRU 5205-EXIT                        
+           END-IF.                                                              
+                                                                                
+           IF F558-NUM-MTH-RESIDE IS NUMERIC                                    
+              MOVE F558-NUM-MTH-RESIDE    TO WS-F558-MTH-RESIDE                 
+           ELSE                                                                 
+              MOVE ZEROES                 TO F558-NUM-MTH-RESIDE                
+           END-IF.                                                              
+                                                                                
+           IF WS-F558-MTH-RESIDE > WS-MTH-RESIDE-SLS OR                         
+              WS-F558-MTH-RESIDE = ZEROS                                        
+              MOVE WS-MTH-RESIDE-SLS      TO F558-NUM-MTH-RESIDE                
+           END-IF.                                                              
+                                                                                
+           MOVE WS-MTH-RESIDE-SLS         TO F558-NUM-MTH-RESIDE-SLS.           
+                                                                                
+      **@  **UPDATE HOUSEHOLD.                                                  
+           MOVE F558-CDE-HOUSEHOLD        TO WS-F558-BF-HH.                     
+                                                                                
+           IF WS-MTH-HHTY >= 060                                                
+              IF F558-CDE-HOUSEHOLD = 'G'                                       
+                 CONTINUE                                                       
+              ELSE                                                              
+                 MOVE 'G' TO F558-CDE-HOUSEHOLD                                 
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      **@  **UPDATE 10-YEAR OCCUPATION.                                         
+           IF F558-NUM-MTH-RESIDE > ZEROS                                       
+              IF F558-NUM-MTH-RESIDE < 060                                      
+                 MOVE 'N' TO F558-NUM-5YR-OCCUPN                                
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      **@  **WRITE ONLY UPDATED SALES INFO RECORDS.                             
+           WRITE P13F558B-REC FROM BP13F558-REC.                                
+           ADD 1 TO P13F558B-CNT-WRITE.                                         
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       5205-GET-MTH-RSD-HH.                                                     
+      *==============================================================*          
+      *--------------------------------------------------------------*          
+      * CALCULATE MONTH RESIDE TO DETERMINE HOUSEHOLD TYPE.          *          
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE ZEROES    TO WS-MTH-RESIDE-SLS.                                 
+           MOVE ZEROES    TO WS-MTH-HHTY.                                       
+                                                                                
+           IF F558-DTE-ISSUE-REGN IS NOT NUMERIC                                
+              MOVE ZEROES TO F558-DTE-ISSUE-REGN                                
+           END-IF.                                                              
+                                                                                
+           MOVE F558-DTE-ISSUE-REGN TO WS-REGN-DATE.                            
+                                                                                
+           IF WS-DTE-SALE-EFF    IS NOT NUMERIC                                 
+              MOVE ZEROES TO WS-DTE-SALE-EFF                                    
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-APPLY       IS NOT NUMERIC                                 
+              MOVE ZEROES TO WS-DTE-APPLY                                       
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-FLAT-REVEST IS NOT NUMERIC                                 
+              MOVE ZEROES TO WS-DTE-FLAT-REVEST                                 
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-SALE-EFF = ZEROS                                           
+                MOVE ZEROS  TO WS-MTH-RESIDE-SLS                                
+                MOVE ZEROS  TO WS-MTH-HHTY                                      
+           ELSE                                                                 
+                MOVE WS-DTE-SALE-EFF         TO WS-DTE-SLS                      
+                                              F558-DTE-EFF-SALES-SLS            
+                PERFORM 5210-COMPUTE-MTH-RESIDE THRU 5210-EXIT                  
+                PERFORM 5215-COMPUTE-MTH-HHTY  THRU 5215-EXIT                   
+           END-IF.                                                              
+                                                                                
+                                                                                
+       5205-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5210-COMPUTE-MTH-RESIDE.                                                 
+                                                                                
+           PERFORM 5220-GET-MTH-SUBLET    THRU 5220-EXIT.                       
+                                                                                
+           IF F713-CDE-COHORT = 'QT'                                            
+              COMPUTE WS-MTH-RESIDE-SLS =                                       
+                    ((WS-BALLOT-CCYY * 12) + WS-BALLOT-MM) -                    
+                    ((WS-SLS-CCYY    * 12) + WS-SLS-MM   )                      
+              COMPUTE WS-MTH-RESIDE-SLS =                                       
+                      WS-MTH-RESIDE-SLS - WS-SUBLET-SLS                         
+           ELSE                                                                 
+           IF F713-CDE-COHORT = 'WK'                                            
+              COMPUTE WS-MTH-RESIDE-SLS =                                       
+                    ((WS-REGN-CCYY   * 12) + WS-REGN-MM) -                      
+                    ((WS-SLS-CCYY    * 12) + WS-SLS-MM )                        
+              COMPUTE WS-MTH-RESIDE-SLS =                                       
+                      WS-MTH-RESIDE-SLS - WS-SUBLET-SLS                         
+           END-IF.                                                              
+                                                                                
+                                                                                
+       5210-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5215-COMPUTE-MTH-HHTY.                                                   
+                                                                                
+           IF WS-NUM-SRNDR  = 'CI'                                              
+                MOVE WS-DTE-FLAT-REVEST      TO WS-DTE-HHTY                     
+           ELSE                                                                 
+                MOVE WS-DTE-APPLY            TO WS-DTE-HHTY                     
+           END-IF.                                                              
+           COMPUTE WS-MTH-HHTY =                                                
+                    ((WS-HHTY-CCYY   * 12) + WS-HHTY-MM) -                      
+                    ((WS-SLS-CCYY    * 12) + WS-SLS-MM ).                       
+                                                                                
+       5215-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       5220-GET-MTH-SUBLET.                                                     
+      *==============================================================*          
+      *--------------------------------------------------------------*          
+      * DETERMINE THE MTH-SUBLET USING AB03K030.                                
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE ZEROES TO WS-SUBLET-SLS.                                        
+                                                                                
+           IF K100-NUM-HDB-REF NOT = LOW-VALUES AND SPACES                      
+              PERFORM 5500-GET-SUBLET       THRU 5500-EXIT                      
+              MOVE WS-MONTH-TOT             TO WS-SUBLET-SLS                    
+           END-IF.                                                              
+                                                                                
+       5220-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *================================================================*        
+       5500-GET-SUBLET.                                                         
+      *================================================================*        
+                                                                                
+           MOVE ZEROS                    TO WS-MONTH-TOT.                       
+           MOVE SPACES                   TO WS-B935-AREA                        
+           MOVE K100-NUM-HDB-REF         TO B935-NUM-HDB-REF.                   
+                                                                                
+           IF (F558-NUM-NRIC    NOT = SPACES AND LOW-VALUES) AND                
+              (K100-NUM-HDB-REF NOT = SPACES AND LOW-VALUES)                    
+              MOVE F558-NUM-NRIC  TO WS-LINK-NUM-NRIC                           
+              CALL 'BP13C998' USING WS-LINK-REC1, BP13COM91-REC                 
+           END-IF.                                                              
+           PERFORM 6000-CALL-BR12C935  THRU 6000-EXIT                           
+           IF B935-QTY-EFF-NON-OCPTN-MTH NOT NUMERIC                            
+              MOVE ZEROS TO B935-QTY-EFF-NON-OCPTN-MTH                          
+           END-IF.                                                              
+           MOVE B935-QTY-EFF-NON-OCPTN-MTH TO WS-MONTH-TOT.                     
+                                                                                
+           IF COM91-ERR-CODE = '0000'                                           
+              PERFORM 5600-GET-EX-ROLE-DETAIL THRU 5600-EXIT                    
+           END-IF.                                                              
+                                                                                
+       5500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *================================================================*        
+       5600-GET-EX-ROLE-DETAIL.                                                 
+      *================================================================*        
+                                                                                
+           PERFORM VARYING WS-CTR FROM 1 BY 1 UNTIL WS-CTR > 6                  
+             IF (COM91-SCH-ACCT(WS-CTR)                                         
+                             NOT = SPACES AND LOW-VALUES) AND                   
+                (COM91-NUM-ROLE(WS-CTR) = '023' OR '024')                       
+                IF (K100-NUM-HDB-REF(1:9) =                                     
+                                     COM91-SCH-ACCT(WS-CTR)(1:9)) AND           
+                   (K100-NUM-HDB-REF NOT  =                                     
+                                     COM91-SCH-ACCT(WS-CTR))                    
+                   MOVE SPACES TO WS-B935-AREA                                  
+                   MOVE COM91-SCH-ACCT(WS-CTR) TO B935-NUM-HDB-REF              
+                   PERFORM 6000-CALL-BR12C935  THRU 6000-EXIT                   
+                   IF B935-QTY-EFF-NON-OCPTN-MTH NOT NUMERIC                    
+                      MOVE ZEROS TO B935-QTY-EFF-NON-OCPTN-MTH                  
+                   END-IF                                                       
+                   ADD B935-QTY-EFF-NON-OCPTN-MTH TO WS-MONTH-TOT               
+                END-IF                                                          
+             END-IF                                                             
+           END-PERFORM.                                                         
+                                                                                
+       5600-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *================================================================*        
+       6000-CALL-BR12C935.                                                      
+      *================================================================*        
+                                                                                
+           IF F558-DTE-ISSUE-REGN NOT = SPACES AND LOW-VALUES                   
+              MOVE F558-DTE-ISSUE-REGN   TO B935-DTE-INPUT                      
+           ELSE                                                                 
+              MOVE WS-CUR-DATE          TO B935-DTE-INPUT                       
+           END-IF.                                                              
+                                                                                
+           CALL 'BR12C935' USING  WS-B935-AREA.                                 
+           IF B935-NUM-ERROR NOT = '00000'                                      
+              DISPLAY 'ERROR CALLING BR12C935. REF - ' B935-NUM-HDB-REF         
+           END-IF.                                                              
+                                                                                
+       6000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *================================================================*        
+       6100-OPEN-BR12C935.                                                      
+      *================================================================*        
+                                                                                
+           MOVE 'O' TO B935-CDE-ACTION                                          
+                                                                                
+           CALL 'BR12C935' USING  WS-B935-AREA.                                 
+           IF B935-NUM-ERROR NOT = '00000'                                      
+              DISPLAY 'OPEN ERROR BR12C935 ERROR CDE - '                        
+                       B935-NUM-SYSERR ' REF.- '    B935-NUM-HDB-REF            
+           END-IF.                                                              
+                                                                                
+       6100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *================================================================*        
+       6200-CLOSE-BR12C935.                                                     
+      *================================================================*        
+                                                                                
+           MOVE 'C' TO B935-CDE-ACTION                                          
+                                                                                
+           CALL 'BR12C935' USING  WS-B935-AREA.                                 
+           IF B935-NUM-ERROR NOT = '00000'                                      
+              DISPLAY 'CLOSE ERROR BR12C935 ERROR CDE - '                       
+                       B935-NUM-SYSERR ' REF.- '    B935-NUM-HDB-REF            
+           END-IF.                                                              
+                                                                                
+       6200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *==============================================================*          
+       8000-PRINT-BP13L062.                                                     
+      *==============================================================*          
+                                                                                
+      **@  **PRINT HEADER AND CAPTION.                                          
+           IF WS-CNT-LINE > 56                                                  
+              PERFORM 8010-PRINT-HEADER   THRU 8010-EXIT                        
+           END-IF.                                                              
+                                                                                
+      **@  **PRINT DETAILS.                                                     
+           ADD 1 TO WS-CNT-SNO.                                                 
+           INITIALIZE L062-DETAILS.                                             
+           MOVE WS-CNT-SNO                TO L062-CNT-SNO.                      
+           MOVE F558-NUM-NRIC             TO L062-NRIC.                         
+           MOVE F558-NUM-HDB-REF-SLS      TO L062-HDB-REF.                      
+           MOVE F558-NUM-SRNDR-SLS        TO L062-SRNDR.                        
+           MOVE F558-NUM-SALES-TYPE-SLS   TO L062-SALES-TYPE.                   
+                                                                                
+           STRING WS-DTE-APPLY(7:2) "/"                                         
+                  WS-DTE-APPLY(5:2) "/"                                         
+                  WS-DTE-APPLY(1:4)                                             
+                  DELIMITED BY SIZE       INTO L062-DTE-APPLY.                  
+                                                                                
+           STRING WS-DTE-FLAT-REVEST(7:2) "/"                                   
+                  WS-DTE-FLAT-REVEST(5:2) "/"                                   
+                  WS-DTE-FLAT-REVEST(1:4)                                       
+                  DELIMITED BY SIZE       INTO L062-DTE-REVEST.                 
+                                                                                
+           STRING WS-DTE-SALE-EFF(7:2) "/"                                      
+                  WS-DTE-SALE-EFF(5:2) "/"                                      
+                  WS-DTE-SALE-EFF(1:4)                                          
+                  DELIMITED BY SIZE       INTO L062-DTE-SALE.                   
+                                                                                
+           STRING F558-DTE-ISSUE-REGN(7:2) "/"                                  
+                  F558-DTE-ISSUE-REGN(5:2) "/"                                  
+                  F558-DTE-ISSUE-REGN(1:4)                                      
+                  DELIMITED BY SIZE       INTO L062-DTE-REGN.                   
+                                                                                
+           IF WS-F558-BF-HH = F558-CDE-HOUSEHOLD                                
+              MOVE F558-CDE-HOUSEHOLD     TO L062-BF-HH                         
+              MOVE SPACES                 TO L062-AF-HH                         
+           ELSE                                                                 
+              MOVE WS-F558-BF-HH          TO L062-BF-HH                         
+              MOVE F558-CDE-HOUSEHOLD     TO L062-AF-HH                         
+           END-IF.                                                              
+                                                                                
+           MOVE WS-MTH-HHTY               TO L062-HH-MTH.                       
+           MOVE WS-MTH-RESIDE-SLS         TO L062-MTH-RSD-SLS.                  
+           MOVE WS-F558-MTH-RESIDE        TO L062-MTH-RSD.                      
+           MOVE WS-SUBLET-SLS             TO L062-SUBLET.                       
+           MOVE F558-NUM-5YR-OCCUPN       TO L062-5YR.                          
+           MOVE WS-FT-SLS                 TO L062-FT.                           
+                                                                                
+           WRITE BP13L062-REC FROM L062-DETAILS.                                
+           ADD 1 TO WS-CNT-LINE.                                                
+                                                                                
+       8000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       8010-PRINT-HEADER.                                                       
+      *==============================================================*          
+                                                                                
+           ADD   1 TO WS-CNT-PAGE.                                              
+           MOVE  WS-CNT-PAGE   TO L062-PAGE.                                    
+           WRITE BP13L062-REC FROM L062-HEADER1 AFTER PAGE.                     
+           WRITE BP13L062-REC FROM L062-HEADER2 AFTER 2.                        
+           MOVE  SPACES TO BP13L062-REC.                                        
+           WRITE BP13L062-REC.                                                  
+           WRITE BP13L062-REC FROM L062-CAPTION.                                
+           MOVE  SPACES TO BP13L062-REC.                                        
+           WRITE BP13L062-REC.                                                  
+           MOVE  5 TO WS-CNT-LINE.                                              
+                                                                                
+       8010-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       9000-CLOSE-FILES.                                                        
+      *==============================================================*          
+                                                                                
+           IF WS-CNT-PAGE = 0                                                   
+              PERFORM 8010-PRINT-HEADER   THRU 8010-EXIT                        
+           END-IF.                                                              
+                                                                                
+           DISPLAY '================================================='          
+           DISPLAY ' PROGRAM-ID : BP13C062         DATE : ' WS-EDT-DATE.        
+           DISPLAY '================================================='          
+           DISPLAY ' '.                                                         
+           MOVE BP13F558-CNT-READ   TO WS-EDT-VAR.                              
+           DISPLAY 'NO OF RECORDS READ    FROM BP13F558 : ' WS-EDT-VAR.         
+           MOVE BR05K100-CNT-FND    TO WS-EDT-VAR.                              
+           DISPLAY 'NO OF RECORDS FOUND     IN BR05K100 : ' WS-EDT-VAR.         
+           MOVE BR05K100-CNT-PROCSD TO WS-EDT-VAR.                              
+           DISPLAY 'NO OF RECORDS PROCESSED IN BR05K100 : ' WS-EDT-VAR.         
+           MOVE P13F558A-CNT-WRITE  TO WS-EDT-VAR.                              
+           DISPLAY 'NO OF RECS(ALL) WRITTEN IN P13F558B : ' WS-EDT-VAR.         
+           MOVE P13F558B-CNT-WRITE  TO WS-EDT-VAR.                              
+           DISPLAY 'NO OF RECS(SLS) WRITTEN IN P13F558B : ' WS-EDT-VAR.         
+           DISPLAY ' '.                                                         
+           DISPLAY '================================================='          
+                                                                                
+           PERFORM 6200-CLOSE-BR12C935 THRU 6200-EXIT                           
+                                                                                
+           CLOSE BP13F558                                                       
+                 BP13F713                                                       
+                 BR05K100                                                       
+                 P13F558B                                                       
+                 BP13L062.                                                      
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

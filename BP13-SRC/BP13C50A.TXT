@@ -1,0 +1,728 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C50A.                                                 
+      *AUTHOR.        LIZ PATIAG.                                               
+      *DATE-WRITTEN.  07 APR 2017.                                              
+      *========================================================*                
+      * SYSTEM OF COMMITMENT (BP13)                            *                
+      *========================================================*                
+      *    OBJECTIVE :                                         *                
+      *      1.  FOR FS APPLICATION IF                         *                
+      *          A) BOOKED WITHOUT DTE-SIGN-SALES=AGREEMENT    *                
+      *          B) SIGN-SALES=AGREEMENT, WITH PACD=M, PCD-DATE*                
+      *          WRITE TO K517 CASES TO BE SENT TO ROM FOR     *                
+      *          MARRIAGE SCREENING                            *                
+      *      2. FOR ALLOC-SCH = FTS, ELIG-SCH = SSC            *                
+      *          A) NRIC IN K820 IS FOUND IN F800              *                
+      *          B) IF MARITAL STATUS NOT 'M' OR '2'           *                
+      *          WRITE TO K517 CASES WITH WS-NUM-TRANS = P TO  *                
+      *          BE SENT TO ROM FOR MARRIAGE SCREENING         *                
+      *--------------------------------------------------------*                
+      * CHG-NO    BY  DATE    DESCRIPTION                      *                
+      * -------  ---  ------  -----------                      *                
+      * BP136646 FNP1 070417  NEW PROGRAM                      *                
+      * BP137791 KV6  020819  TO CATER FOR NON-MARRIED (NON-FS)*                
+      *                       APPLICANTS (WS-NUM-TRANS = 'P')  *                
+      * BP138833 FP6  300721  TO CATER SCHEMES OTHER THAN FTS, *                
+      *                       SINGLE, SCH-ACC NOT BLANK AND PEN-                
+      *                       DING KEY COLLECTION/3 MONTH PCD  *                
+      *========================================================*                
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F800 ASSIGN TO BP13F800.                                  
+                                                                                
+           SELECT BP13K517     ASSIGN        TO BP13K517                        
+                               ACCESS MODE   IS DYNAMIC                         
+                               ORGANIZATION  IS INDEXED                         
+                               RECORD KEY    IS K517-KEY-FLD                    
+                               FILE STATUS   IS WS-K517-STATUS.                 
+                                                                                
+           SELECT BP13K820     ASSIGN        TO BP13K820                        
+                               ACCESS MODE   IS DYNAMIC                         
+                               ORGANIZATION  IS INDEXED                         
+                               RECORD KEY    IS K820-KEY-FLD                    
+                               FILE STATUS   IS WS-K820-STATUS.                 
+                                                                                
+           SELECT BM06K110     ASSIGN        TO BM06K110                        
+                               ACCESS MODE   IS DYNAMIC                         
+                               ORGANIZATION  IS INDEXED                         
+                               RECORD KEY    IS K110-KEY-FLD                    
+                               FILE STATUS   IS WS-K110-STATUS.                 
+                                                                                
+           SELECT BM06K100     ASSIGN        TO BM06K100                        
+                               ORGANIZATION  IS INDEXED                         
+                               ACCESS MODE   IS RANDOM                          
+                               RECORD KEY    IS K100-KEY-FLD                    
+                               FILE STATUS   IS WS-K100-STATUS.                 
+                                                                                
+           SELECT BP13BE01 ASSIGN TO BP13BE01.                                  
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F800                                                            
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            BLOCK  CONTAINS 0   RECORDS                                         
+            LABEL  RECORDS ARE  STANDARD                                        
+            RECORDING MODE IS F.                                                
+       COPY BP13F800.                                                           
+                                                                                
+       FD   BP13K517                                                            
+            RECORD CONTAINS 250 CHARACTERS.                                     
+       COPY BP13K517.                                                           
+                                                                                
+       FD   BP13K820                                                            
+            RECORD CONTAINS 400 CHARACTERS.                                     
+       COPY BP13K820.                                                           
+                                                                                
+       FD   BM06K110                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BM06K110.                                                           
+                                                                                
+       FD   BM06K100                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BM06K100.                                                           
+                                                                                
+       FD   BP13BE01                                                            
+            RECORD CONTAINS  160 CHARACTERS                                     
+            BLOCK  CONTAINS 0   RECORDS                                         
+            LABEL  RECORDS ARE  STANDARD                                        
+            RECORDING MODE IS F.                                                
+       01   BP13BE01-REC.                                                       
+            05  BE01-IDNO        PIC X(20).                                     
+            05  BE01-IDTYP       PIC X(03).                                     
+            05  FILLER           PIC X(67).                                     
+            05  BE01-SOURCE      PIC X(04).                                     
+            05  FILLER           PIC X(28).                                     
+            05  BE01-DTE-SENT    PIC X(10).                                     
+            05  FILLER           PIC X(28).                                     
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-K517-STATUS       PIC 9(2)    VALUE ZEROES.                   
+           05  WS-K820-STATUS       PIC 9(2)    VALUE ZEROES.                   
+           05  WS-K100-STATUS       PIC 9(2)    VALUE ZEROES.                   
+           05  WS-K110-STATUS       PIC 9(2)    VALUE ZEROES.                   
+           05  F800-EOF             PIC X(01)   VALUE ' '.                      
+           05  K820-EOF             PIC X(01)   VALUE ' '.                      
+           05  WS-K110-VALID        PIC X(01)   VALUE 'N'.                      
+           05  WS-K100-VALID        PIC X(01)   VALUE 'N'.                      
+           05  WS-K820-FND          PIC X(01)   VALUE ' '.                      
+           05  WS-CURRENT-DATE      PIC X(08)   VALUE SPACES.                   
+           05  WS-NUM-TRANS         PIC X(01)   VALUE SPACES.                   
+           05  WS-HA-SINGLE         PIC X(01)   VALUE 'N'.                      
+           05  WS-K110-FND          PIC X(01)   VALUE 'N'.                      
+           05  WS-K100-FND          PIC X(01)   VALUE 'N'.                      
+           05  WS-VALID-KEY         PIC X(01)   VALUE 'N'.                      
+           05  WS-VALID-PACD        PIC X(01)   VALUE 'N'.                      
+           05  WS-NRIC              PIC X(09)   VALUE SPACES.                   
+           05  WS-NME-OCCP          PIC X(66)   VALUE SPACES.                   
+           05  WS-DTE-CURR.                                                     
+               10  WS-CURR-YY       PIC 9(4)    VALUE ZEROES.                   
+               10  WS-CURR-MM       PIC 9(2)    VALUE ZEROES.                   
+               10  WS-CURR-DD       PIC 9(2)    VALUE ZEROES.                   
+           05  WS-START-PACD.                                                   
+               10  WS-START-YY      PIC 9(4)    VALUE ZEROES.                   
+               10  WS-START-MM      PIC 9(2)    VALUE ZEROES.                   
+           05  WS-END-PACD.                                                     
+               10  WS-END-YY        PIC 9(4)    VALUE ZEROES.                   
+               10  WS-END-MM        PIC 9(2)    VALUE ZEROES.                   
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05 CNT-F800-READ         PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-K820-READ         PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-K820-FS           PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-K820-PA           PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-NOT-FS            PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-NOT-FS-READ       PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-NOT-FS-KEY        PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-NOT-FS-PACD       PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-K517-WRITE        PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-BE01-WRITE        PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-K517-DUP          PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-FS                PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-PA                PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-OTH               PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-BOOK              PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-SIGN-SA           PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-FS-REC            PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-K110-FOUND        PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-K110-VALID        PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-K100-FOUND        PIC 9(7)    VALUE ZEROES.                   
+           05 CNT-K100-VALID        PIC 9(7)    VALUE ZEROES.                   
+           05 CNT                   PIC 9       VALUE ZEROES.                   
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+      *------------------------------------------------------------             
+       0000-MAIN.                                                               
+      *------------------------------------------------------------             
+                                                                                
+           PERFORM 1000-OPEN-ROUTINE    THRU 1000-EXIT.                         
+           PERFORM 1100-READ-BP13F800   THRU 1100-EXIT.                         
+           PERFORM 2000-PROCESS-RECORDS THRU 2000-EXIT                          
+              UNTIL F800-EOF = 'Y'.                                             
+           PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT.                         
+                                                                                
+       0000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------------------------------------------             
+       1000-OPEN-ROUTINE.                                                       
+      *------------------------------------------------------------             
+                                                                                
+           OPEN INPUT  BP13F800                                                 
+                       BP13K820                                                 
+                       BM06K100                                                 
+                       BM06K110                                                 
+                I-O    BP13K517                                                 
+                OUTPUT BP13BE01.                                                
+                                                                                
+           IF WS-K517-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'BP13K517 OPEN ERROR ' WS-K517-STATUS                     
+              MOVE WS-K517-STATUS        TO RETURN-CODE                         
+                                                                                
+              PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                         
+           END-IF.                                                              
+                                                                                
+           IF WS-K820-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'BP13K820 OPEN ERROR ' WS-K820-STATUS                     
+              MOVE WS-K820-STATUS        TO RETURN-CODE                         
+                                                                                
+              PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                         
+           END-IF.                                                              
+                                                                                
+           IF WS-K100-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'BM06K100 OPEN ERROR ' WS-K100-STATUS                     
+              MOVE WS-K100-STATUS        TO RETURN-CODE                         
+                                                                                
+              PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                         
+           END-IF.                                                              
+                                                                                
+           IF WS-K110-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'BM06K110 OPEN ERROR ' WS-K110-STATUS                     
+              MOVE WS-K110-STATUS        TO RETURN-CODE                         
+                                                                                
+              PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                         
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8) TO WS-CURRENT-DATE.                  
+           MOVE WS-CURRENT-DATE            TO WS-DTE-CURR.                      
+           PERFORM 1050-GET-CUTOFF-DATE    THRU 1050-EXIT.                      
+                                                                                
+       1000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------------------------------------------             
+       1050-GET-CUTOFF-DATE.                                                    
+      *------------------------------------------------------------             
+                                                                                
+           IF WS-CURR-MM = 01                                                   
+              MOVE 12             TO WS-START-MM                                
+              COMPUTE WS-START-YY = WS-CURR-YY - 1                              
+           ELSE                                                                 
+              COMPUTE WS-START-MM = WS-CURR-MM - 1                              
+              MOVE WS-CURR-YY     TO WS-START-YY                                
+           END-IF.                                                              
+                                                                                
+           COMPUTE WS-END-MM = WS-CURR-MM + 3.                                  
+                                                                                
+           IF WS-END-MM > 12                                                    
+              ADD 1 TO WS-END-YY                                                
+              COMPUTE WS-END-MM = WS-END-MM - 12                                
+           ELSE                                                                 
+              MOVE WS-CURR-YY     TO WS-END-YY                                  
+           END-IF.                                                              
+                                                                                
+       1050-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------------------------------------------             
+       1100-READ-BP13F800.                                                      
+      *------------------------------------------------------------             
+                                                                                
+           READ BP13F800                                                        
+              AT END                                                            
+                 MOVE 'Y'                TO F800-EOF                            
+                GO TO 1100-EXIT.                                                
+                                                                                
+           ADD 1 TO CNT-F800-READ.                                              
+                                                                                
+       1100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------------------------------------------             
+       2000-PROCESS-RECORDS.                                                    
+      *------------------------------------------------------------             
+                                                                                
+           MOVE 'N'    TO WS-K110-VALID.                                        
+           MOVE 'N'    TO WS-K100-VALID.                                        
+           MOVE SPACES TO WS-NUM-TRANS.                                         
+           MOVE 'N'    TO WS-VALID-KEY.                                         
+           MOVE 'N'    TO WS-VALID-PACD.                                        
+                                                                                
+           IF (F800-NUM-ALLO-SCHEME = 'FTS' OR                                  
+               F800-NUM-ELIG-SCHEME = 'SSC')  AND                               
+              (F800-NUM-SCH-ACC NOT = SPACES  AND LOW-VALUES)                   
+              ADD 1                       TO CNT-PA                             
+              MOVE 'P'                    TO WS-NUM-TRANS                       
+              PERFORM 2500-START-BP13K820 THRU 2500-EXIT                        
+              PERFORM 1100-READ-BP13F800  THRU  1100-EXIT                       
+              GO TO 2000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           IF (F800-NUM-ELIG-SCHEME NOT = 'FS ') AND                            
+              (F800-NUM-SCH-ACC NOT = SPACES AND LOW-VALUES)                    
+              ADD 1 TO CNT-NOT-FS-READ                                          
+              PERFORM 4100-PROCESS-NON-FS   THRU 4100-EXIT                      
+              PERFORM 1100-READ-BP13F800  THRU  1100-EXIT                       
+              GO TO 2000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-ELIG-SCHEME = 'FS ' AND                                  
+             (F800-NUM-SCH-ACC NOT = SPACES  AND LOW-VALUES)                    
+              ADD 1 TO CNT-FS                                                   
+              PERFORM 3300-READ-BM06K110 THRU 3300-EXIT                         
+           END-IF.                                                              
+                                                                                
+           IF WS-K110-VALID = 'Y'                                               
+              IF F800-DTE-SALE-AGMT = SPACES OR ZEROS                           
+                 IF F800-DTE-ACCEPTANCE NOT = SPACES                            
+                    ADD 1 TO CNT-BOOK                                           
+                    MOVE 'B' TO WS-NUM-TRANS                                    
+                    PERFORM 2500-START-BP13K820 THRU 2500-EXIT                  
+                 END-IF                                                         
+              ELSE                                                              
+      *          IF WS-K100-VALID = 'Y'                                         
+                    ADD 1 TO CNT-SIGN-SA                                        
+                    MOVE 'S' TO WS-NUM-TRANS                                    
+                    PERFORM 2500-START-BP13K820 THRU 2500-EXIT                  
+      *          END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 1100-READ-BP13F800   THRU  1100-EXIT.                        
+                                                                                
+       2000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------------------------------------------             
+       2500-START-BP13K820.                                                     
+      *------------------------------------------------------------             
+                                                                                
+           MOVE ZEROES                            TO CNT.                       
+           MOVE SPACES                            TO BP13K820-REC               
+           INITIALIZE                                BP13K820-REC.              
+           MOVE 'N'                               TO K820-EOF                   
+                                                     WS-K820-FND.               
+                                                                                
+           MOVE F800-NUM-REGN                     TO K820-NUM-REGN              
+                                                                                
+           START BP13K820 KEY >= K820-KEY-FLD.                                  
+                                                                                
+           IF WS-K820-STATUS = 00 OR 02                                         
+              MOVE 'Y'                            TO WS-K820-FND                
+              IF WS-NUM-TRANS = 'P'                                             
+                 PERFORM 2600-READNEXT-BP13K820 UNTIL                           
+                    K820-EOF = 'Y' OR CNT > 4                                   
+              ELSE                                                              
+                 PERFORM 2600-READNEXT-BP13K820 UNTIL                           
+                    K820-EOF = 'Y' OR CNT > 2                                   
+              END-IF                                                            
+           ELSE                                                                 
+              IF WS-K820-STATUS = 23 OR 10                                      
+                 MOVE 'N'                         TO WS-K820-FND                
+              ELSE                                                              
+                 DISPLAY 'BP13K820 - ERROR STARTING : ' WS-K820-STATUS          
+                 GO TO 9000-CLOSE-ROUTINE                                       
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       2500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===============================================================*         
+       2600-READNEXT-BP13K820.                                                  
+      *===============================================================*         
+                                                                                
+           READ BP13K820 NEXT RECORD                                            
+             AT END                                                             
+                MOVE 'Y'    TO K820-EOF                                         
+                GO          TO 2600-EXIT                                        
+           END-READ.                                                            
+                                                                                
+           IF WS-K820-STATUS = 00 OR 02                                         
+              IF K820-NUM-REGN = F800-NUM-REGN                                  
+                 ADD 1 TO CNT-K820-READ                                         
+                 IF WS-NUM-TRANS = 'P'                                          
+                    IF ((K820-NUM-NRIC = F800-NUM-NRIC1) OR                     
+                        (K820-NUM-NRIC = F800-NUM-NRIC2) OR                     
+                        (K820-NUM-NRIC = F800-NUM-NRIC3) OR                     
+                        (K820-NUM-NRIC = F800-NUM-NRIC4)) AND                   
+                        (K820-NUM-MARITAL-STATUS = '1' OR 'S')                  
+                       ADD 1                 TO CNT                             
+                       ADD 1                 TO CNT-K820-PA                     
+      *                MOVE 'Y' TO K820-EOF                                     
+                       PERFORM 3000-READ-BP13K517  THRU 3000-EXIT               
+                    END-IF                                                      
+                 ELSE                                                           
+                    IF K820-NUM-RELATIONSHIP NOT NUMERIC                        
+                       MOVE ZEROES           TO K820-NUM-RELATIONSHIP           
+                    END-IF                                                      
+                                                                                
+                    IF K820-NUM-RELATIONSHIP = '00' OR '09'                     
+                       ADD 1                 TO CNT                             
+                       ADD 1                 TO CNT-K820-FS                     
+                       ADD 1                 TO CNT-FS-REC                      
+                       PERFORM 3000-READ-BP13K517  THRU 3000-EXIT               
+                    END-IF                                                      
+                 END-IF                                                         
+              ELSE                                                              
+                 MOVE 'Y'                         TO K820-EOF                   
+              END-IF                                                            
+           ELSE                                                                 
+              IF WS-K820-STATUS = 23 OR 10                                      
+                 MOVE 'Y'                         TO K820-EOF                   
+              ELSE                                                              
+                 DISPLAY 'BP13K820 - ERROR NEXT READ : ' WS-K820-STATUS         
+                 GO TO 9000-CLOSE-ROUTINE                                       
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       2600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------------------------------------------             
+       3000-READ-BP13K517.                                                      
+      *------------------------------------------------------------             
+                                                                                
+           MOVE SPACES                   TO K517-KEY-FLD.                       
+           MOVE K820-NUM-NRIC            TO K517-NUM-NRIC.                      
+                                                                                
+           READ BP13K517.                                                       
+                                                                                
+           EVALUATE WS-K517-STATUS                                              
+               WHEN 00                                                          
+                    ADD 1 TO CNT-K517-DUP                                       
+                    PERFORM 3600-WRITE-BP13BE01  THRU 3600-EXIT                 
+               WHEN 10                                                          
+               WHEN 23                                                          
+                    PERFORM 3500-WRITE-BP13K517  THRU 3500-EXIT                 
+               WHEN OTHER                                                       
+                    DISPLAY 'BP13K517 READ ERROR ' WS-K517-STATUS               
+                    DISPLAY 'K517 KEY: ' K517-KEY-FLD                           
+                    MOVE WS-K517-STATUS  TO RETURN-CODE                         
+                                                                                
+                    PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       3000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------------------------------------------             
+       3300-READ-BM06K110.                                                      
+      *------------------------------------------------------------             
+                                                                                
+           MOVE 'N'                      TO WS-K110-FND.                        
+           MOVE SPACES                   TO K110-KEY-FLD.                       
+           MOVE F800-NUM-SCH-ACC         TO K110-KEY-FLD.                       
+                                                                                
+           READ BM06K110.                                                       
+                                                                                
+           EVALUATE WS-K110-STATUS                                              
+               WHEN 00                                                          
+                    ADD 1 TO CNT-K110-FOUND                                     
+                    IF K110-DTE-ACCEPTANCE NOT = ZEROS AND                      
+                       K110-DTE-KEY-ISSUED = ZEROS                              
+                       MOVE 'Y' TO WS-K110-VALID                                
+                       ADD 1 TO CNT-K110-VALID                                  
+      **               PERFORM 3400-READ-BM06K100  THRU 3400-EXIT               
+                    END-IF                                                      
+                    MOVE 'Y' TO WS-K110-FND                                     
+               WHEN 10                                                          
+               WHEN 23                                                          
+                    MOVE SPACES TO K110-DTE-KEY-ISSUED                          
+                    MOVE SPACES TO K110-DTE-ACCEPTANCE                          
+                    MOVE SPACES TO K110-DTE-KEY-AVAIL                           
+               WHEN OTHER                                                       
+                    DISPLAY 'BM06K110 READ ERROR ' WS-K110-STATUS               
+                    DISPLAY 'K110 KEY: ' K110-KEY-FLD                           
+                    MOVE WS-K110-STATUS  TO RETURN-CODE                         
+                                                                                
+                    PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       3300-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3400-READ-BM06K100.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE K110-AIX1          TO   K100-KEY-FLD.                           
+                                                                                
+           READ BM06K100 KEY IS K100-KEY-FLD.                                   
+                                                                                
+           EVALUATE WS-K100-STATUS                                              
+               WHEN 00                                                          
+               WHEN 02                                                          
+                    ADD 1 TO CNT-K100-FOUND                                     
+                    IF K100-NUM-PACD = 'M' AND K100-DTE-PACD > ZEROS            
+                       ADD 1 TO CNT-K100-VALID                                  
+                       MOVE 'Y' TO WS-K100-VALID                                
+                    END-IF                                                      
+               WHEN 10                                                          
+               WHEN 23                                                          
+                    MOVE SPACES    TO K100-NUM-PACD                             
+               WHEN OTHER                                                       
+                    MOVE WS-K100-STATUS              TO RETURN-CODE             
+                    DISPLAY 'ERROR READING BM06K100, STATUS '                   
+                          WS-K100-STATUS                                        
+                    PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       3400-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------------------------------------------             
+       3500-WRITE-BP13K517.                                                     
+      *------------------------------------------------------------             
+           MOVE SPACES                     TO BP13K517-REC.                     
+                                                                                
+           MOVE F800-NUM-REGN              TO K517-NUM-REGN.                    
+           MOVE K820-NUM-NRIC              TO K517-NUM-NRIC.                    
+           MOVE K820-NME-OCCP              TO K517-NME.                         
+           MOVE WS-NUM-TRANS               TO K517-NUM-TRAN.                    
+           MOVE 'SEND'                     TO K517-NUM-REMARK.                  
+           MOVE WS-CURRENT-DATE            TO K517-DTE-CREATE                   
+                                              K517-DTE-SENT.                    
+           MOVE 'BP13C50A'                 TO K517-NUM-USERID.                  
+           MOVE 'UIN'                      TO K517-NUM-IDNO-TYPE.               
+           WRITE BP13K517-REC.                                                  
+                                                                                
+           EVALUATE WS-K517-STATUS                                              
+               WHEN 00                                                          
+                    ADD 1 TO CNT-K517-WRITE                                     
+                    PERFORM 3600-WRITE-BP13BE01  THRU 3600-EXIT                 
+               WHEN 02                                                          
+               WHEN 22                                                          
+                    ADD 1 TO CNT-K517-DUP                                       
+               WHEN OTHER                                                       
+                    DISPLAY 'BP13K517 WRITE ERROR ' WS-K517-STATUS              
+                    DISPLAY 'K517 KEY: ' K517-KEY-FLD                           
+                    MOVE WS-K517-STATUS  TO RETURN-CODE                         
+                                                                                
+                    PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       3500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------------------------------------------             
+       3600-WRITE-BP13BE01.                                                     
+      *------------------------------------------------------------             
+           MOVE SPACES                     TO BP13BE01-REC.                     
+                                                                                
+           MOVE K820-NUM-NRIC              TO BE01-IDNO.                        
+           MOVE 'UIN'                      TO BE01-IDTYP.                       
+           MOVE 'BP13'                     TO BE01-SOURCE.                      
+           STRING WS-CURRENT-DATE(1:4) '-'                                      
+                  WS-CURRENT-DATE(5:2) '-'                                      
+                  WS-CURRENT-DATE(7:2)                                          
+                  DELIMITED BY SIZE      INTO BE01-DTE-SENT.                    
+           WRITE BP13BE01-REC.                                                  
+           ADD 1 TO CNT-BE01-WRITE.                                             
+                                                                                
+       3600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------------------------------------------             
+       4000-READ-BP13K820.                                                      
+      *------------------------------------------------------------             
+                                                                                
+           MOVE 'N'                      TO WS-HA-SINGLE.                       
+           MOVE SPACES                   TO K820-KEY-FLD.                       
+           MOVE WS-NRIC                  TO K820-NUM-NRIC.                      
+           MOVE F800-NUM-REGN            TO K820-NUM-REGN.                      
+           MOVE SPACES                   TO WS-NME-OCCP.                        
+                                                                                
+           READ BP13K820.                                                       
+                                                                                
+           EVALUATE WS-K820-STATUS                                              
+               WHEN 00                                                          
+                    IF K820-NUM-MARITAL-STATUS = '1' OR '4' OR '5' OR           
+                                                 'S' OR 'D' OR 'P'              
+                       MOVE 'Y' TO WS-HA-SINGLE                                 
+                       MOVE K820-NME-OCCP TO WS-NME-OCCP                        
+                    END-IF                                                      
+                                                                                
+               WHEN 10                                                          
+               WHEN 23                                                          
+                    DISPLAY 'RECORD NOT FOUND FOR : '                           
+                        K820-KEY-FLD                                            
+               WHEN OTHER                                                       
+                    DISPLAY 'BP13K820 READ ERROR ' WS-K820-STATUS               
+                    DISPLAY 'K820 KEY: ' K820-KEY-FLD                           
+                    MOVE WS-K820-STATUS  TO RETURN-CODE                         
+                                                                                
+                    PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       4000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------------------------------------------             
+       4100-PROCESS-NON-FS.                                                     
+      *------------------------------------------------------------             
+           PERFORM 4200-CHECK-VALID-DTE  THRU 4200-EXIT.                        
+                                                                                
+           IF WS-VALID-KEY = 'Y' OR WS-VALID-PACD = 'Y'                         
+              MOVE SPACES                   TO WS-NRIC                          
+              MOVE F800-NUM-NRIC1           TO WS-NRIC                          
+              PERFORM 4000-READ-BP13K820    THRU 4000-EXIT                      
+              IF WS-HA-SINGLE = 'Y'                                             
+                 PERFORM 4300-PROCESS-SINGLE  THRU 4300-EXIT                    
+              END-IF                                                            
+                                                                                
+              IF F800-NUM-NRIC2 NOT = SPACES AND LOW-VALUES                     
+                 MOVE SPACES                TO WS-NRIC                          
+                 MOVE F800-NUM-NRIC2        TO WS-NRIC                          
+                 PERFORM 4000-READ-BP13K820 THRU 4000-EXIT                      
+                 IF WS-HA-SINGLE = 'Y'                                          
+                    PERFORM 4300-PROCESS-SINGLE THRU 4300-EXIT                  
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              IF F800-NUM-NRIC3 NOT = SPACES AND LOW-VALUES                     
+                 MOVE SPACES                TO WS-NRIC                          
+                 MOVE F800-NUM-NRIC3        TO WS-NRIC                          
+                 PERFORM 4000-READ-BP13K820 THRU 4000-EXIT                      
+                 IF WS-HA-SINGLE = 'Y'                                          
+                    PERFORM 4300-PROCESS-SINGLE THRU 4300-EXIT                  
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              IF F800-NUM-NRIC4 NOT = SPACES AND LOW-VALUES                     
+                 MOVE SPACES                TO WS-NRIC                          
+                 MOVE F800-NUM-NRIC4        TO WS-NRIC                          
+                 PERFORM 4000-READ-BP13K820 THRU 4000-EXIT                      
+                 IF WS-HA-SINGLE = 'Y'                                          
+                    PERFORM 4300-PROCESS-SINGLE THRU 4300-EXIT                  
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------------------------------------------             
+       4200-CHECK-VALID-DTE.                                                    
+      *------------------------------------------------------------             
+           PERFORM 3300-READ-BM06K110  THRU 3300-EXIT.                          
+                                                                                
+           IF WS-K110-FND = 'Y'                                                 
+              PERFORM 3400-READ-BM06K100 THRU 3400-EXIT                         
+           END-IF.                                                              
+                                                                                
+           IF (K110-DTE-KEY-AVAIL NOT = SPACES AND LOW-VALUES AND               
+                                        ZEROES) AND                             
+              (K110-DTE-KEY-ISSUED = ZEROES)                                    
+              MOVE 'Y'              TO WS-VALID-KEY                             
+           END-IF.                                                              
+                                                                                
+           IF K100-DTE-PACD NOT = SPACES AND LOW-VALUES AND ZEROES              
+              IF K100-DTE-PACD(1:6) <= WS-END-PACD AND                          
+                 K100-DTE-PACD(1:6) >= WS-START-PACD                            
+                 MOVE 'Y' TO WS-VALID-PACD                                      
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------------------------------------------             
+       4300-PROCESS-SINGLE.                                                     
+      *------------------------------------------------------------             
+           IF WS-VALID-KEY = 'Y'                                                
+              ADD 1 TO CNT-NOT-FS-KEY                                           
+           END-IF.                                                              
+                                                                                
+           IF WS-VALID-PACD = 'Y'                                               
+              ADD 1 TO CNT-NOT-FS-PACD                                          
+           END-IF.                                                              
+                                                                                
+           MOVE 'P'                    TO WS-NUM-TRANS                          
+           ADD 1                       TO CNT-NOT-FS                            
+           MOVE WS-NRIC                TO K820-NUM-NRIC                         
+           MOVE WS-NME-OCCP            TO K820-NME-OCCP                         
+           PERFORM 3000-READ-BP13K517  THRU 3000-EXIT.                          
+                                                                                
+       4300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------------------------------------------             
+       9000-CLOSE-ROUTINE.                                                      
+      *------------------------------------------------------------             
+                                                                                
+           DISPLAY ' '.                                                         
+           DISPLAY '***********BP13C50A END OF JOB*******************'.         
+           DISPLAY '*-----------------------------------------------*'.         
+           DISPLAY 'NO OF REC READ FROM F800     ' CNT-F800-READ.               
+           DISPLAY 'NO OF REC FS                 ' CNT-FS.                      
+           DISPLAY 'NO OF REC PA                 ' CNT-PA.                      
+           DISPLAY 'NO OF REC NON-FS READ        ' CNT-NOT-FS-READ.             
+           DISPLAY 'NO OF REC NON-FS VALID       ' CNT-NOT-FS.                  
+           DISPLAY 'NO OF NON-FS W/ VALID KEY    ' CNT-NOT-FS-KEY.              
+           DISPLAY 'NO OF NON-FS W/ VALID PACD   ' CNT-NOT-FS-PACD.             
+           DISPLAY 'NO OF REC WRITTEN TO K517    ' CNT-K517-WRITE.              
+           DISPLAY 'NO OF REC WRITTEN TO BE01    ' CNT-BE01-WRITE.              
+           DISPLAY 'NO OF REC WRITTEN DUPLICATE  ' CNT-K517-DUP.                
+           DISPLAY 'NO OF REC BOOKED             ' CNT-BOOK.                    
+           DISPLAY 'NO OF REC SIGNED SA          ' CNT-SIGN-SA.                 
+           DISPLAY ' '.                                                         
+           DISPLAY 'NO OF REC K820-READ          ' CNT-K820-READ.               
+           DISPLAY 'NO OF REC K820 FS            ' CNT-K820-FS.                 
+           DISPLAY 'NO OF REC K820 PA            ' CNT-K820-PA.                 
+           DISPLAY ' '.                                                         
+           DISPLAY 'NO OF REC K110-READ          ' CNT-K110-FOUND.              
+           DISPLAY 'NO OF REC K110, BOOK, NO-KEY ' CNT-K110-VALID.              
+           DISPLAY 'NO OF REC K100-READ          ' CNT-K100-FOUND.              
+           DISPLAY 'NO OF REC K100, PACD=M       ' CNT-K100-VALID.              
+                                                                                
+           CLOSE BP13F800                                                       
+                 BP13K517                                                       
+                 BP13K820                                                       
+                 BM06K110                                                       
+                 BM06K100.                                                      
+                                                                                
+           IF WS-K517-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'BP13K517 CLOSE ERROR ' WS-K517-STATUS                    
+              MOVE WS-K517-STATUS        TO RETURN-CODE                         
+           END-IF.                                                              
+                                                                                
+           IF WS-K820-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'BP13K820 CLOSE ERROR ' WS-K820-STATUS                    
+              MOVE WS-K820-STATUS        TO RETURN-CODE                         
+           END-IF.                                                              
+                                                                                
+           IF WS-K110-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'BM06K110 CLOSE ERROR ' WS-K110-STATUS                    
+              MOVE WS-K110-STATUS        TO RETURN-CODE                         
+           END-IF.                                                              
+                                                                                
+           IF WS-K100-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'BM06K100 CLOSE ERROR ' WS-K100-STATUS                    
+              MOVE WS-K100-STATUS        TO RETURN-CODE                         
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

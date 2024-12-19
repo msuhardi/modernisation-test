@@ -1,0 +1,725 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID. BP13Q750.                                                    
+       AUTHOR.     SURESH.                                                      
+       INSTALLATION. HDB.                                                       
+       DATE-WRITTEN. 12-01-1999.                                                
+      *-----------------------------------------------------------*             
+      *        S O C  - BP13                                      *             
+      *-----------------------------------------------------------*             
+      * OBJECTIVES :  TO RETRIEVE HOUSEHOLD INFO USING HDBREF     *             
+      *                                                           *             
+      * INPUT FILES   : BP13F716                                  *             
+      *               : BP13K060 (CODETABLE)                      *             
+      * DATABASE      : RDB2                                      *             
+      *                                                           *             
+      * OUTPUT FILE   : P13F716A                                  *             
+      *                                                           *             
+      * REQ NO.   DATE       CHG BY  DESCRIPTION                  *             
+      * -------   ----       ------  -----------                  *             
+      * BP130630 12-01-1999   SRN    NEW PROGRAM                  *             
+      * BP130935 06-10-2000   YCH2   INCLUDE MARITAL-STATUS       *             
+      *                                                           *             
+      *-----------------------------------------------------------*             
+       ENVIRONMENT DIVISION.                                                    
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F716   ASSIGN TO BP13F716.                                
+                                                                                
+           SELECT P13F716A   ASSIGN TO P13F716A.                                
+                                                                                
+           SELECT BP13K060   ASSIGN TO BP13K060                                 
+                             ORGANIZATION INDEXED                               
+                             ACCESS MODE  RANDOM                                
+                             RECORD KEY   K060-KEY-FLD                          
+                             FILE STATUS  WS-K060-STATUS.                       
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD BP13F716.                                                             
+       COPY BP13F716.                                                           
+                                                                                
+       FD P13F716A.                                                             
+       01 P13F716A-REC            PIC X(350).                                   
+                                                                                
+       FD BP13K060.                                                             
+       COPY BP13K060.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01 WS-ROLE-TYPES.                                                        
+          05 TENANT-R            PIC  X(03)  VALUE '003'.                       
+          05 OCCUPIER-R          PIC  X(03)  VALUE '004'.                       
+          05 SUBTENANT-R         PIC  X(03)  VALUE '005'.                       
+          05 LESSEE              PIC  X(03)  VALUE '023'.                       
+          05 CO-LESSEE           PIC  X(03)  VALUE '024'.                       
+          05 OCCUPIER-S          PIC  X(03)  VALUE '025'.                       
+          05 SUBTENANT-S         PIC  X(03)  VALUE '026'.                       
+          05 EXECUTOR            PIC  X(03)  VALUE '028'.                       
+          05 ADMINISTRATOR       PIC  X(03)  VALUE '029'.                       
+          05 TRUSTEE             PIC  X(03)  VALUE '030'.                       
+          05 ADMIN-EXE-TRUSTEE   PIC  X(03)  VALUE '031'.                       
+          05 GUARDIAN            PIC  X(03)  VALUE '038'.                       
+                                                                                
+           EXEC SQL INCLUDE P13PERSN  END-EXEC.                                 
+                                                                                
+           EXEC SQL INCLUDE P13CSID   END-EXEC.                                 
+                                                                                
+           EXEC SQL INCLUDE P13RSDNT  END-EXEC.                                 
+                                                                                
+           EXEC SQL INCLUDE P13RSROL  END-EXEC.                                 
+                                                                                
+           EXEC SQL INCLUDE P13IDNO   END-EXEC.                                 
+                                                                                
+           EXEC SQL INCLUDE SQLCA     END-EXEC.                                 
+                                                                                
+           EXEC SQL                                                             
+             DECLARE OCCUP CURSOR FOR                                           
+               SELECT                                                           
+                 T1.NUM_SEX,                                                    
+                 T1.NUM_MRTL_STATUS,                                            
+                 T2.NUM_CSTMR,                                                  
+                 T3.NUM_RLTNSP,                                                 
+                 T4.DTE_ROLE_START,                                             
+                 T4.NUM_CSTMR_SOURCE                                            
+               FROM                                                             
+                 PERSONS            T1,                                         
+                 CSTMR_ID           T2,                                         
+                 RSDNT              T3,                                         
+                 RSDNT_ROLE         T4                                          
+               WHERE                                                            
+                 T1.NUM_CSTMR        = T2.NUM_CSTMR              AND            
+                 T2.NUM_CSTMR_SOURCE = T4.NUM_CSTMR_SOURCE       AND            
+                 T3.NUM_SCHEME       = T4.NUM_SCHEME             AND            
+                 T3.NUM_ACNT         = T4.NUM_ACNT               AND            
+                 T3.NUM_TNCY         = T4.NUM_TNCY               AND            
+                 T3.NUM_CSTMR_SOURCE = T4.NUM_CSTMR_SOURCE       AND            
+                 T4.DTE_ROLE_END     = '0001-01-01'              AND            
+                 T4.NUM_SCHEME       = :DCLRSDNT-ROLE.NUM-SCHEME AND            
+                 T4.NUM_ACNT         = :DCLRSDNT-ROLE.NUM-ACNT   AND            
+                 T4.NUM_TNCY         = :DCLRSDNT-ROLE.NUM-TNCY                  
+           END-EXEC.                                                            
+                                                                                
+      **                                                                        
+      ** CURSOR TO RETRIEVE ROLES OF A PERSON IN THE ORDER OF                   
+      ** LESSEE,TENANT,GUARDIAN,CO-LESSEE,OCCUPIER,EXECUTOR                     
+      ** ADMINISTRATOR, TRUSTEE AND OTHERS                                      
+      **                                                                        
+           EXEC SQL                                                             
+             DECLARE ROLES CURSOR FOR                                           
+               SELECT                                                           
+                 NUM_ROLE                                                       
+               FROM                                                             
+                 RSDNT_ROLE                                                     
+               WHERE                                                            
+                 NUM_ROLE IN (:LESSEE,:TENANT-R,:GUARDIAN)     AND              
+                 DTE_ROLE_END     = '0001-01-01'               AND              
+                 NUM_SCHEME       = :DCLRSDNT-ROLE.NUM-SCHEME  AND              
+                 NUM_ACNT         = :DCLRSDNT-ROLE.NUM-ACNT    AND              
+                 NUM_TNCY         = :DCLRSDNT-ROLE.NUM-TNCY    AND              
+                 NUM_CSTMR_SOURCE = :DCLRSDNT-ROLE.NUM-CSTMR-SOURCE             
+                                                                                
+               UNION ALL                                                        
+                                                                                
+               SELECT                                                           
+                 NUM_ROLE                                                       
+               FROM                                                             
+                 RSDNT_ROLE                                                     
+               WHERE                                                            
+                 NUM_ROLE         = :CO-LESSEE                 AND              
+                 DTE_ROLE_END     = '0001-01-01'               AND              
+                 NUM_SCHEME       = :DCLRSDNT-ROLE.NUM-SCHEME  AND              
+                 NUM_ACNT         = :DCLRSDNT-ROLE.NUM-ACNT    AND              
+                 NUM_TNCY         = :DCLRSDNT-ROLE.NUM-TNCY    AND              
+                 NUM_CSTMR_SOURCE = :DCLRSDNT-ROLE.NUM-CSTMR-SOURCE             
+                                                                                
+               UNION ALL                                                        
+                                                                                
+               SELECT                                                           
+                 NUM_ROLE                                                       
+               FROM                                                             
+                 RSDNT_ROLE                                                     
+               WHERE                                                            
+                 NUM_ROLE IN (:OCCUPIER-R,:OCCUPIER-S)         AND              
+                 DTE_ROLE_END     = '0001-01-01'               AND              
+                 NUM_SCHEME       = :DCLRSDNT-ROLE.NUM-SCHEME  AND              
+                 NUM_ACNT         = :DCLRSDNT-ROLE.NUM-ACNT    AND              
+                 NUM_TNCY         = :DCLRSDNT-ROLE.NUM-TNCY    AND              
+                 NUM_CSTMR_SOURCE = :DCLRSDNT-ROLE.NUM-CSTMR-SOURCE             
+                                                                                
+               UNION ALL                                                        
+                                                                                
+               SELECT                                                           
+                 NUM_ROLE                                                       
+               FROM                                                             
+                 RSDNT_ROLE                                                     
+               WHERE                                                            
+                 NUM_ROLE         = :EXECUTOR                  AND              
+                 DTE_ROLE_END     = '0001-01-01'               AND              
+                 NUM_SCHEME       = :DCLRSDNT-ROLE.NUM-SCHEME  AND              
+                 NUM_ACNT         = :DCLRSDNT-ROLE.NUM-ACNT    AND              
+                 NUM_TNCY         = :DCLRSDNT-ROLE.NUM-TNCY    AND              
+                 NUM_CSTMR_SOURCE = :DCLRSDNT-ROLE.NUM-CSTMR-SOURCE             
+                                                                                
+               UNION ALL                                                        
+                                                                                
+               SELECT                                                           
+                 NUM_ROLE                                                       
+               FROM                                                             
+                 RSDNT_ROLE                                                     
+               WHERE                                                            
+                 NUM_ROLE         =  :ADMINISTRATOR            AND              
+                 DTE_ROLE_END     = '0001-01-01'               AND              
+                 NUM_SCHEME       = :DCLRSDNT-ROLE.NUM-SCHEME  AND              
+                 NUM_ACNT         = :DCLRSDNT-ROLE.NUM-ACNT    AND              
+                 NUM_TNCY         = :DCLRSDNT-ROLE.NUM-TNCY    AND              
+                 NUM_CSTMR_SOURCE = :DCLRSDNT-ROLE.NUM-CSTMR-SOURCE             
+                                                                                
+               UNION ALL                                                        
+                                                                                
+               SELECT                                                           
+                 NUM_ROLE                                                       
+               FROM                                                             
+                 RSDNT_ROLE                                                     
+               WHERE                                                            
+                 NUM_ROLE         = :TRUSTEE                   AND              
+                 DTE_ROLE_END     = '0001-01-01'               AND              
+                 NUM_SCHEME       = :DCLRSDNT-ROLE.NUM-SCHEME  AND              
+                 NUM_ACNT         = :DCLRSDNT-ROLE.NUM-ACNT    AND              
+                 NUM_TNCY         = :DCLRSDNT-ROLE.NUM-TNCY    AND              
+                 NUM_CSTMR_SOURCE = :DCLRSDNT-ROLE.NUM-CSTMR-SOURCE             
+                                                                                
+               UNION ALL                                                        
+                                                                                
+               SELECT                                                           
+                 NUM_ROLE                                                       
+               FROM                                                             
+                 RSDNT_ROLE                                                     
+               WHERE                                                            
+                 NUM_ROLE NOT IN (:TENANT-R,:LESSEE,:GUARDIAN,                  
+                               :OCCUPIER-R,:CO-LESSEE,                          
+                               :OCCUPIER-S,:EXECUTOR,                           
+                               :ADMINISTRATOR,:TRUSTEE)        AND              
+                 DTE_ROLE_END     = '0001-01-01'               AND              
+                 NUM_SCHEME       = :DCLRSDNT-ROLE.NUM-SCHEME  AND              
+                 NUM_ACNT         = :DCLRSDNT-ROLE.NUM-ACNT    AND              
+                 NUM_TNCY         = :DCLRSDNT-ROLE.NUM-TNCY    AND              
+                 NUM_CSTMR_SOURCE = :DCLRSDNT-ROLE.NUM-CSTMR-SOURCE             
+           END-EXEC.                                                            
+                                                                                
+           EXEC SQL                                                             
+             DECLARE UINFIN CURSOR FOR                                          
+               SELECT                                                           
+                 T1.NUM_IDNTY_NO,                                               
+                 T1.NUM_IDNTY_NO_TYPE                                           
+               FROM                                                             
+                 IDNTY_NO       T1                                              
+               WHERE                                                            
+                 T1.NUM_CSTMR          = :DCLCSTMR-ID.NUM-CSTMR AND             
+                 T1.NUM_IDNTY_NO_TYPE  = 'UIN'                                  
+                 UNION ALL                                                      
+                 SELECT                                                         
+                   T1.NUM_IDNTY_NO,                                             
+                   T1.NUM_IDNTY_NO_TYPE                                         
+                 FROM                                                           
+                   IDNTY_NO     T1                                              
+                 WHERE                                                          
+                   T1.NUM_CSTMR          = :DCLCSTMR-ID.NUM-CSTMR AND           
+                   T1.NUM_IDNTY_NO_TYPE  = 'FIN'                                
+                 UNION ALL                                                      
+                 SELECT                                                         
+                   T1.NUM_IDNTY_NO,                                             
+                   T1.NUM_IDNTY_NO_TYPE                                         
+                 FROM                                                           
+                   IDNTY_NO     T1                                              
+                 WHERE                                                          
+                   T1.NUM_CSTMR          = :DCLCSTMR-ID.NUM-CSTMR AND           
+                   T1.NUM_IDNTY_NO_TYPE  NOT IN ('UIN','FIN')                   
+           END-EXEC.                                                            
+                                                                                
+       01  WS-CONTROL-COUNT.                                                    
+           05  WS-F716-READ            PIC 9(8)    VALUE ZEROS.                 
+           05  WS-RDB2-READ            PIC 9(8)    VALUE ZEROS.                 
+           05  WS-RDB2-NFND            PIC 9(8)    VALUE ZEROS.                 
+           05  WS-IDNTY-READ           PIC 9(8)    VALUE ZEROS.                 
+           05  WS-IDNTY-NFND           PIC 9(8)    VALUE ZEROS.                 
+           05  WS-F716A-WRITE          PIC 9(8)    VALUE ZEROS.                 
+                                                                                
+       01  WS-EOF-F716                 PIC X       VALUE 'N'.                   
+           88 EOF-F716                             VALUE 'Y'.                   
+                                                                                
+       01  WS-EOC                      PIC X(1)    VALUE 'N'.                   
+           88 END-OF-CURSOR                        VALUE 'Y'.                   
+                                                                                
+       01  WS-K060-STATUS              PIC 9(2)    VALUE ZEROS.                 
+                                                                                
+       01  WS-SYS-DATE                 PIC X(8)    VALUE SPACES.                
+       01  WS-PRT-DATE                 PIC X(10)   VALUE SPACES.                
+                                                                                
+       01  WS-SQLCODE                  PIC 9(4)    VALUE ZEROS.                 
+                                                                                
+       01  WS-PRT-SQLCODE              PIC -9(3)   VALUE ZEROS.                 
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+       0000-MAIN.                                                               
+                                                                                
+            PERFORM 0500-OPEN-FILES       THRU 0500-EXIT.                       
+                                                                                
+            PERFORM 1000-READ-BP13F716    THRU 1000-EXIT.                       
+                                                                                
+            PERFORM 2000-RETRIEVE-RDBINFO THRU 2000-EXIT                        
+                    UNTIL EOF-F716.                                             
+                                                                                
+            PERFORM 9000-CLOSE-FILES      THRU 9000-EXIT.                       
+       0000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       0500-OPEN-FILES.                                                         
+            OPEN INPUT  BP13F716                                                
+                        BP13K060                                                
+                 OUTPUT P13F716A.                                               
+                                                                                
+            MOVE FUNCTION CURRENT-DATE(1:8)   TO WS-SYS-DATE.                   
+                                                                                
+            IF WS-K060-STATUS NOT = 0 AND 97                                    
+               DISPLAY 'ERROR OPENING BP13K060 '                                
+               DISPLAY 'FILE-STATUS :- ' WS-K060-STATUS                         
+               MOVE WS-K060-STATUS   TO RETURN-CODE                             
+               GO TO 9000-CLOSE-FILES                                           
+            END-IF.                                                             
+                                                                                
+       0500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       1000-READ-BP13F716.                                                      
+            READ BP13F716 AT END MOVE 'Y' TO WS-EOF-F716                        
+                 GO TO 1000-EXIT.                                               
+                                                                                
+            ADD 1 TO WS-F716-READ.                                              
+       1000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       2000-RETRIEVE-RDBINFO.                                                   
+                                                                                
+            PERFORM 3000-READ-RDB        THRU 3000-EXIT.                        
+                                                                                
+            PERFORM 1000-READ-BP13F716   THRU 1000-EXIT.                        
+                                                                                
+       2000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       3000-READ-RDB.                                                           
+                                                                                
+            MOVE SPACES              TO NUM-ACNT   OF DCLRSDNT-ROLE             
+                                        NUM-SCHEME OF DCLRSDNT-ROLE             
+                                        NUM-TNCY   OF DCLRSDNT-ROLE.            
+                                                                                
+            MOVE 'N'                 TO WS-EOC                                  
+                                                                                
+            MOVE F716-NUM-SCH-ACCNT(1:4)  TO                                    
+                                       NUM-SCHEME OF DCLRSDNT-ROLE              
+            MOVE F716-NUM-SCH-ACCNT(5:5)  TO                                    
+                                       NUM-ACNT   OF DCLRSDNT-ROLE              
+                                                                                
+            MOVE F716-NUM-LSE-CDE    TO NUM-TNCY   OF DCLRSDNT-ROLE             
+                                                                                
+            PERFORM 3100-OPEN-OCCUP          THRU 3100-EXIT                     
+                                                                                
+            PERFORM 3200-FETCH-OCCUP         THRU 3200-EXIT                     
+                                                                                
+            IF END-OF-CURSOR                                                    
+               ADD 1                    TO WS-RDB2-NFND                         
+            END-IF.                                                             
+                                                                                
+            PERFORM 3200-FETCH-OCCUP         THRU 3200-EXIT                     
+                    UNTIL  END-OF-CURSOR                                        
+                                                                                
+            PERFORM 3300-CLOSE-OCCUP         THRU 3300-EXIT.                    
+                                                                                
+       3000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3100-OPEN-OCCUP.                                                         
+            EXEC SQL OPEN OCCUP     END-EXEC.                                   
+                                                                                
+            EVALUATE SQLCODE                                                    
+              WHEN 0                                                            
+                    CONTINUE                                                    
+              WHEN OTHER                                                        
+                    MOVE SQLCODE            TO WS-SQLCODE                       
+                                               WS-PRT-SQLCODE                   
+                    DISPLAY 'ERROR OPENING OCCUP !!!'                           
+                    DISPLAY 'SQLCODE = ' WS-PRT-SQLCODE                         
+                    MOVE WS-SQLCODE         TO RETURN-CODE                      
+                    GO TO   9900-ABORT-PROCESS                                  
+            END-EVALUATE.                                                       
+                                                                                
+       3100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3200-FETCH-OCCUP.                                                        
+            EXEC SQL                                                            
+               FETCH OCCUP                                                      
+                INTO                                                            
+                  :DCLPERSONS.NUM-SEX,                                          
+                  :DCLPERSONS.NUM-MRTL-STATUS,                                  
+                  :DCLCSTMR-ID.NUM-CSTMR,                                       
+                  :DCLRSDNT.NUM-RLTNSP,                                         
+                  :DCLRSDNT-ROLE.DTE-ROLE-START,                                
+                  :DCLRSDNT-ROLE.NUM-CSTMR-SOURCE                               
+            END-EXEC.                                                           
+                                                                                
+            EVALUATE SQLCODE                                                    
+               WHEN 0                                                           
+                    ADD 1                         TO WS-RDB2-READ               
+                    PERFORM 3500-READ-ROLES       THRU 3500-EXIT                
+                    PERFORM 3600-READ-IDNTYNO     THRU 3600-EXIT                
+               WHEN 100                                                         
+                    MOVE 'Y'                      TO WS-EOC                     
+               WHEN OTHER                                                       
+                    MOVE SQLCODE                  TO WS-SQLCODE                 
+                                                     WS-PRT-SQLCODE             
+                    DISPLAY 'ERROR READING RDB II'                              
+                    DISPLAY 'SQLCODE = ' WS-PRT-SQLCODE                         
+                    MOVE WS-SQLCODE               TO RETURN-CODE                
+                    GO TO   9900-ABORT-PROCESS                                  
+            END-EVALUATE.                                                       
+       3200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3300-CLOSE-OCCUP.                                                        
+            EXEC SQL                                                            
+                 CLOSE OCCUP                                                    
+            END-EXEC.                                                           
+                                                                                
+            EVALUATE SQLCODE                                                    
+              WHEN 0                                                            
+                    CONTINUE                                                    
+              WHEN OTHER                                                        
+                    MOVE SQLCODE            TO WS-SQLCODE                       
+                                               WS-PRT-SQLCODE                   
+                    DISPLAY 'ERROR CLOSING OCCUP !!!'                           
+                    DISPLAY 'SQLCODE = ' WS-PRT-SQLCODE                         
+                    MOVE WS-SQLCODE         TO RETURN-CODE                      
+                    GO TO   9900-ABORT-PROCESS                                  
+            END-EVALUATE.                                                       
+                                                                                
+       3300-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3500-READ-ROLES.                                                         
+            PERFORM 3510-OPEN-ROLES          THRU 3510-EXIT                     
+                                                                                
+            PERFORM 3520-FETCH-ROLES         THRU 3520-EXIT                     
+                                                                                
+            PERFORM 3530-CLOSE-ROLES         THRU 3530-EXIT.                    
+       3500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3510-OPEN-ROLES.                                                         
+            EXEC SQL                                                            
+                 OPEN ROLES                                                     
+            END-EXEC.                                                           
+                                                                                
+            EVALUATE SQLCODE                                                    
+              WHEN 0                                                            
+                    CONTINUE                                                    
+              WHEN OTHER                                                        
+                    MOVE SQLCODE     TO WS-SQLCODE                              
+                                        WS-PRT-SQLCODE                          
+                    DISPLAY 'ERROR OPENING ROLES !!!'                           
+                    DISPLAY 'SQLCODE = ' WS-PRT-SQLCODE                         
+                    MOVE WS-SQLCODE  TO RETURN-CODE                             
+                    GO TO   9900-ABORT-PROCESS                                  
+            END-EVALUATE.                                                       
+                                                                                
+       3510-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3520-FETCH-ROLES.                                                        
+            EXEC SQL                                                            
+               FETCH ROLES                                                      
+                INTO                                                            
+                :DCLRSDNT-ROLE.NUM-ROLE                                         
+            END-EXEC.                                                           
+                                                                                
+      **                                                                        
+      ** CONDITION SQLCODE = 100 WILL NEVER ARISE                               
+      **                                                                        
+            EVALUATE SQLCODE                                                    
+              WHEN 0                                                            
+                    CONTINUE                                                    
+              WHEN OTHER                                                        
+                    MOVE SQLCODE     TO WS-SQLCODE                              
+                                        WS-PRT-SQLCODE                          
+                    DISPLAY 'ERROR READING ROLES !!!'                           
+                    DISPLAY 'SQLCODE = ' WS-PRT-SQLCODE                         
+                    MOVE WS-SQLCODE  TO RETURN-CODE                             
+                    GO TO   9900-ABORT-PROCESS                                  
+            END-EVALUATE.                                                       
+                                                                                
+       3520-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3530-CLOSE-ROLES.                                                        
+            EXEC SQL                                                            
+               CLOSE ROLES                                                      
+            END-EXEC.                                                           
+                                                                                
+            EVALUATE SQLCODE                                                    
+              WHEN 0                                                            
+                    CONTINUE                                                    
+              WHEN OTHER                                                        
+                    MOVE SQLCODE     TO WS-SQLCODE                              
+                                        WS-PRT-SQLCODE                          
+                    DISPLAY 'ERROR CLOSING ROLES !!!'                           
+                    DISPLAY 'SQLCODE = ' WS-PRT-SQLCODE                         
+                    MOVE WS-SQLCODE  TO RETURN-CODE                             
+                    GO TO   9900-ABORT-PROCESS                                  
+            END-EVALUATE.                                                       
+                                                                                
+       3530-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3600-READ-IDNTYNO.                                                       
+            EXEC SQL                                                            
+                 SELECT                                                         
+                   NUM_IDNTY_NO,                                                
+                   NUM_IDNTY_NO_TYPE                                            
+                 INTO                                                           
+                   :DCLIDNTY-NO.NUM-IDNTY-NO,                                   
+                   :DCLIDNTY-NO.NUM-IDNTY-NO-TYPE                               
+                 FROM                                                           
+                   IDNTY_NO                                                     
+                 WHERE                                                          
+                   NUM_CSTMR = :DCLCSTMR-ID.NUM-CSTMR                           
+            END-EXEC.                                                           
+                                                                                
+            EVALUATE SQLCODE                                                    
+              WHEN 0                                                            
+                   ADD 1                   TO WS-IDNTY-READ                     
+                   PERFORM 4000-WRITE-P13F716A  THRU 4000-EXIT                  
+              WHEN -811                                                         
+                   PERFORM 3700-PROCESS-UINFIN  THRU 3700-EXIT                  
+              WHEN 100                                                          
+                    ADD 1                   TO WS-IDNTY-NFND                    
+              WHEN OTHER                                                        
+                    MOVE SQLCODE            TO WS-SQLCODE                       
+                                               WS-PRT-SQLCODE                   
+                    DISPLAY 'ERROR OPENING UINFIN !!!'                          
+                    DISPLAY 'SQLCODE = ' WS-PRT-SQLCODE                         
+                    MOVE WS-SQLCODE         TO RETURN-CODE                      
+                    GO TO   9900-ABORT-PROCESS                                  
+            END-EVALUATE.                                                       
+                                                                                
+       3600-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3700-PROCESS-UINFIN.                                                     
+                                                                                
+            PERFORM 3710-OPEN-UINFIN        THRU 3710-EXIT                      
+                                                                                
+            PERFORM 3720-FETCH-UINFIN       THRU 3720-EXIT                      
+                                                                                
+            PERFORM 3730-CLOSE-UINFIN       THRU 3730-EXIT.                     
+                                                                        00061010
+       3700-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3710-OPEN-UINFIN.                                                        
+            EXEC SQL OPEN UINFIN    END-EXEC.                                   
+                                                                                
+            EVALUATE SQLCODE                                                    
+              WHEN 0                                                            
+                    CONTINUE                                                    
+              WHEN OTHER                                                        
+                    MOVE SQLCODE            TO WS-SQLCODE                       
+                                               WS-PRT-SQLCODE                   
+                    DISPLAY 'ERROR OPENING UINFIN !!!'                          
+                    DISPLAY 'SQLCODE = ' WS-PRT-SQLCODE                         
+                    MOVE WS-SQLCODE         TO RETURN-CODE                      
+                    GO TO   9900-ABORT-PROCESS                                  
+            END-EVALUATE.                                                       
+       3710-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3720-FETCH-UINFIN.                                                       
+            EXEC SQL                                                            
+               FETCH UINFIN                                                     
+                 INTO                                                           
+                   :DCLIDNTY-NO.NUM-IDNTY-NO,                                   
+                   :DCLIDNTY-NO.NUM-IDNTY-NO-TYPE                               
+            END-EXEC.                                                           
+                                                                                
+            EVALUATE SQLCODE                                                    
+               WHEN 0                                                           
+                    ADD 1                   TO WS-IDNTY-READ                    
+                    PERFORM 4000-WRITE-P13F716A  THRU 4000-EXIT                 
+               WHEN 100                                                         
+                    ADD 1                   TO WS-IDNTY-NFND                    
+               WHEN OTHER                                                       
+                    MOVE SQLCODE            TO WS-SQLCODE                       
+                                               WS-PRT-SQLCODE                   
+                    DISPLAY 'ERROR READING IDNTY_NO !!!'                        
+                    DISPLAY 'SQLCODE = ' WS-PRT-SQLCODE                         
+                    MOVE WS-SQLCODE         TO RETURN-CODE                      
+                    GO TO   9900-ABORT-PROCESS                                  
+            END-EVALUATE.                                                       
+       3720-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3730-CLOSE-UINFIN.                                                       
+            EXEC SQL                                                            
+                 CLOSE UINFIN                                                   
+            END-EXEC.                                                           
+                                                                                
+            EVALUATE SQLCODE                                                    
+              WHEN 0                                                            
+                    CONTINUE                                                    
+              WHEN OTHER                                                        
+                    MOVE SQLCODE            TO WS-SQLCODE                       
+                                               WS-PRT-SQLCODE                   
+                    DISPLAY 'ERROR CLOSING UINFIN !!!'                          
+                    DISPLAY 'SQLCODE = ' WS-PRT-SQLCODE                         
+                    MOVE WS-SQLCODE         TO RETURN-CODE                      
+                    GO TO   9900-ABORT-PROCESS                                  
+            END-EVALUATE.                                                       
+                                                                                
+       3730-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       4000-WRITE-P13F716A.                                                     
+      **                                                                        
+      ** PREFIX ALL NON UIN FIN IDNTY-NO WITH 'X'.                              
+      **                                                                        
+            IF NUM-IDNTY-NO-TYPE = 'UIN' OR 'FIN'                               
+               MOVE NUM-IDNTY-NO      TO F716-NUM-NRIC                          
+            ELSE                                                                
+               STRING 'X', NUM-IDNTY-NO                                         
+                      DELIMITED BY SIZE                                         
+                      INTO F716-NUM-NRIC                                        
+            END-IF.                                                             
+                                                                                
+            IF DTE-ROLE-START OF DCLRSDNT-ROLE = '0001-01-01'                   
+               MOVE SPACES                    TO F716-DTE-MOVING-IN             
+            ELSE                                                                
+               STRING DTE-ROLE-START OF DCLRSDNT-ROLE(1:4)                      
+                      DTE-ROLE-START OF DCLRSDNT-ROLE(6:2)                      
+                      DTE-ROLE-START OF DCLRSDNT-ROLE(9:2)                      
+                                     DELIMITED BY SIZE,                         
+                      INTO                                                      
+                      F716-DTE-MOVING-IN                                        
+            END-IF.                                                             
+                                                                                
+            MOVE NUM-ROLE  OF DCLRSDNT-ROLE   TO F716-NUM-ROLE                  
+                                                                                
+                                                                                
+            MOVE SPACES                       TO BP13K060-REC                   
+            MOVE '50'                         TO K060-SERIAL-NO                 
+            MOVE NUM-ROLE  OF DCLRSDNT-ROLE   TO K060-CODE                      
+            PERFORM 4500-READ-BP13K060        THRU 4500-EXIT                    
+            MOVE K060-DESC1(1:1)              TO F716-CDE-OCCUPIER              
+                                                                                
+      **                                                                        
+      ** IF NUM-RLTNSP IS PARENT OR PARENT-LAW DETERMINE RELATIONSHIP           
+      ** BASED ON SEX                                                           
+      **                                                                        
+            MOVE SPACES                       TO BP13K060-REC                   
+            MOVE '49'                         TO K060-SERIAL-NO                 
+            IF NUM-RLTNSP = '01' OR '21'                                        
+               STRING NUM-RLTNSP,  NUM-SEX                                      
+                      DELIMITED BY SIZE                                         
+                      INTO                                                      
+                      K060-CODE                                                 
+            ELSE                                                                
+               MOVE NUM-RLTNSP OF DCLRSDNT    TO K060-CODE                      
+            END-IF.                                                             
+                                                                                
+            PERFORM 4500-READ-BP13K060        THRU 4500-EXIT                    
+            MOVE K060-DESC1(1:2)              TO F716-CDE-RELATIONSHIP          
+                                                                                
+            EVALUATE NUM-MRTL-STATUS                                            
+              WHEN 'S'                                                          
+                MOVE '1'                      TO                                
+                                          F716-NUM-RDB-MARITAL-STATUS           
+              WHEN 'M'                                                          
+                MOVE '2'                      TO                                
+                                          F716-NUM-RDB-MARITAL-STATUS           
+              WHEN 'W'                                                          
+                MOVE '3'                      TO                                
+                                          F716-NUM-RDB-MARITAL-STATUS           
+              WHEN 'D'                                                          
+                MOVE '4'                      TO                                
+                                          F716-NUM-RDB-MARITAL-STATUS           
+              WHEN 'P'                                                          
+                MOVE '5'                      TO                                
+                                          F716-NUM-RDB-MARITAL-STATUS           
+            END-EVALUATE.                                                       
+                                                                                
+            WRITE P13F716A-REC FROM BP13F716-REC.                               
+            ADD 1   TO WS-F716A-WRITE.                                          
+                                                                                
+                                                                                
+       4000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       4500-READ-BP13K060.                                                      
+            READ BP13K060.                                                      
+                                                                                
+            EVALUATE WS-K060-STATUS                                             
+              WHEN 0                                                            
+                CONTINUE                                                        
+              WHEN 23                                                           
+                DISPLAY 'ERROR !! RECORD NOT FOUND IN BP13K060'                 
+                DISPLAY 'K060-KEY-FLD :- ' K060-KEY-FLD                         
+              WHEN OTHER                                                        
+                DISPLAY 'ERROR READING BP13K060'                                
+                DISPLAY 'FILE-STATUS :- ' WS-K060-STATUS                        
+                MOVE WS-K060-STATUS       TO RETURN-CODE                        
+                GO TO 9000-CLOSE-FILES                                          
+            END-EVALUATE.                                                       
+       4500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       9000-CLOSE-FILES.                                                        
+            STRING WS-SYS-DATE(7:2) DELIMITED BY SIZE,                          
+                   '-'                                                          
+                   WS-SYS-DATE(5:2) DELIMITED BY SIZE,                          
+                   '-'                                                          
+                   WS-SYS-DATE(1:4) DELIMITED BY SIZE                           
+                   INTO                                                         
+                   WS-PRT-DATE.                                                 
+                                                                                
+            DISPLAY 'SUMMARY REPORT   BP13Q750   RUNDATE ' WS-PRT-DATE          
+            DISPLAY '______________________________________________'.           
+            DISPLAY '   '.                                                      
+            DISPLAY 'NO OF RECORDS READ FROM BP13F716  : ' WS-F716-READ         
+            DISPLAY 'NO OF RECORDS READ FROM RDB II    : ' WS-RDB2-READ         
+            DISPLAY 'NO OF RECORDS NOT FOUND IN RDB II : ' WS-RDB2-NFND         
+            DISPLAY 'NO OF RECORDS READ FROM IDNTY_NO  : ' WS-IDNTY-READ        
+            DISPLAY 'NO OF RECORDS NOT FOUND IDNTY_NO  : ' WS-IDNTY-NFND        
+            DISPLAY 'NO OF RECORDS WRITTEN TO P13F716A : '                      
+                                                         WS-F716A-WRITE         
+            CLOSE BP13F716                                                      
+                  P13F716A                                                      
+                  BP13K060.                                                     
+                                                                                
+            IF WS-K060-STATUS NOT = 0                                           
+               DISPLAY 'ERROR CLOSING BP13K060 '                                
+               DISPLAY 'FILE-STATUS :- ' WS-K060-STATUS                         
+               MOVE WS-K060-STATUS       TO RETURN-CODE                         
+            END-IF.                                                             
+                                                                                
+            STOP RUN.                                                           
+                                                                                
+       9000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       9900-ABORT-PROCESS.                                                      
+            CALL 'DBATIAR' USING SQLCA.                                         
+            PERFORM 9000-CLOSE-FILES    THRU 9000-EXIT.                         
+

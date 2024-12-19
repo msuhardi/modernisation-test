@@ -1,0 +1,110 @@
+//BP13A266 JOB (BP13P),'BP13A266',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),    0   0001
+//       NOTIFY=CSD0071                                                         
+//JOBLIB DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                     
+//*********************************************************************         
+//* CHG-NO   BY   DATE     DESCRIPTION                                          
+//* -------- ---- -------- --------------------------------------------         
+//* BP135404 EL27 20140711 CHANGE PRINTER FROM L03Z TO X6AI                     
+//* BP135404 NST1 20140719 CHANGE PRINTER FROM X6AI TO X6AU(LANDSCAPE)          
+//* BP135561 ESA1 20150115 OUTPUT TO DATASET BEFORE SENDING TO PRINTER          
+//* BP136836 ESA1 20170807 CHANGE PRINTER FROM X6AU TO XDA2                     
+//*********************************************************************         
+//*--------------------------------------------------------------------*        
+//*  SORT BP13F205 BY NT/ZONE, FT, DTE-BALLOT                                   
+//*--------------------------------------------------------------------*        
+//STEP01 EXEC    SORT,COND=(0,NE)                                               
+//SORTIN   DD  DSN=BP13.K205.CTLREC,                                            
+//             DISP=SHR                                                         
+//SORTOUT  DD  DSN=&&BP13F205,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=SYSDA,                                                      
+//             SPACE=(TRK,(1,1),RLSE),                                          
+//             DCB=(BLKSIZE=0,LRECL=80,RECFM=FB)                                
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,15,A),FORMAT=CH                                               
+   INCLUDE COND=(14,2,CH,EQ,C'SR')                                              
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* TO EXTRACT MATCHING BM06K110 RECORDS                                        
+//*---------------------------------------------------------------------        
+//STEP02   EXEC PGM=BP13C20H,COND=(0,NE)                                        
+//BP13F205 DD DSN=&&BP13F205,DISP=(SHR,PASS)                                    
+//BM06K110 DD DSN=BM06.K110.FLATINV,DISP=SHR,                                   
+//         AMP=('BUFND=8','BUFNI=4')                                            
+//BM06K111 DD DSN=BM06.K110.FLATINV.PATH2,DISP=SHR,                             
+//         AMP=('BUFND=8','BUFNI=4')                                            
+//BM06F110 DD  DSN=&&BM06F110,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(10,5),RLSE),                                         
+//             DCB=(BLKSIZE=0,LRECL=500,RECFM=FB)                               
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* TO MATCH WITH BM06K950 RECORDS                                              
+//*---------------------------------------------------------------------        
+//STEP03   EXEC PGM=BP13C20I,COND=(0,NE)                                        
+//BM06F110 DD DSN=&&BM06F110,DISP=(SHR,PASS)                                    
+//BM06K950 DD DSN=BM06.K950.FIS.HISTORY,DISP=SHR,                               
+//         AMP=('BUFND=8','BUFNI=4')                                            
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------              
+//*  TO PRINT DATASET BM06T.F100.BLOCK                                          
+//*---------------------------------------------------------------              
+//STEP04 EXEC SAS,COND=(0,NE)                                                   
+//BM06F110 DD DSN=&&BM06F110,DISP=(SHR,PASS)                                    
+//BM06F120 DD DSN=BM06.F120.FLATINV.PIDB,DISP=SHR                               
+//FT42F001 DD DSN=BP13.L266.RPT,DISP=SHR                                        
+//SYSIN   DD *                                                                  
+     PROC FORMAT;                                                               
+      PICTURE DOL_FMT LOW--0 = '0000009.99'                                     
+                      0-HIGH = '0000009.99';                                    
+                                                                                
+     DATA BM06F110;                                                             
+     INFILE BM06F110;                                                           
+     INPUT                                                                      
+     @1     SCH_ACC         $CHAR11.                                            
+     @299   ACCEPT          $CHAR8.                                             
+     @248   ALLO_TAG        $CHAR3.                                             
+     @291   ALLO_DTE        $CHAR8.                                             
+     @356   SEL_TYPE        $CHAR3.                                             
+     @410   DTE_BALLOT      $CHAR6.                                             
+     @471   REGN            $CHAR8.                                             
+     @488   OLD_ALLO_DTE    $CHAR8.                                             
+     @479   OLD_SEL_TYPE    $CHAR3.                                             
+     @482   OLD_DTE_BALLOT  $CHAR6.;                                            
+     PROC SORT; BY SCH_ACC;                                                     
+                                                                                
+     DATA BM06F120;                                                             
+     INFILE BM06F120;                                                           
+     INPUT                                                                      
+     @1     SCH_ACC         $CHAR11.                                            
+     @12    EST             $CHAR3.                                             
+     @15    NEI             $CHAR4.                                             
+     @19    CONT            $CHAR4.                                             
+     @23    BLK             $CHAR5.                                             
+     @551   STREET          $CHAR32.                                            
+     @583   LEVEL           $CHAR2.                                             
+     @585   UNIT            $CHAR7.                                             
+     @606   FLAT_TYPE       $CHAR2.;                                            
+     PROC SORT; BY SCH_ACC;                                                     
+                                                                                
+     DATA SHOPMAST;                                                             
+        MERGE BM06F110(IN=M) BM06F120(IN=T); BY SCH_ACC;                        
+        IF (M AND T);                                                           
+     PROC SORT; BY FLAT_TYPE SCH_ACC;                                           
+                                                                                
+     PROC PRINTTO UNIT=42 NEW;                                                  
+     PROC PRINT;                                                                
+TITLE1 'REJECTED UNITS';                                                        
+//*--------------------------------------------------------------------         
+//*   SEND REPORT OUT FROM STEP01 IN XDA2 PRINTER                               
+//*--------------------------------------------------------------------         
+//STEP05 EXEC    PGM=IEBGENER                                                   
+//SYSUT1   DD  DSN=BP13.L266.RPT,                                               
+//             DISP=SHR                                                         
+//SYSUT2   DD SYSOUT=A,DEST=XDA2                                                
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  DUMMY                                                            
+

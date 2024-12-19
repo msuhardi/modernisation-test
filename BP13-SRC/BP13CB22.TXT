@@ -1,0 +1,594 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CB22.                                                 
+       AUTHOR.        EDEN ROSE DINGAL.                                         
+       DATE-WRITTEN.  22/06/20007.                                              
+      * ====================================================== *                
+      *                                                        *                
+      *    SYSTEM NAME : SYSTEM OF COMMITMENT                  *                
+      *    SYSTEM ID   : BP13                                  *                
+      *    OBJECTIVE   : THIS PRGM SEARCHES THE INPUT FILE AND *                
+      *                  OUTPUTS THE NO. OF UNSUCC ATTEMPTS    *                
+      *                                                        *                
+      *                : FOR ABORTIVE BTO, COUNT SUCC CASE AS  *                
+      *                  1 UNSUCC ATTEMPT. EG 200309, 200412.  *                
+      *                                                        *                
+      *    INPUT  FILE  : BP13F595  - ALL CASES                *                
+      *                 : BP13K816  - CHECKING FOR ZONE        *                
+      *    OUTPUT FILES : BP13F593  - BALLOT PER NRIC HIST FILE*                
+      *                                                        *                
+      *--------------------------------------------------------*                
+      * CHG-NO   BY   DATE     DETAILS                         *                
+      * BP133098 ED1 110607    NEW PROGRAM                     *                
+      * BP133111 ED1 140907    ADDED DTE-UPD & USERID          *                
+      * BP133292 ED1 110208    CONTINUE UNSUCC CNT WHEN        *                
+      *                        F595-NUM-ALLO-CAT = 'DBS'       *                
+      * BP133432 MSD 230908    CATER FOR F595-NUM-BOOK-STATUS  *                
+      * BP133367 LSB 031108    CATER FOR F595-NUM-BOOK-STATUS  *                
+      *                        BOOK-STATUS=NC,NF,NV,SC,SF,COUNT*                
+      *                        UNSUCC ATTMPT FOR FIRST TIMER   *                
+      *                        UPGRADER BYPASS                 *                
+      *                        BOOK-STATUS=BF,LF,WF, COUNT AS  *                
+      *                        SUCC, ERASE ALL PREV ATTEMPT    *                
+      * BP133499 ZDD1 170309   CATER FOR K816-NUM-MATURE-EST-  *                
+      *                        TAG='N' AS AN ADDITIONAL CONDI- *                
+      *                        TION BEFORE ADDING TO UNSUCC    *                
+      *                        ATTMP                           *                
+      * BP133803 IL5  140110   TO AWARD ATTEMPT TO FT ONLY     *                
+      *                        FOR BTO APPL FROM OCT 2009 BF   *                
+      *                        SELECTION                       *                
+      * BP133913 IL5  020610   TO AWARD ATTEMPT TO BTO APPL    *                
+      *                        TAGGED AS 'NS'                  *                
+      * BP134341 ZDD1 220811   TO BYPASS WHEN CASE WAS TAG AS  *                
+      *                        LF/WF/BF + S1 FOR REQUEST REASON*                
+      * BP135028 SMR2 090913   CHANGE BP13K816 TO BP13K813 /   *                
+      *                        TREAT BHH 'F' AS FIRST TIMER    *                
+      * BP135080 LSB1 251013   BYPASS COUNTING FOR 2ND TIMER   *                
+      *                        BF 200805 UNLESS FOUND          *                
+      *                        FT APPL 200805-201307 OR        *                
+      *                        FT2T APPL 201307                *                
+      *                        WITH EFF FRM 201309 ONLY CNT    *                
+      *                        HHTY = 'H' OR 'T' OR 'F'        *                
+      * BP135039 IMC1 021213   CATER FOR NEW BOOK-STATUS       *                
+      * BP135190 SMR2 041213   EXPAND BP13K813 TO 1000         *                
+      * BP136134 SMR2 040316   CATER FOR CANCELLED CASES       *                
+      * BP136160 FNP1 110316   CATER FOR 2F FLATS              *                
+      * BP136160 FNP1 150316   CHECK ONLY FOR PPO = SPACES OR E*                
+      * BP138098 SMP3 221119   COUNT APPLICATIONS WITH RESULT  *                
+      *                        'P' AS ONE UNSUCCESSFUL ATTEMPT *                
+      * ====================================================== *                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-4341.                                               
+       OBJECT-COMPUTER. IBM-4341.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F595 ASSIGN TO BP13F595.                                  
+           SELECT BP13F593 ASSIGN TO BP13F593.                                  
+           SELECT BP13K813 ASSIGN TO BP13K813                                   
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY IS K813-KEY-FLD                                    
+                  FILE STATUS IS WS-BP13K813-STAT                               
+                  ACCESS MODE IS RANDOM.                                        
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F595                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            RECORDING MODE IS F                                                 
+            LABEL RECORD IS STANDARD.                                           
+       COPY BP13F595.                                                           
+                                                                                
+       FD   BP13F593                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            RECORDING MODE IS F                                                 
+            LABEL RECORD IS STANDARD.                                           
+       COPY BP13F593.                                                           
+                                                                                
+       FD   BP13K813                                                            
+            RECORD CONTAINS 1000 CHARACTERS.                                    
+       COPY BP13K813.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05 WS-F595-READ                PIC 9(7)    VALUE ZEROS.              
+           05 WS-F593-WRITE               PIC 9(7)    VALUE ZEROS.              
+           05 WS-K813-READ                PIC 9(7)    VALUE ZEROS.              
+           05 WS-G-2008-DROP              PIC 9(6)    VALUE ZEROS.              
+                                                                                
+       01  WS-BP13K813-STAT               PIC 9(02)   VALUE ZEROS.              
+       01  WS-SUCC-FD                     PIC X       VALUE 'N'.                
+       01  WS-EOF-F595                    PIC X       VALUE 'N'.                
+       01  WS-PREV-MODE                   PIC X(3)    VALUE SPACES.             
+       01  WS-PREV-NRIC                   PIC X(9)    VALUE SPACES.             
+       01  WS-PREV-REF                    PIC X(8)    VALUE SPACES.             
+       01  WS-PREV-RANDOM-KEY             PIC X(27)   VALUE SPACES.             
+       01  WS-PREV-DTE-BALLOT             PIC X(8)    VALUE SPACES.             
+       01  WS-PREV-STATUS                 PIC X(1)    VALUE SPACES.             
+       01  WS-PREV-F595-REC               PIC X(500)  VALUE SPACES.             
+       01  WS-PREV-F595-REC-FT            PIC X(500)  VALUE SPACES.             
+       01  WS-PREV-F595-REC-ST            PIC X(500)  VALUE SPACES.             
+       01  WS-SUCC-DBS-FND                PIC X       VALUE SPACES.             
+       01  WS-REQ-STATUS                  PIC X       VALUE SPACES.             
+       01  WS-BALLOT-HOUSEHOLD            PIC X       VALUE SPACES.             
+       01  WS-MATURE-EST-TAG              PIC X       VALUE 'Y'.                
+       01  WS-F595-NUM-NRIC               PIC X(9)    VALUE SPACES.             
+       01  WS-CNT                         PIC 9(2)    VALUE ZEROS.              
+       01  WS-CTR                         PIC 9(6)    VALUE ZEROS.              
+       01  WS-CTR-CHAR REDEFINES WS-CTR.                                        
+           05 WS-CTR-X                    PIC ZZZZZ9.                           
+       01  WS-SUCC-CNT                    PIC 9(2)    VALUE ZEROS.              
+       01  WS-UNSUCC-CNT                  PIC 9(2)    VALUE ZEROS.              
+       01  WS-UNSUCC-FT                   PIC 9(2)    VALUE ZEROS.              
+       01  WS-UNSUCC-ST                   PIC 9(2)    VALUE ZEROS.              
+       01  WS-UNSUCC-ST-BE                PIC 9(2)    VALUE ZEROS.              
+       01  WS-UNSUCC-ST-BTO               PIC 9(2)    VALUE ZEROS.              
+       01  WS-UNSUCC-ST-DBS               PIC 9(2)    VALUE ZEROS.              
+       01  WS-FD-HH-2008-2013             PIC X(1)    VALUE SPACES.             
+       01  WS-FD-FT2T-2013                PIC X(1)    VALUE SPACES.             
+       01  WS-SKIP-COUNTING               PIC X(1)    VALUE SPACES.             
+       01  WS-SKIP-REGN                   PIC X(1)    VALUE SPACES.             
+                                                                                
+                                                                                
+      ******************************************************************        
+       PROCEDURE DIVISION.                                                      
+      ******************************************************************        
+                                                                                
+      ******************                                                        
+       000-MAIN-ROUTINE.                                                        
+      ******************                                                        
+           PERFORM 100-INITIALIZATION THRU 100-EXIT.                            
+           PERFORM 200-READ-F595      THRU 200-EXIT.                            
+           PERFORM 300-PROCESS-RTN    THRU 300-EXIT                             
+             UNTIL WS-EOF-F595 = 'Y'.                                           
+           PERFORM 999-CLOSE-FILES    THRU 999-EXIT.                            
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ********************                                                      
+       100-INITIALIZATION.                                                      
+      ********************                                                      
+           OPEN INPUT  BP13F595                                                 
+                       BP13K813                                                 
+                OUTPUT BP13F593.                                                
+                                                                                
+           IF WS-BP13K813-STAT NOT =  00 AND 97                                 
+              DISPLAY 'ERROR IN OPENING BP13K813 STATUS - '                     
+                  WS-BP13K813-STAT                                              
+              MOVE WS-BP13K813-STAT TO RETURN-CODE                              
+              PERFORM 999-CLOSE-FILES THRU 999-EXIT                             
+           END-IF.                                                              
+                                                                                
+           MOVE ZEROS                   TO WS-COUNTERS.                         
+                                                                                
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *****************                                                         
+       200-READ-F595.                                                           
+      *****************                                                         
+           READ BP13F595 AT END                                                 
+                MOVE 'Y'             TO WS-EOF-F595                             
+                MOVE HIGH-VALUES     TO F595-NUM-REGN                           
+                GO TO 200-EXIT.                                                 
+                                                                                
+           ADD  1                    TO WS-F595-READ.                           
+           MOVE BP13F595-REC(484:9)  TO WS-F595-NUM-NRIC.                       
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *****************                                                         
+       300-PROCESS-RTN.                                                         
+      *****************                                                         
+           MOVE SPACES                TO WS-PREV-RANDOM-KEY.                    
+           MOVE SPACES                TO WS-PREV-REF.                           
+           MOVE SPACES                TO WS-PREV-MODE.                          
+           MOVE SPACES                TO WS-PREV-DTE-BALLOT.                    
+           MOVE SPACES                TO WS-PREV-STATUS.                        
+           INITIALIZE                 BP13F593-REC.                             
+           MOVE WS-F595-NUM-NRIC   TO WS-PREV-NRIC.                             
+           MOVE 'N'                TO WS-SUCC-FD.                               
+           MOVE 'N'                TO WS-SUCC-DBS-FND.                          
+           MOVE ZEROS              TO WS-SUCC-CNT.                              
+           MOVE ZEROS              TO WS-UNSUCC-CNT.                            
+           MOVE ZEROS              TO WS-UNSUCC-FT.                             
+           MOVE ZEROS              TO WS-UNSUCC-ST.                             
+           MOVE ZEROS              TO WS-UNSUCC-ST-BE.                          
+           MOVE ZEROS              TO WS-UNSUCC-ST-BTO.                         
+           MOVE ZEROS              TO WS-UNSUCC-ST-DBS.                         
+           MOVE SPACES             TO BP13F593-REC.                             
+           INITIALIZE                 BP13F593-REC.                             
+                                                                                
+           MOVE 'N'                TO WS-FD-HH-2008-2013.                       
+           MOVE 'N'                TO WS-FD-FT2T-2013.                          
+           MOVE 'N'                TO WS-SKIP-COUNTING.                         
+           MOVE 'N'                TO WS-SKIP-REGN.                             
+                                                                                
+           PERFORM 400-MATCHED-RECORD   THRU 400-EXIT UNTIL                     
+              WS-F595-NUM-NRIC NOT =  WS-PREV-NRIC                              
+                    OR WS-EOF-F595 = 'Y'.                                       
+                                                                                
+           IF WS-UNSUCC-CNT > 0                                                 
+              PERFORM 500-WRITE-RECORD  THRU 500-EXIT                           
+           END-IF.                                                              
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ********************                                                      
+       400-MATCHED-RECORD.                                                      
+      ********************                                                      
+                                                                                
+           MOVE 'N'                     TO WS-MATURE-EST-TAG.                   
+                                                                                
+           MOVE F595-CDE-REQUEST-STATUS      TO WS-REQ-STATUS.                  
+                                                                                
+           IF F595-CDE-BALLOT-HOUSEHOLD NOT = SPACE AND LOW-VALUE               
+              MOVE F595-CDE-BALLOT-HOUSEHOLD TO WS-BALLOT-HOUSEHOLD             
+           ELSE                                                                 
+              MOVE F595-CDE-HOUSEHOLD        TO WS-BALLOT-HOUSEHOLD             
+           END-IF.                                                              
+                                                                                
+           IF F595-NUM-ALLO-CAT = 'BTO'                                         
+              MOVE F595-CDE-NT1         TO K813-NUM-ZONE                        
+              MOVE F595-CDE-FLAT-TYPE   TO K813-NUM-FLAT-TYPE                   
+              MOVE F595-DTE-BALLOT      TO K813-DTE-BALLOT                      
+              PERFORM 425-READ-BP13K813 THRU 425-EXIT                           
+           END-IF.                                                              
+                                                                                
+           IF F595-CDE-BALLOT-HOUSEHOLD  = 'F'                                  
+             IF F595-NUM-FT2T NOT = 'Y'                                         
+                 MOVE 'Y' TO F595-NUM-FT2T                                      
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+           IF F595-DTE-BALLOT >= '200805' AND                                   
+              F595-DTE-BALLOT < '201309' AND                                    
+              F595-NUM-ALLO-CAT = 'BTO' AND                                     
+              WS-MATURE-EST-TAG NOT = 'Y'                                       
+              IF WS-BALLOT-HOUSEHOLD = 'H' OR 'T'                               
+                  MOVE 'Y'                TO WS-FD-HH-2008-2013                 
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF F595-DTE-BALLOT = '201307' AND                                    
+              F595-NUM-FT2T = 'Y'                                               
+              MOVE 'Y'                TO WS-FD-FT2T-2013                        
+           END-IF.                                                              
+                                                                                
+           IF F595-CDE-ALLOC-SCH NOT = 'FTS'                                    
+                                                                                
+           IF (F595-DTE-BALLOT < '200805') OR                                   
+                                                                                
+              (F595-DTE-BALLOT >= '200910' AND                                  
+               F595-NUM-ALLO-CAT = 'BTO' AND                                    
+               (WS-MATURE-EST-TAG NOT = 'Y') AND                                
+               (WS-REQ-STATUS NOT = 'S' AND 'C') AND                            
+               (WS-BALLOT-HOUSEHOLD = 'H' OR 'T' OR 'F') AND                    
+               (F595-NUM-BOOK-STATUS = SPACES OR LOW-VALUES))                   
+                                                                                
+                 PERFORM 410-COUNT-ATTEMPT    THRU 410-EXIT                     
+           ELSE                                                                 
+              MOVE SPACE                     TO WS-REQ-STATUS                   
+              IF F595-NUM-BOOK-STATUS = 'BF' OR 'LF' OR 'WF' OR                 
+                                        'LA' OR 'WA' OR 'LG' OR                 
+                                        'WG' OR 'LS' OR 'WS'                    
+                 IF F595-NUM-REQUEST-REASON NOT = 'S1'                          
+                   MOVE  'S'                   TO WS-REQ-STATUS                 
+                   PERFORM 410-COUNT-ATTEMPT THRU 410-EXIT                      
+                 END-IF                                                         
+              ELSE                                                              
+                 IF F595-NUM-BOOK-STATUS = 'NC' OR 'NF' OR 'NV' OR              
+                                           'SC' OR 'SF' OR 'NS'                 
+                    IF WS-BALLOT-HOUSEHOLD = 'H' OR 'T' OR 'F'                  
+                       MOVE  'W'             TO WS-REQ-STATUS                   
+                       IF F595-CDE-FLAT-TYPE(1:1) NOT = '1' AND                 
+                          F595-NUM-ALLO-CAT = 'BTO'                             
+                          IF WS-MATURE-EST-TAG  NOT = 'Y'                       
+                             PERFORM 410-COUNT-ATTEMPT THRU 410-EXIT            
+                          END-IF                                                
+                       END-IF                                                   
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF                                                               
+           END-IF.                                                              
+                                                                                
+                                                                                
+           PERFORM 200-READ-F595          THRU 200-EXIT.                        
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ********************                                                      
+       410-COUNT-ATTEMPT.                                                       
+      ********************                                                      
+                                                                                
+           IF F595-NUM-ABORT = 'Y' AND                                          
+              WS-REQ-STATUS  = 'S'                                              
+              MOVE   'U'                TO WS-REQ-STATUS                        
+           END-IF.                                                              
+                                                                                
+           IF F595-CDE-FLAT-TYPE = '2F' AND                                     
+              F595-NUM-ELDERLY   = 'F'  AND                                     
+              (F595-NUM-PPO NOT = SPACES AND 'E')                               
+              GO TO 410-EXIT                                                    
+           END-IF.                                                              
+                                                                                
+           IF (WS-F595-NUM-NRIC = WS-PREV-NRIC)                                 
+              IF WS-REQ-STATUS NOT = 'S'                                        
+                                                                                
+                  IF (F595-NUM-REF  = WS-PREV-REF OR                            
+                      F595-NUM-RANDOM(1:27)  = WS-PREV-RANDOM-KEY)              
+                      CONTINUE                                                  
+                  ELSE                                                          
+                    IF WS-SUCC-FD = 'N'                                         
+                       PERFORM 412-COMPUTE-UNSCC-COUNT THRU 412-EXIT            
+                       MOVE 'N'              TO WS-SUCC-DBS-FND                 
+                       IF WS-SKIP-COUNTING = 'N'                                
+                          PERFORM 415-PROCESS-UNSUCC  THRU 415-EXIT             
+                          PERFORM 420-LOG-UNSUCC-REC  THRU 420-EXIT             
+                       ELSE                                                     
+                          MOVE 'Y' TO WS-SKIP-REGN                              
+                          ADD 1 TO WS-G-2008-DROP                               
+                       END-IF                                                   
+                    END-IF                                                      
+                  END-IF                                                        
+              ELSE                                                              
+                                                                                
+                 PERFORM 405-PROCESS-DUP-SUCC THRU 405-EXIT                     
+                                                                                
+                 IF F595-NUM-ALLO-CAT NOT = 'DBS'                               
+                    ADD   1    TO WS-SUCC-CNT                                   
+                    MOVE 'Y'   TO WS-SUCC-FD                                    
+                 ELSE                                                           
+      **            DISPLAY 'BYPASS DBS SUCC ' WS-F595-NUM-NRIC ' '             
+      **                                       F595-KEY-FLD                     
+                    MOVE F595-NUM-REF            TO WS-PREV-REF                 
+                    MOVE F595-NUM-RANDOM(1:27)   TO WS-PREV-RANDOM-KEY          
+                    MOVE 'Y'                     TO WS-SUCC-DBS-FND             
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+       410-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      **********************                                                    
+       405-PROCESS-DUP-SUCC.                                                    
+      **********************                                                    
+      * DEDUCT 1 FROM COUNT IF PRECEDING DUPREC IS UNSUCC                       
+      *-----------------------------------------------------------              
+                                                                                
+           IF (WS-SUCC-FD              =  'N'        ) AND                      
+              (F595-NUM-REF          = WS-PREV-REF OR                           
+               F595-NUM-RANDOM(1:27) = WS-PREV-RANDOM-KEY) AND                  
+               WS-SUCC-DBS-FND   NOT = 'Y' AND                                  
+               WS-SKIP-COUNTING = 'N'                                           
+               CONTINUE                                                         
+           ELSE                                                                 
+               GO         TO 405-EXIT                                           
+           END-IF.                                                              
+                                                                                
+           IF WS-PREV-MODE = 'BE ' OR 'SBF'                                     
+              COMPUTE WS-UNSUCC-ST-BE  = WS-UNSUCC-ST-BE - 1                    
+           ELSE                                                                 
+              IF WS-PREV-MODE = 'BTO'                                           
+                 COMPUTE WS-UNSUCC-ST-BTO = WS-UNSUCC-ST-BTO - 1                
+              ELSE                                                              
+                 IF WS-PREV-MODE = 'DBS'                                        
+                    COMPUTE WS-UNSUCC-ST-DBS = WS-UNSUCC-ST-DBS - 1             
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           COMPUTE WS-CNT        = WS-UNSUCC-CNT.                               
+           COMPUTE WS-UNSUCC-CNT = WS-UNSUCC-CNT - 1.                           
+                                                                                
+      * EMPTY F593-RECORD                                                       
+      *---------------------                                                    
+            MOVE SPACES TO F593-NUM-REGN          (WS-CNT)                      
+                           F593-NUM-NRIC1         (WS-CNT)                      
+                           F593-NUM-NRIC2         (WS-CNT)                      
+                           F593-NUM-NRIC3         (WS-CNT)                      
+                           F593-NUM-NRIC4         (WS-CNT)                      
+                           F593-DTE-BALLOT        (WS-CNT)                      
+                           F593-NUM-ALLO-CAT      (WS-CNT)                      
+                           F593-CDE-NT            (WS-CNT)                      
+                           F593-CDE-FLAT-TYPE     (WS-CNT)                      
+                           F593-CDE-HOUSEHOLD     (WS-CNT)                      
+                           F593-CDE-MCPS-TAG      (WS-CNT)                      
+                           F593-CDE-REQUEST-STATUS(WS-CNT)                      
+                           F593-DTE-REQUEST       (WS-CNT)                      
+                           F593-NUM-ABORT         (WS-CNT)                      
+                           F593-NUM-ELDERLY-EXEMPTION (WS-CNT).                 
+                                                                                
+       405-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       412-COMPUTE-UNSCC-COUNT.                                                 
+                                                                                
+           MOVE 'N' TO WS-SKIP-COUNTING.                                        
+           IF F595-DTE-BALLOT >= '200805'                                       
+                  ADD  1                TO WS-UNSUCC-CNT                        
+           ELSE                                                                 
+              IF WS-BALLOT-HOUSEHOLD = 'G'                                      
+                 IF WS-FD-FT2T-2013 = 'Y' OR                                    
+                    WS-FD-HH-2008-2013 = 'Y'                                    
+                       ADD  1                TO WS-UNSUCC-CNT                   
+                 ELSE                                                           
+                    MOVE 'Y'                 TO WS-SKIP-COUNTING                
+                 END-IF                                                         
+              ELSE                                                              
+                  ADD  1                TO WS-UNSUCC-CNT                        
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       412-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ********************                                                      
+       415-PROCESS-UNSUCC.                                                      
+      ********************                                                      
+           MOVE F595-NUM-REF            TO WS-PREV-REF.                         
+           MOVE F595-NUM-RANDOM(1:27)   TO WS-PREV-RANDOM-KEY.                  
+           MOVE F595-NUM-ALLO-CAT       TO WS-PREV-MODE.                        
+           MOVE F595-DTE-BALLOT         TO WS-PREV-DTE-BALLOT.                  
+           MOVE WS-REQ-STATUS           TO WS-PREV-STATUS.                      
+                                                                                
+           IF WS-BALLOT-HOUSEHOLD = 'H' OR 'T' OR 'F'                           
+              ADD 1        TO WS-UNSUCC-FT                                      
+           ELSE                                                                 
+              ADD 1     TO WS-UNSUCC-ST                                         
+           END-IF.                                                              
+                                                                                
+           IF F595-NUM-ALLO-CAT = 'BE ' OR 'SBF'                                
+              ADD 1     TO WS-UNSUCC-ST-BE                                      
+           ELSE                                                                 
+             IF F595-NUM-ALLO-CAT = 'BTO'                                       
+                ADD 1     TO WS-UNSUCC-ST-BTO                                   
+             ELSE                                                               
+               IF F595-NUM-ALLO-CAT = 'DBS'                                     
+                ADD 1     TO WS-UNSUCC-ST-DBS                                   
+               END-IF                                                           
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+                                                                                
+       415-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *********************                                                     
+       420-LOG-UNSUCC-REC.                                                      
+      *********************                                                     
+           MOVE WS-F595-NUM-NRIC    TO F593-NUM-NRIC.                           
+                                                                                
+           IF F595-NUM-ABORT = LOW-VALUES                                       
+              MOVE SPACE TO F595-NUM-ABORT                                      
+           END-IF.                                                              
+                                                                                
+      * WRITE 20 RECORDS                                                        
+      *------------------                                                       
+           IF WS-UNSUCC-CNT <= 20                                               
+              MOVE F595-NUM-REGN    TO F593-NUM-REGN(WS-UNSUCC-CNT)             
+              MOVE F595-NUM-NRIC1   TO F593-NUM-NRIC1(WS-UNSUCC-CNT)            
+                                                                                
+              IF F595-NUM-NRIC2(1:1) NOT = '#'                                  
+                 MOVE F595-NUM-NRIC2   TO F593-NUM-NRIC2(WS-UNSUCC-CNT)         
+              END-IF                                                            
+              IF F595-NUM-NRIC3(1:1) NOT = '#'                                  
+                 MOVE F595-NUM-NRIC3   TO F593-NUM-NRIC3(WS-UNSUCC-CNT)         
+              END-IF                                                            
+              IF F595-NUM-NRIC4(1:1) NOT = '#'                                  
+                 MOVE F595-NUM-NRIC4   TO F593-NUM-NRIC4(WS-UNSUCC-CNT)         
+              END-IF                                                            
+                                                                                
+              MOVE F595-DTE-BALLOT  TO F593-DTE-BALLOT(WS-UNSUCC-CNT)           
+              MOVE F595-CDE-NT1     TO F593-CDE-NT    (WS-UNSUCC-CNT)           
+              MOVE WS-REQ-STATUS            TO                                  
+                   F593-CDE-REQUEST-STATUS(WS-UNSUCC-CNT)                       
+              MOVE F595-DTE-REQUEST         TO                                  
+                   F593-DTE-REQUEST       (WS-UNSUCC-CNT)                       
+              MOVE F595-NUM-ALLO-CAT        TO                                  
+                   F593-NUM-ALLO-CAT      (WS-UNSUCC-CNT)                       
+              MOVE F595-CDE-FLAT-TYPE       TO                                  
+                   F593-CDE-FLAT-TYPE     (WS-UNSUCC-CNT)                       
+              MOVE WS-BALLOT-HOUSEHOLD             TO                           
+                   F593-CDE-HOUSEHOLD     (WS-UNSUCC-CNT)                       
+              MOVE F595-NUM-ABORT           TO                                  
+                   F593-NUM-ABORT         (WS-UNSUCC-CNT)                       
+                                                                                
+      * DETERMINE MCPS TAG                                                      
+      *--------------------                                                     
+              IF (F595-NUM-MCPS NOT = SPACE AND LOW-VALUE) AND                  
+                 (F595-CDE-RESIDENT-HA1 NOT = 'H' AND                           
+                  F595-CDE-RESIDENT-HA1 NOT = 'P' AND                           
+                  F595-CDE-RESIDENT-HA1 NOT = 'M' )                             
+                  MOVE 'Y'    TO   F593-CDE-MCPS-TAG(WS-UNSUCC-CNT)             
+              ELSE                                                              
+                  MOVE 'N'    TO   F593-CDE-MCPS-TAG(WS-UNSUCC-CNT)             
+              END-IF                                                            
+                                                                                
+              MOVE F595-NUM-INCOME-EXEMPTION TO                                 
+                   F593-NUM-ELDERLY-EXEMPTION(WS-UNSUCC-CNT)                    
+           END-IF.                                                              
+                                                                                
+       420-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      **********************                                                    
+       425-READ-BP13K813.                                                       
+      **********************                                                    
+                                                                                
+           READ BP13K813.                                                       
+                                                                                
+           EVALUATE WS-BP13K813-STAT                                            
+             WHEN 00                                                            
+                 MOVE K813-NUM-MATURE-EST-TAG TO WS-MATURE-EST-TAG              
+             WHEN 23                                                            
+                 DISPLAY 'ZONE NOT FOUND ON BP13K813..' K813-KEY-FLD            
+                         ' REGN=' F595-NUM-REGN                                 
+                         ' NRIC1=' F595-NUM-NRIC1                               
+             WHEN OTHER                                                         
+                 DISPLAY 'ERROR READING BP13K813...' WS-BP13K813-STAT           
+                 PERFORM 999-CLOSE-FILES THRU 999-EXIT                          
+           END-EVALUATE.                                                        
+                                                                                
+           ADD 1 TO WS-K813-READ.                                               
+                                                                                
+       425-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      **********************                                                    
+       500-WRITE-RECORD.                                                        
+      **********************                                                    
+           MOVE WS-UNSUCC-CNT       TO F593-NUM-UNSUCC-TOT.                     
+           MOVE WS-UNSUCC-ST-BE     TO F593-NUM-UNSUCC-BE.                      
+           MOVE WS-UNSUCC-ST-BTO    TO F593-NUM-UNSUCC-BTO.                     
+           MOVE WS-UNSUCC-ST-DBS    TO F593-NUM-UNSUCC-DBS.                     
+           MOVE FUNCTION CURRENT-DATE(1:8) TO F593-DTE-UPDATE.                  
+           MOVE 'BP13CB22'                 TO F593-NUM-USERID.                  
+                                                                                
+           IF (WS-FD-FT2T-2013 = 'Y' OR                                         
+              WS-FD-HH-2008-2013 = 'Y') AND                                     
+              WS-SKIP-REGN = 'Y'                                                
+              MOVE 'Y' TO F593-NUM-G-BF-200805                                  
+           END-IF.                                                              
+                                                                                
+           WRITE                       BP13F593-REC.                            
+           ADD  1                   TO WS-F593-WRITE.                           
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       999-CLOSE-FILES.                                                         
+           CLOSE BP13F595                                                       
+                 BP13K813                                                       
+                 BP13F593.                                                      
+                                                                                
+           DISPLAY SPACES.                                                      
+           DISPLAY '*================ BP13CB22 ================*'.              
+           DISPLAY '  NO. OF F595 RECORDS READ    = ' WS-F595-READ.             
+           DISPLAY '  NO. OF F593 RECORDS WRITTEN = ' WS-F593-WRITE.            
+           DISPLAY '  NO. OF K813 RECORDS READ    = ' WS-K813-READ.             
+           DISPLAY '  NO. OF RECORF FD G BF 200805= ' WS-G-2008-DROP.           
+           DISPLAY '*==========================================*'.              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+        999-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+

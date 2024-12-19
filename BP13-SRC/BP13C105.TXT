@@ -1,0 +1,849 @@
+      *-----------------------*                                                 
+       IDENTIFICATION DIVISION.                                                 
+      *-----------------------*                                                 
+       PROGRAM-ID.    BP13C105.                                                 
+       AUTHOR. LIEW YEE CHOONG                                                  
+       DATE-WRITTEN.  05/05/89.                                                 
+                                                                                
+      * ====================================================== *                
+      *                SYSTEM OF COMMITMENT  (BP13)            *                
+      * ====================================================== *                
+      *    OBJECTIVE   :                                       *                
+      *                  THIS PROGRAMME WILL UPDATE DAILY SOC  *                
+      *                  TRANSACTION (FILE BP13F125) TO        *                
+      *                  BALANCING FILE (BP13K160).            *                
+      *     INPUT FILE :                                       *                
+      *                  1. BP13F125 (DAILY SOC TRANS)         *                
+      *                                                        *                
+      *     OUTPUT FILE:                                       *                
+      *                  1. BP13K160 (BALANCING FILE)          *                
+      *                                                        *                
+      *     LISTING:                                           *                
+      *                  1. BP13L105 (REPORT)                  *                
+      *                                                        *                
+      * ====================================================== *                
+      * CHG-NO   DATE   BY   DESCRIPTIONS                      *                
+      * -------  ------ ---  ------------                      *                
+      * SOC-PH8B 930702 KPS  UPD BP13K800 INSTEAD OF RFF AND   *                
+      *                      EXPAND REGN AND NRIC NO           *                
+      * BP130020 951012 SSS  RENAME 'BP13' IN L14S2 'BP13L105' *                
+      *                      REPOSITION HEAD-01 TO ROW 1       *                
+      * SOC-PH8F 951127 EG1  ADDED THE OPTION FOR HANDLING OF  *                
+      *                      'SUS' CASES.                      *                
+      * BP130103 960316 EG1  TO CATER FOR SUB-TRANFER ENHANCE  *                
+      *                      MENT.                             *                
+      * BP130320 970616 LJL  TO CATER FOR REGN-DEPOSIT.        *                
+      * BP130302 970820 LJL  TO CATER FOR REGN-DEPOSIT TRANSFER*                
+      *                      TO COMMITMENT DEPOSIT.            *                
+      * BP130418 980605 RHB  Y2K                               *                
+      * BP131016 010504 ED   TO CATER FOR STUDIO APT.          *                
+      * BP132309 030401 MCC  TO CATER FOR SOLICITOR BILL       *                
+      * BP132341 230526 MCC  TO EXCLUDE MRT CASES              *                
+      * BP132772 060418 BA3  ADD DBS PROGRESS PAYMENT          *                
+      * BP133036 070331 LSB  INCLUDE GIRO PAYMENT TRAMS-TY=64  *                
+      * BP133033 070418 BA3  INCLUDE CPF LUMP SUM PAYMENT (LS) *                
+      * BP133056 070622 BA3  INCLUDE 'JVP' AND 'JVL'           *                
+      * BP133505 090114 JB8  CATER FOR 'INS' WITH CDE-TRANS(71)*                
+      * BP133480 090202 JB8  INITIALIZE BP13K160-BAL           *                
+      * ====================================================== *                
+                                                                                
+      *-----------------------*                                                 
+       ENVIRONMENT DIVISION.                                                    
+      *-----------------------*                                                 
+       CONFIGURATION SECTION.                                                   
+      *-----------------------*                                                 
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13K160 ASSIGN TO BP13K160                                   
+                  ACCESS MODE IS RANDOM                                         
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY IS K160-KEY-FLD                                    
+                  FILE STATUS IS BP13K160-STATUS.                               
+                                                                                
+           SELECT BP13F125 ASSIGN TO BP13F125.                                  
+           SELECT BP13L105 ASSIGN TO BP13L105.                                  
+                                                                                
+                                                                                
+      *-----------------------*                                                 
+       DATA DIVISION.                                                           
+      *-----------------------*                                                 
+       FILE SECTION.                                                            
+      *-----------------------*                                                 
+                                                                                
+       FD  BP13F125                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 150 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+       COPY BP13F125.                                                           
+                                                                                
+       FD  BP13K160                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 100 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD.                                          
+       COPY BP13K160.                                                           
+                                                                                
+       FD  BP13L105                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           LABEL RECORDS ARE OMITTED                                            
+           RECORDING MODE IS F.                                                 
+       01  PRINT-REC-2             PIC X(132).                                  
+                                                                                
+                                                                                
+      *-----------------------*                                                 
+       WORKING-STORAGE SECTION.                                                 
+      *-----------------------*                                                 
+                                                                                
+       01  BP13K160-STATUS                PIC 99         VALUE ZEROS.           
+       01  WS-K160-AMT-OPEN               PIC S9(10)V99  VALUE ZEROS.           
+       01  WS-K160-AMT-TRANS              PIC S9(10)V99  VALUE ZEROS.           
+       01  WS-K160-AMT-CLOSE              PIC S9(10)V99  VALUE ZEROS.           
+       01  WS-F125-AMT-RECEIPT            PIC S9(7)V99   VALUE ZEROS.           
+       01  WS-F125-CDE-PAYMENT-TYPE       PIC X(3)       VALUE SPACES.          
+       01  WS-BP13K160-WRITE              PIC 9(5)       VALUE ZEROS.           
+       01  WS-BP13K160-BAL                PIC 9(5)       VALUE ZEROS.           
+       01  WS-BP13K160-REWRITE            PIC 9(5)       VALUE ZEROS.           
+       01  WS-BP13F125-READ               PIC 9(5)       VALUE ZEROS.           
+       01  WS-K160-FOUND                  PIC X          VALUE 'N'.             
+       01  WS-CNT-CASES-ON-PAGEA          PIC 9(3)       VALUE 60.              
+       01  WS-CNT-PAGEA                   PIC 9(2)       VALUE ZEROES.          
+       01  WS-CNT-PAGE                    PIC 9(2)       VALUE ZEROES.          
+       01  WS-DTE-TRANS.                                                        
+           05  WS-DTE-TRANS-CC            PIC 99.                               
+           05  WS-DTE-TRANS-YY            PIC 99.                               
+           05  WS-DTE-TRANS-MM            PIC 99.                               
+           05  WS-DTE-TRANS-DD            PIC 99.                               
+       01  WS-F125-DATE.                                                        
+           05  WS-DTE-TRANS-MM            PIC 99.                               
+           05  WS-DTE-TRANS-DD            PIC 99.                               
+           05  WS-DTE-TRANS-CC            PIC 99.                               
+           05  WS-DTE-TRANS-YY            PIC 99.                               
+                                                                                
+       01  WS-F125-KEY-FLD.                                                     
+           05  WS-F125-NUM-ORIG-REGN      PIC X(8)       VALUE SPACES.          
+           05  WS-F125-DTE-POST           PIC X(8)       VALUE SPACES.          
+           05  WS-F125-COUNT-HISTORY      PIC 9(3)       VALUE ZEROS.           
+                                                                                
+       01  WS-SWITCHES.                                                         
+           05  WS-F125-EOF                PIC X          VALUE 'N'.             
+                                                                                
+      ***************************************************************           
+      * ERROR LISTING                                               *           
+      ***************************************************************           
+       01  L14S2-PR-HEAD-01.                                                    
+           05  FILLER              PIC X(8)      VALUE 'BP13L105'.              
+           05  FILLER              PIC X(5)      VALUE SPACES .                 
+           05  FILLER              PIC X(8)      VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(24)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+              'S Y S T E M   O F   C O M M I T M E N T'.                        
+           05  FILLER              PIC X(15)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE :'.                
+           05  14S2-DATE           PIC X(10)     VALUE SPACES.                  
+           05  FILLER              PIC X(3)      VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'PAGE : '.               
+           05  14S2-PAGENO         PIC ZZZZ9.                                   
+                                                                                
+       01  L14S2-PR-HEAD-02.                                                    
+           05  FILLER              PIC X(40)     VALUE SPACES .                 
+           05  FILLER              PIC X(18)     VALUE                          
+                                                 '       ERROR LISTI'.          
+           05  FILLER              PIC X(20)     VALUE                          
+                                                 'NG FOR DAILY TRANSAC'.        
+           05  FILLER              PIC X(13)     VALUE                          
+                                                 'TION'.                        
+           05  FILLER              PIC X(42)     VALUE SPACES.                  
+                                                                                
+       01  L14S2-PR-HEAD-03.                                                    
+           05  FILLER              PIC X(13)                                    
+                  VALUE '  ORIG-REGN  '.                                        
+           05  FILLER              PIC X(12)                                    
+                  VALUE 'PAYMENT-TY  '.                                         
+           05  FILLER              PIC X(25)                                    
+                  VALUE 'TRANS-TY  SCH-ACCN-NO    '.                            
+           05  FILLER              PIC X(26)                                    
+                  VALUE 'NRIC-NO  CDE-APPLN  AMT   '.                           
+           05  FILLER              PIC X(16)                                    
+                  VALUE '   HISTORY-COUNT'.                                     
+           05  FILLER              PIC X(4)      VALUE SPACES.                  
+           05  FILLER              PIC X(15)                                    
+                  VALUE 'RECEIPT/VOUCHER'.                                      
+           05  FILLER              PIC X(22)                                    
+                  VALUE '       RECEIPT-DATE   '.                               
+                                                                                
+       01  L14S2-PR-DETAILS.                                                    
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  14S2-ORIG-REGN      PIC X(08)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE SPACES.                  
+           05  14S2-PAY-TY         PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(08)     VALUE SPACES.                  
+           05  14S2-TRANS-TY       PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(06)     VALUE SPACES.                  
+           05  14S2-SCH-ACCN-NO    PIC X(11)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  14S2-NRIC-NO        PIC X(09)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  14S2-CDE-APPLN      PIC 9(01)     VALUE ZEROES.                  
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  14S2-AMT            PIC 9(10)     VALUE ZEROES.                  
+           05  FILLER              PIC X(08)     VALUE SPACES.                  
+           05  14S2-HISTORY-CNT    PIC 9(03)     VALUE ZEROES.                  
+           05  FILLER              PIC X(10)     VALUE SPACES.                  
+           05  14S2-RECEIPTVOUCHER PIC X(14)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE SPACES.                  
+           05  14S2-RECEIPT-DATE   PIC X(08)     VALUE SPACES.                  
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+                                                                                
+                                                                                
+      *-----------------------*                                                 
+       PROCEDURE DIVISION.                                                      
+      *-----------------------*                                                 
+                                                                                
+      *---------------------------------------------------------------**        
+       000-MAIN.                                                                
+      *---------------------------------------------------------------**        
+           PERFORM 100-OPEN-FILE          THRU 100-EXIT.                        
+           PERFORM 200-READ-DATA-BP13F125 THRU 200-EXIT.                        
+           PERFORM 250-PROCESS-BP13F125   THRU 250-EXIT                         
+                   UNTIL WS-F125-EOF = 'Y'.                                     
+           PERFORM 900-CLOSE-ROUTINE      THRU 900-EXIT.                        
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------------------------------------------------------**        
+       100-OPEN-FILE.                                                           
+      *---------------------------------------------------------------**        
+           OPEN INPUT  BP13F125                                                 
+                I-O    BP13K160                                                 
+                OUTPUT BP13L105.                                                
+                                                                                
+           IF BP13K160-STATUS NOT = 00 AND                                      
+              BP13K160-STATUS NOT = 97                                          
+              DISPLAY 'OPENING ERROR - BP13K160-STATUS : '                      
+              BP13K160-STATUS                                                   
+              MOVE BP13K160-STATUS    TO   RETURN-CODE                          
+              PERFORM 900-CLOSE-ROUTINE THRU 900-EXIT.                          
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *---------------------------------------------------------------**        
+       200-READ-DATA-BP13F125.                                                  
+      *---------------------------------------------------------------**        
+           READ BP13F125   AT END                                               
+                MOVE 'Y' TO WS-F125-EOF                                         
+                GO TO 200-EXIT.                                                 
+                                                                                
+           ADD 1 TO WS-BP13F125-READ.                                           
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------------------------------------------------------**        
+       250-PROCESS-BP13F125.                                                    
+      *---------------------------------------------------------------**        
+           PERFORM 300-MAIN-ROUTINE       THRU 300-EXIT.                        
+           PERFORM 200-READ-DATA-BP13F125 THRU 200-EXIT.                        
+                                                                                
+       250-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------------------------------------------------------**        
+       300-MAIN-ROUTINE.                                                        
+      *---------------------------------------------------------------**        
+      * FOR TRAN TYPE '19' AND PAYMENT TYPE 'IDP' TO                            
+      * UPDATE THE SOC POSTED AMT SO AS TO CHECK THAT                           
+      * WHATEVER IS POSTED TO SOC PAID FIELDS FROM                              
+      * FIRST, NCN, VOUCHER AND DEDUCTED FROM PHASE 3 - SA                      
+      * ARE CORRECTLY ACCOUNTED.                                                
+                                                                                
+           IF F125-CDE-PAYMENT-TYPE = 'IDP'                                     
+              MOVE 'SOC'                  TO K160-KEY-FLD                       
+           ELSE                                                                 
+           IF F125-CDE-PAYMENT-TYPE = 'LS ' OR 'JVL'                            
+              MOVE 'INS'                  TO K160-KEY-FLD                       
+           ELSE                                                                 
+           IF F125-CDE-PAYMENT-TYPE = 'JVP'                                     
+              MOVE 'PP '                  TO K160-KEY-FLD                       
+           ELSE                                                                 
+              MOVE F125-CDE-PAYMENT-TYPE  TO K160-KEY-FLD.                      
+                                                                                
+           READ BP13K160.                                                       
+                                                                                
+           IF BP13K160-STATUS = 0                                               
+              MOVE 'Y'                     TO WS-K160-FOUND                     
+           ELSE                                                                 
+             IF  BP13K160-STATUS = 23                                           
+                 MOVE SPACES                TO BP13K160-BAL                     
+                 INITIALIZE                    BP13K160-BAL                     
+                 MOVE 'N'                   TO WS-K160-FOUND                    
+             ELSE                                                               
+                 MOVE BP13K160-STATUS       TO RETURN-CODE                      
+                 DISPLAY 'READING ERROR - BP13K160-STATUS : '                   
+                         BP13K160-STATUS                                        
+                 MOVE BP13K160-STATUS       TO  RETURN-CODE                     
+                 PERFORM 900-CLOSE-ROUTINE  THRU 900-EXIT.                      
+                                                                                
+           IF F125-CDE-PAYMENT-TYPE = 'REG'                                     
+              PERFORM 325-COMPUTE-REG THRU 325-EXIT                             
+           ELSE                                                                 
+           IF F125-CDE-PAYMENT-TYPE = 'BK '                                     
+              PERFORM 350-COMPUTE-BK THRU 350-EXIT                              
+           ELSE                                                                 
+           IF F125-CDE-PAYMENT-TYPE = 'CD '                                     
+              PERFORM 375-COMPUTE-CD THRU 375-EXIT                              
+           ELSE                                                                 
+           IF F125-CDE-PAYMENT-TYPE = 'SOC' OR 'IDP'                            
+              PERFORM 395-COMPUTE-SOC THRU 395-EXIT                             
+           ELSE                                                                 
+           IF F125-CDE-PAYMENT-TYPE = 'SUS'                                     
+              PERFORM 400-COMPUTE-SUS-ACCT THRU 400-EXIT                        
+           ELSE                                                                 
+           IF F125-CDE-PAYMENT-TYPE = 'RDE'                                     
+              PERFORM 425-COMPUTE-REGN-DEP THRU 425-EXIT                        
+           ELSE                                                                 
+           IF F125-CDE-PAYMENT-TYPE = 'PP ' OR 'JVP'                            
+              PERFORM 460-COMPUTE-PROGRESS THRU 460-EXIT                        
+           ELSE                                                                 
+           IF F125-CDE-PAYMENT-TYPE = 'INS' OR 'LS ' OR 'JVL'                   
+              PERFORM 470-COMPUTE-INSTALMENT THRU 470-EXIT                      
+           ELSE                                                                 
+           IF F125-CDE-PAYMENT-TYPE = 'LSE' OR 'CON' OR                         
+                                      'ADV' OR 'LRF' OR                         
+                                      'LVL' OR 'PRM' OR                         
+                                      'SRV' OR 'SST' OR                         
+                                      'CST' OR 'SA ' OR                         
+                                      'SOL' OR 'MRT'                            
+                    NEXT SENTENCE                                               
+           ELSE                                                                 
+               PERFORM 9100-ERROR-LIST-PRINT THRU 9100-EXIT.                    
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ****************************************************************          
+      *                                                              *          
+      ** TRANSACTION TYPE :   11 = CASH PAYMENT (FIRST SYSTEM)       ** 00005000
+      **                      12 = CPF PAYMENT  (NCN SYSTEM)         ** 00005000
+      **                      13 = CPF REFUND   (VOUCHER SYSTEM)     ** 00005100
+      **                      14 = CPF ADJUSTMENT/FORFEITURE/        ** 00005200
+      **                           TRANSFER     (VOUCHER SYSTEM)     ** 00005300
+      **                      15 = CASH REFUND  (VOUCHER SYSTEM)     ** 00005400
+      **                      16 = CASH ADJUSTMENT/FORFEITURE/       ** 00005500
+      **                           TRANSFER     (VOUCHER SYSTEM)     ** 00005600
+      **                      17 = TRANSFER TO MORTGAGE LOAN         ** 00005700
+      **                      18 = TRANSFER TO CLEARING ACCOUNT      ** 00005800
+      **                      19 = TRANSFER TO CD FROM IDP AND/OR BK ** 00005900
+      **                                                   AND/OR RDE** 00005900
+      **                      20 = CPF REFUND THRU SOC PANEL         ** 00006000
+      **                      21 = CREDIT CD TO GL                   ** 00006100
+      **                      22 = DEBIT  SOC TO GL                  ** 00006200
+      **                      23 = CREDIT CC FEE & LEASE STP FEE     ** 00006300
+      **                      24 = NA                                ** 00006400
+      **                      25 = NA                                ** 00006509
+      *                                                              *          
+      ****************************************************************          
+      *---------------------------------------------------------------**        
+       325-COMPUTE-REG.                                                         
+      *---------------------------------------------------------------**        
+           IF F125-CDE-TRANS-TYPE = '11' OR '15' OR '16'                        
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              GO TO 325-EXIT.                                                   
+                                                                                
+           IF K160-AMT-TRANS IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-TRANS.                                    
+                                                                                
+           IF K160-AMT-CLOSE IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-CLOSE.                                    
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '11' OR '15' OR '16'                        
+              ADD F125-AMT-RECEIPT TO K160-AMT-TRANS                            
+              ADD F125-AMT-RECEIPT TO K160-AMT-CLOSE                            
+           ELSE                                                                 
+              PERFORM 9100-ERROR-LIST-PRINT THRU 9100-EXIT                      
+              GO TO 325-EXIT.                                                   
+           PERFORM 500-PROCESS-UPDATE THRU 500-EXIT.                            
+                                                                                
+       325-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+      * TO COMPUTE THE BOOKING FEES AND UPDATE THE RFF MASTER                   
+      * AND WRITE INTO THE HISTORY TRANSACTION FILE.                            
+      ****************************************************************          
+      *---------------------------------------------------------------**        
+       350-COMPUTE-BK.                                                          
+      *---------------------------------------------------------------**        
+           IF K160-AMT-TRANS IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-TRANS.                                    
+                                                                                
+           IF K160-AMT-CLOSE IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-CLOSE.                                    
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '11' OR '15' OR '16' OR '19'                
+              ADD F125-AMT-RECEIPT          TO K160-AMT-TRANS                   
+              ADD F125-AMT-RECEIPT          TO K160-AMT-CLOSE                   
+           ELSE                                                                 
+              PERFORM 9100-ERROR-LIST-PRINT THRU 9100-EXIT                      
+              GO TO 350-EXIT.                                                   
+           PERFORM 500-PROCESS-UPDATE       THRU 500-EXIT.                      
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '19'                                        
+              PERFORM 355-TRANSFER-BK-SOC   THRU 355-EXIT.                      
+                                                                                
+       350-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+      * TO ADD BOOKING FEES TRANSFERRED TO SOC TO THE SOC POSTED                
+      * FIELD IN THE SOC RECORD.                                                
+      ****************************************************************          
+      *---------------------------------------------------------------**        
+       355-TRANSFER-BK-SOC.                                                     
+      *---------------------------------------------------------------**        
+           MOVE 'SOC'                     TO K160-KEY-FLD.                      
+                                                                                
+           READ BP13K160.                                                       
+                                                                                
+           IF BP13K160-STATUS = 0                                               
+              MOVE 'Y'                   TO WS-K160-FOUND                       
+              COMPUTE K160-AMT-SOC-POSTED = K160-AMT-SOC-POSTED -               
+                                            F125-AMT-RECEIPT                    
+              PERFORM 500-PROCESS-UPDATE THRU 500-EXIT                          
+           ELSE                                                                 
+             IF  BP13K160-STATUS = 23                                           
+                 DISPLAY 'ERROR READING SOC RECORD IN BP13K160'                 
+             ELSE                                                               
+                 MOVE BP13K160-STATUS       TO RETURN-CODE                      
+                 DISPLAY 'READING ERROR - BP13K160-STATUS : '                   
+                         BP13K160-STATUS                                        
+                 MOVE BP13K160-STATUS       TO  RETURN-CODE                     
+                 PERFORM 900-CLOSE-ROUTINE  THRU 900-EXIT.                      
+                                                                                
+       355-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+      * TO COMPUTE THE PREVIOUS COMMITMENT DEPOSIT AND UPDATE INTO              
+      * THE RFF MASTER AND WRITE INTO THE HISTORY TRANSACTION FILE.             
+      ****************************************************************          
+      *---------------------------------------------------------------*         
+       375-COMPUTE-CD.                                                          
+      *---------------------------------------------------------------*         
+           IF F125-CDE-TRANS-TYPE = '13' OR '14' OR '15' OR '16' OR             
+                                    '17' OR '21' OR '26' OR '29'                
+              NEXT SENTENCE                                                     
+            ELSE                                                                
+                PERFORM 9100-ERROR-LIST-PRINT THRU 9100-EXIT                    
+                GO TO 375-EXIT.                                                 
+                                                                                
+           IF K160-AMT-TRANS IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-TRANS.                                    
+                                                                                
+           IF K160-AMT-CLOSE IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-CLOSE.                                    
+                                                                                
+           ADD F125-AMT-RECEIPT              TO K160-AMT-TRANS.                 
+           ADD F125-AMT-RECEIPT              TO K160-AMT-CLOSE.                 
+                                                                                
+           PERFORM 500-PROCESS-UPDATE        THRU 500-EXIT.                     
+           IF F125-CDE-TRANS-TYPE = '17' OR '21' OR '26' OR '29'                
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              PERFORM 380-UPDATE-SOC-POSTED     THRU 380-EXIT.                  
+                                                                                
+       375-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+      * TO UPDATE THE SOC POSTED IN SOC REC FOR ANY REFUND OR ADJUST            
+      * OF CD AMOUNT DUE TO CHGE OF SCHEME, FORFEITURES, REFUND.                
+      ****************************************************************          
+      *---------------------------------------------------------------*         
+       380-UPDATE-SOC-POSTED.                                                   
+      *---------------------------------------------------------------*         
+           MOVE 'SOC'                     TO K160-KEY-FLD.                      
+                                                                                
+           READ BP13K160.                                                       
+                                                                                
+           IF BP13K160-STATUS = 0                                               
+              MOVE 'Y'                   TO WS-K160-FOUND                       
+              COMPUTE K160-AMT-SOC-POSTED = K160-AMT-SOC-POSTED +               
+                                            F125-AMT-RECEIPT                    
+              PERFORM 500-PROCESS-UPDATE THRU 500-EXIT                          
+           ELSE                                                                 
+             IF  BP13K160-STATUS = 23                                           
+                 DISPLAY 'ERROR READING SOC RECORD IN BP13K160'                 
+             ELSE                                                               
+                 MOVE BP13K160-STATUS       TO RETURN-CODE                      
+                 DISPLAY 'READING ERROR - BP13K160-STATUS : '                   
+                         BP13K160-STATUS                                        
+                 MOVE BP13K160-STATUS       TO  RETURN-CODE                     
+                 PERFORM 900-CLOSE-ROUTINE  THRU 900-EXIT.                      
+                                                                                
+       380-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+      * TO COMPUTE THE COMMITMENT DEPOSIT AND UPDATE INTO                       
+      * THE RFF MASTER AND WRITE INTO THE HISTORY TRANSACTION FILE.             
+      ****************************************************************          
+      *---------------------------------------------------------------*         
+       395-COMPUTE-SOC.                                                         
+      *---------------------------------------------------------------*         
+           IF F125-CDE-TRANS-TYPE = '11' OR '12' OR '13' OR '14' OR             
+                                    '15' OR '16' OR '19' OR                     
+                                    '20' OR '22' OR '24' OR '28' OR '29'        
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              PERFORM 9100-ERROR-LIST-PRINT THRU 9100-EXIT                      
+              GO TO 395-EXIT.                                                   
+                                                                                
+           IF K160-AMT-TRANS IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-TRANS.                                    
+                                                                                
+           IF K160-AMT-CLOSE IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-CLOSE.                                    
+                                                                                
+           IF K160-AMT-SOC-POSTED IS NOT NUMERIC                                
+              MOVE ZEROES TO K160-AMT-SOC-POSTED.                               
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '19'                                        
+              SUBTRACT F125-AMT-RECEIPT FROM  K160-AMT-SOC-POSTED               
+              PERFORM 500-PROCESS-UPDATE THRU 500-EXIT                          
+              GO TO 395-EXIT.                                                   
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '20'                                        
+              ADD F125-AMT-RECEIPT TO    K160-AMT-SOC-POSTED                    
+              PERFORM 500-PROCESS-UPDATE THRU 500-EXIT                          
+              GO TO 395-EXIT.                                                   
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '22'                                        
+              ADD      F125-AMT-RECEIPT TO   K160-AMT-TRANS                     
+              ADD      F125-AMT-RECEIPT TO   K160-AMT-CLOSE                     
+              PERFORM 500-PROCESS-UPDATE THRU 500-EXIT                          
+              GO TO 395-EXIT.                                                   
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '24'                                        
+              ADD F125-AMT-RECEIPT TO    K160-AMT-SOC-POSTED                    
+              PERFORM 500-PROCESS-UPDATE THRU 500-EXIT                          
+              GO TO 395-EXIT.                                                   
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '28'                                        
+              ADD F125-AMT-RECEIPT TO    K160-AMT-SOC-POSTED                    
+              PERFORM 500-PROCESS-UPDATE THRU 500-EXIT                          
+              GO TO 395-EXIT.                                                   
+                                                                                
+      *  ALLOTHER FORMS OF TRANS, UPDATE THE TRANS, CLOSE &                     
+      *  SOC POSTED FIELDS IN THE SOC REC.                                      
+                                                                                
+           SUBTRACT F125-AMT-RECEIPT  FROM  K160-AMT-TRANS.                     
+           SUBTRACT F125-AMT-RECEIPT  FROM  K160-AMT-CLOSE.                     
+           ADD F125-AMT-RECEIPT       TO    K160-AMT-SOC-POSTED.                
+                                                                                
+           PERFORM 500-PROCESS-UPDATE THRU 500-EXIT.                            
+                                                                                
+       395-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+      * TO UPDATE THE SUSPENSE AMOUNT TO BP13K160                               
+      ****************************************************************          
+      *---------------------------------------------------------------*         
+       400-COMPUTE-SUS-ACCT.                                                    
+      *---------------------------------------------------------------*         
+           IF F125-CDE-TRANS-TYPE = '11' OR '12' OR '13' OR                     
+                                    '14' OR '15' OR '16' OR '25'                
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              PERFORM 9100-ERROR-LIST-PRINT THRU 9100-EXIT                      
+              GO TO 400-EXIT.                                                   
+                                                                                
+           IF K160-AMT-TRANS IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-TRANS.                                    
+                                                                                
+           IF K160-AMT-CLOSE IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-CLOSE.                                    
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '11' OR '12' OR '13' OR                     
+                                    '14' OR '15' OR '16' OR '25'                
+              ADD F125-AMT-RECEIPT TO K160-AMT-TRANS                            
+              ADD F125-AMT-RECEIPT TO K160-AMT-CLOSE                            
+           ELSE                                                                 
+              PERFORM 9100-ERROR-LIST-PRINT THRU 9100-EXIT                      
+              GO TO 400-EXIT                                                    
+           END-IF.                                                              
+           PERFORM 500-PROCESS-UPDATE THRU 500-EXIT.                            
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+       425-COMPUTE-REGN-DEP.                                                    
+      *---------------------------------------------------------------*         
+           IF F125-CDE-TRANS-TYPE = '11' OR '12' OR '13' OR                     
+                                    '14' OR '15' OR '16' OR '19'                
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              PERFORM 9100-ERROR-LIST-PRINT THRU 9100-EXIT                      
+              GO TO 425-EXIT.                                                   
+                                                                                
+           IF K160-AMT-TRANS IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-TRANS.                                    
+                                                                                
+           IF K160-AMT-CLOSE IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-CLOSE.                                    
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '11' OR '12' OR '13' OR                     
+                                    '14' OR '15' OR '16' OR '19'                
+              ADD F125-AMT-RECEIPT TO K160-AMT-TRANS                            
+              ADD F125-AMT-RECEIPT TO K160-AMT-CLOSE                            
+           ELSE                                                                 
+              PERFORM 9100-ERROR-LIST-PRINT THRU 9100-EXIT                      
+              GO TO 425-EXIT                                                    
+           END-IF.                                                              
+           PERFORM 500-PROCESS-UPDATE THRU 500-EXIT.                            
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '19'                                        
+              PERFORM 455-TRANSFER-RDE-SOC   THRU 455-EXIT.                     
+                                                                                
+       425-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+      * TO ADD BOOKING FEES TRANSFERRED TO SOC TO THE SOC POSTED                
+      * FIELD IN THE SOC RECORD.                                                
+      ****************************************************************          
+      *---------------------------------------------------------------*         
+       455-TRANSFER-RDE-SOC.                                                    
+      *---------------------------------------------------------------*         
+           MOVE 'SOC'                     TO K160-KEY-FLD.                      
+                                                                                
+           READ BP13K160.                                                       
+                                                                                
+           IF BP13K160-STATUS = 0                                               
+              MOVE 'Y'                   TO WS-K160-FOUND                       
+              COMPUTE K160-AMT-SOC-POSTED = K160-AMT-SOC-POSTED -               
+                                            F125-AMT-RECEIPT                    
+              PERFORM 500-PROCESS-UPDATE THRU 500-EXIT                          
+           ELSE                                                                 
+             IF  BP13K160-STATUS = 23                                           
+                 DISPLAY 'ERROR READING SOC RECORD IN BP13K160'                 
+             ELSE                                                               
+                 MOVE BP13K160-STATUS       TO RETURN-CODE                      
+                 DISPLAY 'READING ERROR - BP13K160-STATUS : '                   
+                         BP13K160-STATUS                                        
+                 MOVE BP13K160-STATUS       TO  RETURN-CODE                     
+                 PERFORM 900-CLOSE-ROUTINE  THRU 900-EXIT.                      
+                                                                                
+       455-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+       460-COMPUTE-PROGRESS.                                                    
+      *---------------------------------------------------------------*         
+                                                                                
+           IF K160-AMT-TRANS IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-TRANS.                                    
+                                                                                
+           IF K160-AMT-CLOSE IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-CLOSE.                                    
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '11' OR '12' OR '13' OR '14' OR             
+                                    '15' OR '16' OR '69' OR '71'                
+                                                                                
+              ADD F125-AMT-RECEIPT              TO K160-AMT-TRANS               
+              ADD F125-AMT-RECEIPT              TO K160-AMT-CLOSE               
+                                                                                
+              PERFORM 500-PROCESS-UPDATE        THRU 500-EXIT                   
+           ELSE                                                                 
+              IF F125-CDE-TRANS-TYPE = '63'                                     
+                 COMPUTE K160-AMT-TRANS = K160-AMT-TRANS -                      
+                                          F125-AMT-RECEIPT                      
+                 COMPUTE K160-AMT-CLOSE = K160-AMT-CLOSE -                      
+                                          F125-AMT-RECEIPT                      
+                                                                                
+                PERFORM 500-PROCESS-UPDATE      THRU 500-EXIT                   
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       460-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+       470-COMPUTE-INSTALMENT.                                                  
+      *---------------------------------------------------------------*         
+                                                                                
+           IF K160-AMT-TRANS IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-TRANS.                                    
+                                                                                
+           IF K160-AMT-CLOSE IS NOT NUMERIC                                     
+              MOVE ZEROES TO K160-AMT-CLOSE.                                    
+                                                                                
+           IF F125-CDE-TRANS-TYPE = '11' OR '12' OR '13' OR '14' OR             
+                                    '15' OR '16' OR '64' OR '69' OR '71'        
+                                                                                
+              ADD F125-AMT-RECEIPT              TO K160-AMT-TRANS               
+              ADD F125-AMT-RECEIPT              TO K160-AMT-CLOSE               
+                                                                                
+              PERFORM 500-PROCESS-UPDATE        THRU 500-EXIT                   
+           ELSE                                                                 
+              IF F125-CDE-TRANS-TYPE = '63'                                     
+                 COMPUTE K160-AMT-TRANS = K160-AMT-TRANS -                      
+                                          F125-AMT-RECEIPT                      
+                 COMPUTE K160-AMT-CLOSE = K160-AMT-CLOSE -                      
+                                          F125-AMT-RECEIPT                      
+                 PERFORM 500-PROCESS-UPDATE     THRU 500-EXIT                   
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       470-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *****************************************************************         
+      *    500-PROCESS-UPDATE                                         *         
+      *    IF REC FOUND, UPDATE AMT-TRANS, AMT-CLOSE                  *         
+      *    IF REC NOT FOUND, WRITE NEW REC WITH AMT-TRANS, AMT-CLOSE  *         
+      *****************************************************************         
+      *---------------------------------------------------------------*         
+       500-PROCESS-UPDATE.                                                      
+      *---------------------------------------------------------------*         
+           IF WS-K160-FOUND     = 'Y'                                           
+              PERFORM 600-REWRITE-K160    THRU 600-EXIT                         
+           ELSE                                                                 
+              MOVE F125-CDE-PAYMENT-TYPE  TO K160-KEY-FLD                       
+              PERFORM 510-WRITE-REC       THRU 510-EXIT.                        
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+       510-WRITE-REC.                                                           
+      *---------------------------------------------------------------*         
+           WRITE BP13K160-BAL.                                                  
+           IF BP13K160-STATUS NOT = ZEROS                                       
+              DISPLAY 'PAYMENT-TYPE  '          F125-CDE-PAYMENT-TYPE           
+              DISPLAY 'WRITING ERROR-BP13K160 ' BP13K160-STATUS                 
+              MOVE BP13K160-STATUS              TO RETURN-CODE                  
+              PERFORM 900-CLOSE-ROUTINE         THRU 900-EXIT                   
+           ELSE                                                                 
+              ADD 1 TO WS-BP13K160-WRITE.                                       
+                                                                                
+       510-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+       600-REWRITE-K160.                                                        
+      *---------------------------------------------------------------*         
+           REWRITE BP13K160-BAL.                                                
+           IF BP13K160-STATUS NOT = ZEROS                                       
+              DISPLAY 'PAYMENT-TYPE  '            F125-CDE-PAYMENT-TYPE         
+              DISPLAY 'REWRITING ERROR-BP13K160 ' BP13K160-STATUS               
+              MOVE BP13K160-STATUS                TO RETURN-CODE                
+              PERFORM 900-CLOSE-ROUTINE           THRU 900-EXIT.                
+           ADD 1 TO WS-BP13K160-REWRITE.                                        
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+       9100-ERROR-LIST-PRINT.                                                   
+      *---------------------------------------------------------------*         
+            IF WS-CNT-CASES-ON-PAGEA > 50                                       
+                PERFORM 9200-PRINT-HEADING THRU 9200-EXIT.                      
+                                                                                
+            PERFORM 9300-PRINT-DETAIL THRU 9300-EXIT.                           
+                                                                                
+       9100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+       9200-PRINT-HEADING.                                                      
+      *---------------------------------------------------------------*         
+            ADD 1                  TO WS-CNT-PAGEA.                             
+            MOVE ZERO              TO WS-CNT-CASES-ON-PAGEA.                    
+            MOVE WS-CNT-PAGEA      TO 14S2-PAGENO.                              
+                                                                                
+            STRING FUNCTION CURRENT-DATE(7:2) '/'                               
+                   FUNCTION CURRENT-DATE(5:2) '/'                               
+                   FUNCTION CURRENT-DATE(1:4)                                   
+            DELIMITED BY SIZE INTO 14S2-DATE.                                   
+                                                                                
+            MOVE SPACES            TO PRINT-REC-2.                              
+            WRITE PRINT-REC-2 FROM L14S2-PR-HEAD-01 AFTER PAGE.                 
+            WRITE PRINT-REC-2 FROM L14S2-PR-HEAD-02 AFTER 2.                    
+            WRITE PRINT-REC-2 FROM L14S2-PR-HEAD-03 AFTER 2.                    
+            INSPECT PRINT-REC-2 REPLACING CHARACTERS BY '-'.                    
+            WRITE PRINT-REC-2.                                                  
+            MOVE SPACES            TO PRINT-REC-2.                              
+            WRITE PRINT-REC-2 AFTER 2.                                          
+                                                                                
+       9200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+       9300-PRINT-DETAIL.                                                       
+      *---------------------------------------------------------------*         
+            ADD 1                       TO WS-CNT-CASES-ON-PAGEA.               
+            MOVE F125-NUM-REGN          TO 14S2-ORIG-REGN.                      
+            MOVE F125-CDE-PAYMENT-TYPE  TO 14S2-PAY-TY.                         
+            MOVE F125-CDE-TRANS-TYPE    TO 14S2-TRANS-TY.                       
+            MOVE F125-CDE-APPLT-CPF     TO 14S2-CDE-APPLN.                      
+            MOVE F125-NUM-NRIC          TO 14S2-NRIC-NO.                        
+            MOVE F125-AMT-RECEIPT       TO 14S2-AMT.                            
+            MOVE F125-NUM-RECPT-JRNO    TO 14S2-RECEIPTVOUCHER.                 
+            MOVE F125-DTE-TRANS         TO WS-DTE-TRANS.                        
+            MOVE CORR WS-DTE-TRANS      TO WS-F125-DATE.                        
+            MOVE WS-F125-DATE           TO 14S2-RECEIPT-DATE.                   
+            WRITE PRINT-REC-2 FROM L14S2-PR-DETAILS AFTER 1.                    
+                                                                                
+       9300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+       900-CLOSE-ROUTINE.                                                       
+      *---------------------------------------------------------------*         
+            DISPLAY '***** BP13C105 *****'                                      
+            DISPLAY 'NO OF RECORDS PROCESSED (BP13F125) = '                     
+            WS-BP13F125-READ.                                                   
+            DISPLAY 'NO OF RECORDS WRITTEN   (BP13K160) = '                     
+            WS-BP13K160-WRITE.                                                  
+            DISPLAY 'NO OF RECORDS REWRITTEN (BP13K160) = '                     
+            WS-BP13K160-REWRITE.                                                
+                                                                                
+            CLOSE BP13F125                                                      
+                  BP13K160                                                      
+                  BP13L105.                                                     
+            IF BP13K160-STATUS NOT = '00'                                       
+             DISPLAY 'CLOSING ERROR-BP13K160 '                                  
+                                      BP13K160-STATUS                           
+            MOVE BP13K160-STATUS TO RETURN-CODE.                                
+            STOP RUN.                                                           
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+

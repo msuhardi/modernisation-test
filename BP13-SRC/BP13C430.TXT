@@ -1,0 +1,472 @@
+       IDENTIFICATION DIVISION.                                                 
+      *************************                                                 
+       PROGRAM-ID.    BP13C430.                                                 
+      *AUTHOR.        S B LIAN.                                                 
+      *DATE-WRITTEN.  07/01/85.                                                 
+                                                                                
+      * ========================================================= *             
+      *                SYSTEM OF COMMITMENT (BP13)                *             
+      * ========================================================= *             
+      *                                                           *             
+      *    OBJECTIVE  :                                           *             
+      *      1. THIS PROGRAM WILL TAKE THE SALES ORDER FILE FROM  *             
+      *         THE SALES MORTGAGE SYSTEM AS INPUT. IT WILL FIRST *             
+      *         ENSURE THAT THIS SALES ORDER HAS NOT BEEN         *             
+      *         PREVIOUSLY UPDATED FIS AS SOLD  I.E PREVIOUS      *             
+      *         REJECTS BY SMS/IDP BEING RE-DATA ENTERED. IF NOT  *             
+      *         THEN IT WILL EDIT THIS FILE FOR ERRORS.           *             
+      *         POSSIBLE ERRORS ARE :                             *             
+      *           A) NO FLAT INVENTORY RECORDS                    *             
+      *           B) NO COST PRICE IN FLAT INVENTORY RECORDS      *             
+      *           C) SELLING PRICE DO NOT TALLY                   *             
+      *           D) FLAT SOLD STATUS                             *             
+      *           E) VALID KEY ISSUE DATE                         *             
+      *         FOR EACH OF THESE ERRORS, THE FILE WILL BE TAGGED *             
+      *         IN THE RESPECTIVE ERROR COLUMNS. AN ERROR LIST OF *             
+      *         ALL THESE ERRORS WILL BE PRINTED.                 *             
+      *         THIS PROGRAM WILL ONLY BE INTERESTED IN SALES     *             
+      *         TYPE 2A, REVESTED CASES.                          *             
+      *                                                           *             
+      *    INPUT-OUTPUT FILE :                                    *             
+      *         1. B02F065                                        *             
+      *                                                           *             
+      *    INPUT FILE :                                           *             
+      *         1. BM06K110                                       *             
+      *                                                           *             
+      *    LISTING :                                              *             
+      *         1. ERROR LISTS (BP13L430A)                        *             
+      *         2. CONTROL LISTS (BP13L430B) - DELETED            *             
+      *                                                           *             
+      * = = = = = = = = = = = = = = = = = = = = = = = = = = = = = *             
+      * CHG-NO   BY   ON     DESCRIPTION                          *             
+      * ------   --  ---     -----------                          *             
+      * C881134  LSB 881201  ADD IN TYPE 2A FOR CP CASE           *             
+      * C930317  LMS 930424  TO CHANGE B01F065 TO AB03F806        *             
+      *                      DUE TO SMS PHASE 3B.                 *             
+      * I920718  LMS 930424  TO CONVERT TO COBOL II.              *             
+      * C930751  LJL 930722  TO CEASE PRINTING OF BP13L430B       *             
+      *                      IE THE CONTROL LIST OF VALID CASES   *             
+      * BP130020 SSS 950930  CHG LISTING ID POSITION TO COL 1     *             
+      * SOC 8G   SSS 951024  GET PROPERTY DATA FROM PIDB          *             
+      * BP130418 SIA 980311  CHGE BM06K211 TO BM06K110            *             
+      * BP130883 RAS 000808  TO CHANGE BP13C904 TO BP13C913       *             
+      * BP132301 CLT 131203  EXPAND BP13F430 TO 1000 BYTES.       *             
+      * BP133565 DW5 090326  ENCHANCE VALIDATION FOR TYPE 2A CASE *             
+      * BP133770 ESA1231209  REMOVE PARA 400-CHECK-SELLING-PRICE  *             
+      * ========================================================= *             
+                                                                                
+      **********************                                                    
+       ENVIRONMENT DIVISION.                                                    
+      **********************                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-4341.                                               
+       OBJECT-COMPUTER. IBM-4341.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT AB03F806 ASSIGN TO AB03F806.                                  
+                                                                                
+           SELECT BM06K110 ASSIGN TO BM06K110                                   
+                  ACCESS MODE IS RANDOM                                         
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY IS K110-KEY-FLD                                    
+                  FILE STATUS IS BM06K110-STATUS.                               
+                                                                                
+           SELECT P13L430A ASSIGN TO P13L430A.                                  
+                                                                                
+                                                                                
+      ***************                                                           
+       DATA DIVISION.                                                           
+      ***************                                                           
+       FILE SECTION.                                                            
+      ***************                                                           
+                                                                                
+       FD  AB03F806                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 1000 CHARACTERS                                      
+           LABEL RECORDS ARE STANDARD.                                          
+                                                                                
+       COPY AB03F806.                                                           
+                                                                                
+       FD  BM06K110                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 500 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD.                                          
+                                                                                
+       COPY BM06K110.                                                           
+                                                                                
+       FD  P13L430A                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           LABEL RECORDS ARE OMITTED.                                           
+       01  PRINT-REC-1                     PIC X(132).                          
+                                                                                
+                                                                                
+      *************************                                                 
+       WORKING-STORAGE SECTION.                                                 
+      *************************                                                 
+       01  WS-SWITCHES.                                                         
+           05  WS-EOF-1            PIC X     VALUE 'N'.                         
+                                                                                
+       01  ERROR-FLAG              PIC X     VALUE 'N'.                         
+           88  ERROR-FOUND                   VALUE 'Y'.                         
+                                                                                
+       01  REC-K110-FOUND-FLAG     PIC X     VALUE 'N'.                         
+           88  REC-K110-FOUND                VALUE 'Y'.                         
+                                                                                
+       01  WS-DTE-CURRENT.                                                      
+           05  WS-CC               PIC X(2).                                    
+           05  WS-YY               PIC X(2).                                    
+           05  WS-MM               PIC X(2).                                    
+           05  WS-DD               PIC X(2).                                    
+                                                                                
+       01  WS-EDITED-DATE.                                                      
+           05  WS-DD               PIC 99.                                      
+           05  FILLER              PIC X      VALUE '/'.                        
+           05  WS-MM               PIC 99.                                      
+           05  FILLER              PIC X      VALUE '/'.                        
+           05  WS-CC               PIC 99.                                      
+           05  WS-YY               PIC 99.                                      
+                                                                                
+       01  WS-F806-DATE.                                                        
+           05  WS-CC               PIC 99.                                      
+           05  WS-F806-YYMMDD.                                                  
+               10  WS-YY           PIC 99.                                      
+               10  WS-MM           PIC 99.                                      
+               10  WS-DD           PIC 99.                                      
+                                                                                
+       01  WS-SCH-ACC-NO.                                                       
+           05  WS-SCH              PIC X(4).                                    
+           05  WS-ACC              PIC X(4).                                    
+           05  WS-CDG              PIC X.                                       
+           05  WS-ACC-TYPE         PIC X(2).                                    
+                                                                                
+       01  BM06K110-STATUS         PIC 99       VALUE ZEROS.                    
+       01  WS-VALID-DATE-FLAG      PIC X        VALUE SPACES.                   
+       01  WS-NUMBER               PIC 99       VALUE 99.                       
+       01  NO-OF-PAGE              PIC 9(5)     VALUE ZEROS.                    
+       01  NO-F806-READ            PIC 9(5)     VALUE ZEROS.                    
+       01  NO-F806-TAGGED          PIC 9(5)     VALUE ZEROS.                    
+       01  NO-PIDB-FD              PIC 9(5)     VALUE ZEROS.                    
+       01  NO-PREV-TAG             PIC 9(5)     VALUE ZEROS.                    
+       01  WS-FIS-UPDATES          PIC 9(5)     VALUE ZEROS.                    
+       01  ERR-NO-K110             PIC 9(5)     VALUE ZEROS.                    
+       01  ERR-NO-COST             PIC 9(5)     VALUE ZEROS.                    
+       01  ERR-SELLING-PRICE       PIC 9(5)     VALUE ZEROS.                    
+       01  ERR-FLAT-SOLD           PIC 9(5)     VALUE ZEROS.                    
+       01  ERR-DATE                PIC 9(5)     VALUE ZEROS.                    
+       01  WS-F806-VALID-SALE-TY   PIC 9(5)     VALUE ZEROS.                    
+       01  SQL-CODE                PIC 9(4).                                    
+                                                                                
+      *----------------------------------------------------------------*        
+      *        LINKAGE FOR SUB-PROGRAM BP13C913                        *        
+      *----------------------------------------------------------------*        
+       01  WS-LINK-REC.                                                         
+           05  WS-LINK-NUM-SCH-ACC.                                             
+               10  WS-LINK-NUM-SCH     PIC X(4).                                
+               10  WS-LINK-NUM-ACC     PIC X(5).                                
+                                                                                
+       COPY P13COMM8.                                                           
+                                                                                
+       01  L430A-PR-HEAD-1.                                                     
+           05  430A-LIST           PIC X(8).                                    
+           05  FILLER              PIC X(39)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER              PIC X(27)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'PAGE : '.               
+           05  430A-PAGE           PIC ZZZZ9.                                   
+           05  FILLER              PIC X(7)      VALUE SPACES.                  
+                                                                                
+       01  L430A-PR-HEAD-2.                                                     
+           05  FILLER              PIC X(46)     VALUE SPACES.                  
+           05  FILLER              PIC X(41)     VALUE                          
+               'ERROR LIST OF INVALID SALES ORDER TYPE 2A'.                     
+           05  FILLER              PIC X(26)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE : '.               
+           05  430A-DATE           PIC X(10).                                   
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+                                                                                
+       01  L430A-PR-HEAD-3.                                                     
+           05  FILLER              PIC X(53)     VALUE SPACES.                  
+           05  FILLER              PIC X(35)     VALUE                          
+               'SOLD TO             SALE DATE OF'.                              
+           05  FILLER              PIC X(32)     VALUE                          
+               ' *** IN FLAT INV ***'.                                          
+                                                                                
+       01  L430A-PR-HEAD-4.                                                     
+           05  FILLER              PIC X(52)     VALUE                          
+           ' SCH-ACC-NO  BLK-NO  STREET-NAME         HOUSE-NO'.                 
+           05  FILLER              PIC X(47)     VALUE                          
+               ' REGN NO  SELLING-PR TYPE SALE ORD   SELLING-PR'.               
+           05  FILLER              PIC X(15)     VALUE                          
+               ' ERROR  MESSAGE'.                                               
+                                                                                
+       01  L430A-PR-HEAD-5.                                                     
+           05  430A-HDB-REF        PIC X(11).                                   
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  430A-BLK-NO         PIC X(5).                                    
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  430A-STREET-NAME    PIC X(20).                                   
+           05  FILLER              PIC X         VALUE SPACE.                   
+           05  430A-LEVEL-NO       PIC X(2).                                    
+           05  FILLER              PIC X         VALUE '-'.                     
+           05  430A-MAIN-UNIT      PIC X(4).                                    
+           05  430A-SUB-UNIT       PIC X(3).                                    
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  430A-REGN-NO        PIC X(8).                                    
+           05  FILLER              PIC X         VALUE SPACE.                   
+           05  430A-F806-SELLING-P PIC $$$$$$$$9.                               
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  430A-SALES-TYPE     PIC XX.                                      
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  430A-DATE-SALE-ORD PIC X(10).                                    
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  430A-K110-SELLING-P PIC $$$$$$$$9.                               
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  430A-ERR-MESG       PIC X(28)     VALUE SPACES.                  
+           05  FILLER              PIC X(8)      VALUE SPACES.                  
+                                                                                
+                                                                                
+      ********************                                                      
+       PROCEDURE DIVISION.                                                      
+      ********************                                                      
+                                                                                
+      ********************                                                      
+       MAIN.                                                                    
+      ********************                                                      
+           PERFORM 100-OPENING-ROUTINE.                                         
+           PERFORM 150-READ-DATA              THRU 150-EXIT.                    
+           PERFORM 200-READ-AND-CHECK-SALE-TY THRU 200-EXIT                     
+                       UNTIL WS-EOF-1 = 'Y'.                                    
+           PERFORM 750-CLOSING-ROUTINE.                                         
+                                                                                
+                                                                                
+      ********************                                                      
+       100-OPENING-ROUTINE.                                                     
+      ********************                                                      
+           OPEN INPUT  BM06K110                                                 
+                I-O    AB03F806                                                 
+                OUTPUT P13L430A.                                                
+                                                                                
+           IF BM06K110-STATUS NOT = 0 AND 97                                    
+              DISPLAY 'OPENING ERROR, K110-STATUS ' BM06K110-STATUS             
+              MOVE BM06K110-STATUS TO RETURN-CODE                               
+              PERFORM 750-CLOSING-ROUTINE.                                      
+                                                                                
+                                                                                
+      ********************                                                      
+       150-READ-DATA.                                                           
+      ********************                                                      
+            READ AB03F806 AT END MOVE 'Y' TO WS-EOF-1                           
+                        GO TO 150-EXIT.                                         
+            ADD 1 TO NO-F806-READ.                                              
+                                                                                
+       150-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+                                                                                
+      **************************************************************            
+      *   1. READ FILE AB03F806.                                   *            
+      *   2. EDIT SALES ORDER FILE FOR SALES-TYPE = 2A.            *            
+      **************************************************************            
+      ****************************                                              
+       200-READ-AND-CHECK-SALE-TY.                                              
+      ****************************                                              
+           IF F806-CDE-SALES-TYP = '2A'                                         
+              ADD 1 TO WS-F806-VALID-SALE-TY                                    
+              PERFORM 250-EDIT-F806 THRU 250-EXIT.                              
+           PERFORM 150-READ-DATA THRU 150-EXIT.                                 
+                                                                                
+       200-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+                                                                                
+      ************************************************************              
+      *                                                          *              
+      *             EDIT SALES ORDER FILE (AB03F806)             *              
+      *   BEFORE CHECKING SALES ORDER FOR ERRORS ENSURE THAT THE *              
+      *   SALES ORDER HAS NOT PREVIOUSLY UPDATED FIS I.E.        *              
+      *   PREVIOUSLY PASSED THRU FIS CHECKS BUT WAS REJECTED BY  *              
+      *   SMS/IDP AND IS NOW BEING RE-DATA-ENTERED               *              
+      *                                                          *              
+      ************************************************************              
+      ****************************                                              
+       250-EDIT-F806.                                                           
+      ****************************                                              
+            MOVE 'N' TO ERROR-FLAG, REC-K110-FOUND-FLAG.                        
+            MOVE F806-DTE-EXE-SALE-AGRMT TO WS-F806-DATE.                       
+            PERFORM 300-ACCESS-FILE-BM06K110 THRU 300-EXIT.                     
+                                                                                
+            IF REC-K110-FOUND                                                   
+                IF K110-DTE-KEY-ISSUED = WS-F806-DATE AND                       
+                  (K110-DTE-KEY-ISSUED NOT = ZEROS AND SPACES                   
+                                             AND LOW-VALUE)                     
+                    ADD 1 TO NO-PREV-TAG                                        
+                ELSE                                                            
+                    PERFORM 350-CHECK-COST-PRICE                                
+                    PERFORM 450-CHECK-SOLD.                                     
+                                                                                
+            IF ERROR-FOUND                                                      
+                ADD 1    TO NO-F806-TAGGED                                      
+                MOVE '2' TO F806-CDE-ERR-REJECT                                 
+                REWRITE AB03F806-REC.                                           
+                                                                                
+       250-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+                                                                                
+      ************************************************************              
+      *                                                          *              
+      *       USE F806-SCH-ACC-NO TO ACCESS FILE BM06K110.       *              
+      *                                                          *              
+      ************************************************************              
+      ****************************                                              
+       300-ACCESS-FILE-BM06K110.                                                
+      ****************************                                              
+           MOVE F806-NUM-HDB-REF TO WS-SCH-ACC-NO.                              
+           MOVE WS-SCH-ACC-NO    TO K110-KEY-FLD.                               
+                                                                                
+           READ BM06K110.                                                       
+           IF BM06K110-STATUS NOT = 0                                           
+               IF BM06K110-STATUS = 23                                          
+                  MOVE 'NO FLAT INVENTORY RECORDS' TO 430A-ERR-MESG             
+                  MOVE 'N' TO REC-K110-FOUND-FLAG                               
+                  PERFORM 550-PRINT-ERROR-LIST                                  
+                  MOVE '*' TO F806-CDE-ERR-FIS-REC                              
+                  MOVE 'Y' TO ERROR-FLAG                                        
+                  ADD 1 TO ERR-NO-K110                                          
+               ELSE                                                             
+                  DISPLAY 'READ ERROR STATUS = ' BM06K110-STATUS                
+                  DISPLAY 'WS-SCH-ACC-NO ' WS-SCH-ACC-NO                        
+                  PERFORM 750-CLOSING-ROUTINE                                   
+           ELSE                                                                 
+               MOVE 'Y' TO REC-K110-FOUND-FLAG.                                 
+                                                                                
+       300-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+                                                                                
+      ****************************                                              
+       350-CHECK-COST-PRICE.                                                    
+      ****************************                                              
+            IF K110-COST-PRICE = 0                                              
+                MOVE 'NO COST IN FLAT INVENTORY RECORDS'                        
+                                                TO 430A-ERR-MESG                
+                PERFORM 550-PRINT-ERROR-LIST                                    
+                MOVE '*' TO F806-CDE-ERR-COST-PRICE                             
+                MOVE 'Y' TO ERROR-FLAG                                          
+                ADD 1 TO ERR-NO-COST.                                           
+                                                                                
+                                                                                
+      ************************************************************              
+      *             CHECK IF FLAT SOLD                           *              
+      * NOTE : SMS REFUSE TO CHECK DATADICT FOR F806-CURR-REG-ERR*              
+      ************************************************************              
+      ****************************                                              
+       450-CHECK-SOLD.                                                          
+      ****************************                                              
+            IF K110-DTE-KEY-ISSUED NOT = ZEROS AND SPACES                       
+                                         AND LOW-VALUES                         
+                DISPLAY 'KEY ISSUE DATE   '  K110-DTE-KEY-ISSUED                
+                MOVE 'FIV FLAT SOLD -- PLSE REJ'                                
+                                      TO 430A-ERR-MESG                          
+                PERFORM 550-PRINT-ERROR-LIST                                    
+                MOVE '*' TO F806-CDE-ERR-FIS-SOLD                               
+                MOVE 'Y' TO ERROR-FLAG                                          
+                ADD 1 TO ERR-FLAT-SOLD.                                         
+                                                                                
+                                                                                
+      ************************************************************              
+      *        PRINT ERROR LIST OF INVALID SALES ORDER           *              
+      ************************************************************              
+      ****************************                                              
+       550-PRINT-ERROR-LIST.                                                    
+      ****************************                                              
+            IF WS-NUMBER > 46                                                   
+                PERFORM 600-PRINT-ERROR-HEADING.                                
+            PERFORM 650-PRINT-ERROR-DETAIL.                                     
+                                                                                
+                                                                                
+      ****************************                                              
+       600-PRINT-ERROR-HEADING.                                                 
+      ****************************                                              
+            ADD 1           TO NO-OF-PAGE.                                      
+            MOVE NO-OF-PAGE TO 430A-PAGE.                                       
+            MOVE 'P13L430A' TO 430A-LIST.                                       
+            WRITE PRINT-REC-1 FROM L430A-PR-HEAD-1 AFTER PAGE.                  
+            MOVE FUNCTION CURRENT-DATE TO WS-DTE-CURRENT.                       
+            MOVE CORR WS-DTE-CURRENT   TO WS-EDITED-DATE.                       
+            MOVE WS-EDITED-DATE        TO 430A-DATE.                            
+            WRITE PRINT-REC-1 FROM L430A-PR-HEAD-2 AFTER 2.                     
+            WRITE PRINT-REC-1 FROM L430A-PR-HEAD-3 AFTER 2.                     
+            WRITE PRINT-REC-1 FROM L430A-PR-HEAD-4 AFTER 1.                     
+            MOVE 0 TO WS-NUMBER.                                                
+            MOVE SPACES TO PRINT-REC-1.                                         
+            WRITE PRINT-REC-1.                                                  
+                                                                                
+                                                                                
+      ****************************                                              
+       650-PRINT-ERROR-DETAIL.                                                  
+      ****************************                                              
+            ADD 2 TO WS-NUMBER.                                                 
+            MOVE F806-NUM-HDB-REF        TO 430A-HDB-REF.                       
+            MOVE F806-NUM-ORIG-REG       TO 430A-REGN-NO.                       
+            MOVE F806-AMT-SELL-PRICE     TO 430A-F806-SELLING-P.                
+            MOVE F806-CDE-SALES-TYP      TO 430A-SALES-TYPE.                    
+            MOVE F806-DTE-EXE-SALE-AGRMT TO WS-F806-DATE.                       
+            MOVE CORR WS-F806-DATE       TO WS-EDITED-DATE.                     
+            MOVE WS-EDITED-DATE          TO 430A-DATE-SALE-ORD.                 
+                                                                                
+            IF REC-K110-FOUND                                                   
+                PERFORM 700-CALL-BP13C913                                       
+            ELSE                                                                
+                MOVE 0 TO 430A-K110-SELLING-P                                   
+                MOVE SPACES TO 430A-LEVEL-NO                                    
+                               430A-MAIN-UNIT                                   
+                               430A-SUB-UNIT                                    
+                               430A-BLK-NO                                      
+                               430A-STREET-NAME.                                
+                                                                                
+            WRITE PRINT-REC-1 FROM L430A-PR-HEAD-5 AFTER 2.                     
+                                                                                
+                                                                                
+      ****************************                                              
+       700-CALL-BP13C913.                                                       
+      ****************************                                              
+           IF K110-SCH-ACC-NO NOT = SPACES AND ZEROES AND LOW-VALUES            
+              MOVE SPACES               TO BP13COMM8-REC                        
+              INITIALIZE                   BP13COMM8-REC.                       
+                                                                                
+              MOVE K110-SCH-ACC-NO      TO WS-LINK-REC.                         
+              CALL 'BP13C913' USING WS-LINK-REC, BP13COMM8-REC.                 
+                                                                                
+              IF COMM8-CDE-SYSERR NOT = 0                                       
+                 MOVE COMM8-CDE-SYSERR TO SQL-CODE                              
+                 DISPLAY 'K110-SCH-ACC-NO = ' K110-SCH-ACC-NO                   
+                 IF COMM8-CDE-SYSERR = 100                                      
+                    DISPLAY 'SCH-ACC NOT FOUND IN PIDB TABLE ' SQL-CODE         
+                 ELSE                                                           
+                    DISPLAY 'ERROR IN READING PIDB TABLE ' SQL-CODE.            
+                                                                                
+           IF COMM8-CDE-SYSERR = 0                                              
+              ADD 1                        TO NO-PIDB-FD                        
+              MOVE COMM8-NUM-LEVEL         TO 430A-LEVEL-NO                     
+              MOVE COMM8-NUM-UNIT-MAIN     TO 430A-MAIN-UNIT                    
+              MOVE COMM8-NUM-UNIT-SUB      TO 430A-SUB-UNIT                     
+              MOVE COMM8-NUM-BLK           TO 430A-BLK-NO                       
+              MOVE COMM8-NME-STREET        TO 430A-STREET-NAME                  
+              MOVE K110-CURR-SELLING-PRICE TO 430A-K110-SELLING-P.              
+                                                                                
+                                                                                
+      ****************************                                              
+       750-CLOSING-ROUTINE.                                                     
+      ****************************                                              
+           CLOSE AB03F806                                                       
+                 BM06K110                                                       
+                 P13L430A.                                                      
+                                                                                
+           IF BM06K110-STATUS NOT = 0 AND 97                                    
+             DISPLAY 'CLOSING ERROR, K110-STATUS ' BM06K110-STATUS.             
+                                                                                
+           STOP RUN.                                                            
+

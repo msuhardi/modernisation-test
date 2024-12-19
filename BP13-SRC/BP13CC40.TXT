@@ -1,0 +1,613 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CC40.                                                 
+      *AUTHOR.        ED1.                                                      
+      *DATE-WRITTEN.  12/11/2006.                                               
+      ******************************************************************        
+      *                SYSTEM OF COMMITMENT (BP13)                     *        
+      ******************************************************************        
+      * OBJECTIVE : TO MATCH FD00 WITH F120 TO GET FLAT-ADDRESS        *        
+      *             FOR CASES WHERE S&P RECVD IS NOT EMPTY             *        
+      *                                                                *        
+      * INPUT  FILES : BM06F120                                        *        
+      *                BP13FD00                                        *        
+      *                BP13K022                                        *        
+      *                BP13K800                                        *        
+      *                BP13KD30                                        *        
+      *                BP27K800                                        *        
+      * OUTPUT FILES : P13FD78A - FOR REPORT BP13CC41 & BP13SC12       *        
+      *                P13FD78B - FOR REPORT BP13SC13                  *        
+      *                                                                *        
+      * CHG-NO    BY    ON    - DESCRIPTION                            *        
+      * ---------------------------------                              *        
+      * BP132937 ED1 16/11/06   NEW PROGRAM                            *        
+      * BP133091 RB12 17/10/07  EXPAND BP13FD00 FROM 1200 TO 1600 BYTES*        
+      * BP133137 ED1 30/10/06   ADD SNP-PAYMT,OTP-EXPIRY, AHG-STAT &   *        
+      *                         HLA-EXPIRY                             *        
+      * BP133137 ED1 16/11/07   ADD FD78-NUM-CASE-STATUS               *        
+      * BP133137 ED1 28/03/07   CHGE RETRIEVAL OF FD78-NUM-AHG-STATUS  *        
+      *                         BASED ON PGM BP13B384                  *        
+      * BP133137 ED1 07/04/07   ADD P13FD78B REPORT & GET CHEQ-SENT FRM*        
+      *                         BP13KD30                               *        
+      * BP133316 ED1 10/04/07   REMOVE DISPLAY IN NOTFND & HLA EMPTY   *        
+      * BP133137 ED1 17/04/07   MATCH RECS BY SCH-ACC                  *        
+      * BP138047 KAC1 25/11/19  RECOMPILE FOR BP27 COPYBOOK UPDATE     *        
+      ******************************************************************        
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER.   IBM-3090.                                             
+       OBJECT-COMPUTER.   IBM-3090.                                             
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT   BM06F120      ASSIGN TO BM06F120.                           
+           SELECT   BP13FD00      ASSIGN TO BP13FD00.                           
+           SELECT   P13FD78A      ASSIGN TO P13FD78A.                           
+           SELECT   P13FD78B      ASSIGN TO P13FD78B.                           
+                                                                                
+           SELECT BP13K800 ASSIGN TO BP13K800                                   
+                ORGANIZATION IS INDEXED                                         
+                ACCESS MODE  IS RANDOM                                          
+                RECORD KEY   IS K800-NUM-REGN                                   
+                FILE STATUS  IS K800-STATUS.                                    
+                                                                                
+           SELECT BP13K022 ASSIGN TO BP13K022                                   
+                ORGANIZATION IS INDEXED                                         
+                ACCESS MODE  IS DYNAMIC                                         
+                RECORD KEY   IS K022-KEY-FLD                                    
+                ALTERNATE KEY IS K022-NUM-REGN                                  
+                FILE STATUS  IS K022-STATUS.                                    
+                                                                                
+           SELECT BP13KD30 ASSIGN TO BP13KD30                                   
+                ORGANIZATION IS INDEXED                                         
+                ACCESS MODE  IS RANDOM                                          
+                RECORD KEY   IS KD30-KEY-FLD                                    
+                FILE STATUS  IS KD30-STATUS.                                    
+                                                                                
+           SELECT BP27K800 ASSIGN TO BP27K800                                   
+                ORGANIZATION IS INDEXED                                         
+                ACCESS MODE  IS RANDOM                                          
+                RECORD KEY   IS K800-NUM-HLA OF BP27K800-MASTER                 
+                FILE STATUS  IS BP27K800-STATUS.                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+       FD   BM06F120                RECORD CONTAINS 700 CHARACTERS              
+                                    LABEL RECORDS ARE STANDARD                  
+                                    RECORDING MODE IS F.                        
+       COPY BM06F120.                                                           
+                                                                                
+       FD   BP13FD00                RECORD CONTAINS 1600 CHARACTERS             
+                                    LABEL RECORDS ARE STANDARD                  
+                                    RECORDING MODE IS F.                        
+       COPY BP13FD00.                                                           
+                                                                                
+       FD   P13FD78A                RECORD CONTAINS 200 CHARACTERS              
+                                    BLOCK CONTAINS 0 RECORDS                    
+                                    LABEL RECORDS ARE STANDARD                  
+                                    RECORDING MODE IS F.                        
+       COPY BP13FD78.                                                           
+                                                                                
+       FD   P13FD78B                RECORD CONTAINS 200 CHARACTERS              
+                                    BLOCK CONTAINS 0 RECORDS                    
+                                    LABEL RECORDS ARE STANDARD                  
+                                    RECORDING MODE IS F.                        
+       01 P13FD78B-REC PIC X(200).                                              
+                                                                                
+       FD  BP13K800                                                             
+           RECORD    CONTAINS 2000 CHARACTERS.                                  
+       COPY BP13K800.                                                           
+                                                                                
+       FD  BP13K022                                                             
+           RECORD    CONTAINS 100 CHARACTERS.                                   
+       COPY BP13K022.                                                           
+                                                                                
+       FD  BP13KD30                                                             
+           RECORD    CONTAINS 2000 CHARACTERS.                                  
+       COPY BP13KD30.                                                           
+                                                                                
+       FD  BP27K800                                                             
+           RECORD    CONTAINS 1200 CHARACTERS.                                  
+       COPY BP27K800.                                                           
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+       01  WS-COUNTERS.                                                         
+           05  WS-F120-READ                 PIC 9(07) VALUE ZEROS.              
+           05  WS-FD00-READ                 PIC 9(07) VALUE ZEROS.              
+           05  WS-FD78A-WRITTEN             PIC 9(07) VALUE ZEROS.              
+           05  WS-FD78B-WRITTEN             PIC 9(07) VALUE ZEROS.              
+           05  WS-UNMATCH-FD00              PIC 9(07) VALUE ZEROS.              
+           05  WS-UNMATCH-F120              PIC 9(07) VALUE ZEROS.              
+           05  WS-MATCH-REGN                PIC 9(07) VALUE ZEROS.              
+           05  WS-SNO                       PIC 9(05) VALUE ZEROES.             
+           05  WS-PAGE-CTR                  PIC 9(04) VALUE ZEROES.             
+           05  WS-LINE-CTR                  PIC 9(02) VALUE ZEROES.             
+                                                                                
+       01  WS-SYSTEM-DATE-TIME.                                                 
+           05  WS-SYS-DATE                  PIC X(08) VALUE SPACES.             
+           05  WS-SYS-TIME                  PIC X(08) VALUE SPACES.             
+           05  FILLER                       PIC X(05) VALUE SPACES.             
+                                                                                
+       01  WS-CURRENT-DATE.                                                     
+           05  WS-CUR-DD                   PIC 9(02) VALUE ZEROES.              
+           05  FILLER                      PIC X(01) VALUE '/'.                 
+           05  WS-CUR-MM                   PIC 9(02) VALUE ZEROES.              
+           05  FILLER                      PIC X(01) VALUE '/'.                 
+           05  WS-CUR-CCYY                 PIC 9(04) VALUE ZEROES.              
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05 K800-STATUS                  PIC 9(02) VALUE ZEROES.              
+           05 K022-STATUS                  PIC 9(02) VALUE ZEROES.              
+           05 KD30-STATUS                  PIC 9(02) VALUE ZEROES.              
+           05 BP27K800-STATUS              PIC 9(02) VALUE ZEROES.              
+           05 WS-CURRDATE                  PIC X(08) VALUE SPACES.              
+           05 WS-CURRDATE-JUL              PIC X(07) VALUE SPACES.              
+           05 WS-CURRDATE-JUL-R REDEFINES WS-CURRDATE-JUL.                      
+              10 WS-CURRDATE-NUM           PIC 9(07).                           
+           05 WS-DTE-RECV-JUL              PIC X(07).                           
+           05 WS-DTE-RECV-JUL-R REDEFINES WS-DTE-RECV-JUL.                      
+              10 WS-DTE-RECV-NUM           PIC 9(07).                           
+           05 WS-DTE-SGND-JUL              PIC X(07).                           
+           05 WS-DTE-SGND-JUL-R REDEFINES WS-DTE-SGND-JUL.                      
+              10 WS-DTE-SGND-NUM           PIC 9(07).                           
+           05 WS-NO-DAYS                   PIC 9(03) VALUE ZEROES.              
+                                                                                
+      *------------------------------------------------------------*            
+      *  AV02C001 PARAMETERS                                       *            
+      *------------------------------------------------------------*            
+       COPY AV02COMM.                                                           
+                                                                                
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+      *-------------------------------------------------------------            
+       0000-MAIN.                                                               
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM 1000-OPEN-FILES          THRU 1000-EXIT.                     
+           PERFORM 2000-READ-BM06F120       THRU 2000-EXIT.                     
+           PERFORM 2100-READ-BP13FD00       THRU 2100-EXIT.                     
+           PERFORM 3000-PROCESS-RECORD      THRU 3000-EXIT                      
+             UNTIL F120-SCH-ACC-NO    = HIGH-VALUES AND                         
+                   FD00-NUM-SCH-ACCNT = HIGH-VALUES.                            
+           PERFORM 9000-CLOSING-ROUTINE     THRU 9000-EXIT.                     
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       1000-OPEN-FILES.                                                         
+      *-------------------------------------------------------------            
+                                                                                
+           OPEN INPUT BM06F120                                                  
+                      BP13FD00                                                  
+                      BP13K022                                                  
+                      BP13K800                                                  
+                      BP13KD30                                                  
+                      BP27K800                                                  
+               OUTPUT P13FD78A                                                  
+                      P13FD78B.                                                 
+                                                                                
+           IF K022-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'ERROR OPENING BP13K022, FILE STATUS : '                  
+                                 K022-STATUS                                    
+           END-IF.                                                              
+                                                                                
+           IF K800-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'ERROR OPENING BP13K800, FILE STATUS : '                  
+                                 K800-STATUS                                    
+           END-IF.                                                              
+                                                                                
+           IF KD30-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'ERROR OPENING BP13KD30, FILE STATUS : '                  
+                                 KD30-STATUS                                    
+           END-IF.                                                              
+                                                                                
+           IF BP27K800-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'ERROR OPENING BP27K800, FILE STATUS : '                  
+                                 BP27K800-STATUS                                
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE TO WS-SYSTEM-DATE-TIME.                   
+           MOVE WS-SYS-DATE(1:4)      TO WS-CUR-CCYY.                           
+           MOVE WS-SYS-DATE(5:2)      TO WS-CUR-MM.                             
+           MOVE WS-SYS-DATE(7:2)      TO WS-CUR-DD.                             
+           MOVE WS-SYS-DATE(1:8)      TO WS-CURRDATE.                           
+                                                                                
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2000-READ-BM06F120.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BM06F120                                                        
+             AT END MOVE HIGH-VALUES TO F120-SCH-ACC-NO                         
+             GO TO 2000-EXIT.                                                   
+                                                                                
+           ADD  1                    TO WS-F120-READ.                           
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2100-READ-BP13FD00.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13FD00                                                        
+             AT END MOVE HIGH-VALUES TO  FD00-NUM-SCH-ACCNT                     
+             GO TO 2100-EXIT.                                                   
+                                                                                
+           ADD  1                    TO  WS-FD00-READ.                          
+                                                                                
+       2100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3000-PROCESS-RECORD.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES                TO LINK-REC.                              
+           MOVE WS-CURRDATE           TO WS-IN-DATE.                            
+           MOVE 'DJ'                  TO WS-IN-OPTION.                          
+                                                                                
+           PERFORM 4000-CALL-AV02C001 THRU 4000-EXIT                            
+                                                                                
+           MOVE WS-DJ-CCYYDDD         TO WS-CURRDATE-JUL.                       
+                                                                                
+           IF FD00-NUM-SCH-ACCNT = F120-SCH-ACC-NO                              
+              PERFORM 3100-MATCH-REGN        THRU 3100-EXIT                     
+              PERFORM 2100-READ-BP13FD00     THRU 2100-EXIT                     
+              PERFORM 2000-READ-BM06F120  THRU  2000-EXIT                       
+           ELSE                                                                 
+              IF FD00-NUM-SCH-ACCNT > F120-SCH-ACC-NO                           
+                 ADD   1                     TO WS-UNMATCH-F120                 
+                 PERFORM 2000-READ-BM06F120  THRU 2000-EXIT                     
+              ELSE                                                              
+                 ADD   1                     TO WS-UNMATCH-FD00                 
+                 PERFORM 2100-READ-BP13FD00  THRU 2100-EXIT                     
+                                                                                
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3100-MATCH-REGN.                                                         
+      *-------------------------------------------------------------            
+           ADD 1          TO WS-MATCH-REGN.                                     
+                                                                                
+           MOVE  SPACES   TO BP13FD78-REC.                                      
+           INITIALIZE        BP13FD78-REC.                                      
+                                                                                
+           MOVE  FD00-NUM-REGN          TO  FD78-NUM-REGN.                      
+           MOVE  FD00-NUM-SCH-ACCNT     TO  FD78-NUM-SCH-ACCNT.                 
+           MOVE  F120-BLK-NO            TO  FD78-BLK-NO.                        
+           MOVE  F120-UNIT-NO           TO  FD78-UNIT-NO.                       
+           MOVE  F120-STREET-NAME       TO  FD78-STREET-NAME.                   
+           MOVE  FD00-DTE-OPTION        TO  FD78-DTE-OPTION.                    
+                                                                                
+           IF FD00-TME-SNP-APPT NOT = SPACES AND LOW-VALUES AND ZEROES          
+              MOVE  FD00-TME-SNP-APPT   TO  FD78-TME-SNP-APPT                   
+           END-IF.                                                              
+                                                                                
+           IF FD00-DTE-OFFER-ACCEPT  NOT = SPACES AND LOW-VALUES                
+                                                  AND ZEROES                    
+              MOVE  FD00-DTE-OFFER-ACCEPT  TO  FD78-DTE-OFFER-ACCEPT            
+           END-IF.                                                              
+                                                                                
+           IF FD00-DTE-OFFER-PRINTED NOT = SPACES AND LOW-VALUES                
+                                                  AND ZEROES                    
+              MOVE  FD00-DTE-OFFER-PRINTED TO  FD78-DTE-OFFER-PRINTED           
+           END-IF.                                                              
+                                                                                
+           IF FD00-DTE-HSGNT-APPROVE NOT = SPACES AND LOW-VALUES                
+                                                  AND ZEROES                    
+              MOVE  FD00-DTE-HSGNT-APPROVE TO  FD78-DTE-HSGNT-APPROVE           
+           END-IF.                                                              
+                                                                                
+           IF FD00-DTE-SNP-APPT      NOT = SPACES AND LOW-VALUES                
+                                                  AND ZEROES                    
+              MOVE  FD00-DTE-SNP-APPT      TO  FD78-DTE-SNP-APPT                
+           END-IF.                                                              
+                                                                                
+           IF FD00-DTE-SNP-SIGNED    NOT = SPACES AND LOW-VALUES                
+                                                  AND ZEROES                    
+              MOVE  FD00-DTE-SNP-SIGNED    TO  FD78-DTE-SNP-SIGNED              
+           END-IF.                                                              
+                                                                                
+           IF FD00-DTE-SNP-RETURNED  NOT = SPACES AND LOW-VALUES                
+                                                  AND ZEROES                    
+              MOVE  FD00-DTE-SNP-RETURNED  TO  FD78-DTE-SNP-RETURNED            
+           END-IF.                                                              
+                                                                                
+           IF FD00-DTE-SNP-PAYMT-DUE NOT = SPACES AND LOW-VALUES                
+                                                  AND ZEROES                    
+              MOVE  FD00-DTE-SNP-PAYMT-DUE TO  FD78-DTE-SNP-PAYMT-DUE           
+           END-IF.                                                              
+                                                                                
+           IF FD00-DTE-OTP-EXPIRY    NOT = SPACES AND LOW-VALUES                
+                                                  AND ZEROES                    
+              MOVE  FD00-DTE-OTP-EXPIRY    TO  FD78-DTE-OTP-EXPIRY              
+           END-IF.                                                              
+                                                                                
+           MOVE  FD00-DTE-SNP-RECV      TO  FD78-DTE-SNP-RECV.                  
+           MOVE  FD00-NUM-HSGNT-REQ     TO  FD78-NUM-HSGNT-REQ.                 
+                                                                                
+           IF FD00-DTE-HSGNT-SUBMIT NOT = SPACES AND LOW-VALUES AND             
+                                          ZEROES                                
+              MOVE 'S'                    TO FD78-NUM-AHG-STATUS                
+           END-IF.                                                              
+           IF FD00-DTE-HSGNT-APPROVE NOT = SPACES AND LOW-VALUES AND            
+                                          ZEROES                                
+              MOVE 'A'                    TO FD78-NUM-AHG-STATUS                
+           END-IF.                                                              
+           IF FD00-DTE-HSGNT-REJECT NOT = SPACES AND LOW-VALUES AND             
+                                          ZEROES                                
+              MOVE 'R'                    TO FD78-NUM-AHG-STATUS                
+           END-IF.                                                              
+                                                                                
+           PERFORM 3200-READ-BP13K800   THRU  3200-EXIT.                        
+           PERFORM 3300-READ-BP13K022   THRU  3300-EXIT.                        
+           PERFORM 3400-COMPUTE-NO-DAYS THRU  3400-EXIT.                        
+           PERFORM 3500-READ-BP13KD30   THRU  3500-EXIT.                        
+                                                                                
+           MOVE   BP13FD78-REC TO P13FD78B-REC.                                 
+           WRITE  P13FD78B-REC.                                                 
+           ADD 1  TO WS-FD78B-WRITTEN.                                          
+                                                                                
+           IF FD00-DTE-SNP-RECV NOT = SPACES AND LOW-VALUES AND ZEROS           
+              WRITE  BP13FD78-REC                                               
+              ADD 1  TO WS-FD78A-WRITTEN                                        
+           END-IF.                                                              
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3200-READ-BP13K800.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+            INITIALIZE            BP13K800-MASTER.                              
+            MOVE SPACES        TO BP13K800-MASTER.                              
+            MOVE FD00-NUM-REGN TO K800-NUM-REGN.                                
+                                                                                
+            READ BP13K800.                                                      
+                                                                                
+            EVALUATE K800-STATUS                                                
+            WHEN 00                                                             
+                 MOVE K800-NUM-ELIG-TAG  TO  FD78-NUM-ELIG-TAG                  
+                 MOVE K800-NUM-CF-TYPE   TO  FD78-NUM-CF-TYPE                   
+                 MOVE K800-NUM-LOAN-TAG  OF BP13K800-MASTER                     
+                                         TO  FD78-NUM-LOAN-TAG                  
+                                                                                
+                 IF K800-NUM-HLA OF BP13K800-MASTER NOT =                       
+                       SPACES AND LOW-VALUES AND ZEROS                          
+                    PERFORM 3210-READ-BP27K800 THRU 3210-EXIT                   
+                 END-IF                                                         
+                                                                                
+            WHEN 23                                                             
+                 CONTINUE                                                       
+            WHEN OTHER                                                          
+                 DISPLAY 'BP13K800 - ERROR READ, STATUS: '                      
+                          K800-STATUS                                           
+                 ' KEY ' K800-NUM-REGN                                          
+            END-EVALUATE.                                                       
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3210-READ-BP27K800.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+            INITIALIZE            BP27K800-MASTER.                              
+            MOVE SPACES        TO BP27K800-MASTER.                              
+            MOVE K800-NUM-HLA OF BP13K800-MASTER                                
+              TO K800-NUM-HLA OF BP27K800-MASTER.                               
+                                                                                
+            READ BP27K800 KEY IS K800-NUM-HLA OF BP27K800-MASTER.               
+                                                                                
+            EVALUATE BP27K800-STATUS                                            
+            WHEN 00                                                             
+                 MOVE K800-DTE-HLA-EXPIRY  TO FD78-DTE-HLA-EXPIRY               
+                 MOVE K800-NUM-CASE-STATUS TO FD78-NUM-CASE-STATUS              
+                                                                                
+            WHEN 23                                                             
+                 CONTINUE                                                       
+            WHEN OTHER                                                          
+                 DISPLAY 'BP27K800 - ERROR READ, STATUS: '                      
+                 BP27K800-STATUS                                                
+                 ' KEY ' K800-NUM-HLA OF BP27K800-MASTER                        
+            END-EVALUATE.                                                       
+                                                                                
+       3210-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3300-READ-BP13K022.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+            INITIALIZE            BP13K022-REC.                                 
+            MOVE SPACES        TO BP13K022-REC.                                 
+            MOVE FD00-NUM-REGN TO K022-NUM-REGN.                                
+                                                                                
+            START BP13K022 KEY >= K022-NUM-REGN.                                
+                                                                                
+            READ BP13K022 NEXT RECORD.                                          
+                                                                                
+            EVALUATE K022-STATUS                                                
+            WHEN 00                                                             
+            WHEN 02                                                             
+                                                                                
+              IF K022-NUM-REGN = FD00-NUM-REGN                                  
+                 MOVE K022-NUM-OIC  TO  FD78-NUM-OIC                            
+              END-IF                                                            
+                                                                                
+            WHEN 23                                                             
+                 CONTINUE                                                       
+            WHEN OTHER                                                          
+                 DISPLAY 'BP13K022 - ERROR READ, STATUS: '                      
+                          K022-STATUS ' KEY ' K022-NUM-REGN                     
+            END-EVALUATE.                                                       
+                                                                                
+                                                                                
+       3300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3400-COMPUTE-NO-DAYS.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE ZEROES   TO  WS-NO-DAYS.                                        
+                                                                                
+           IF FD78-DTE-SNP-RECV NOT = SPACES AND LOW-VALUES AND ZEROES          
+              MOVE SPACES                TO LINK-REC                            
+              MOVE FD78-DTE-SNP-RECV     TO WS-IN-DATE                          
+              MOVE 'DJ'                  TO WS-IN-OPTION                        
+              PERFORM 4000-CALL-AV02C001 THRU 4000-EXIT                         
+           ELSE                                                                 
+              MOVE '0'                   TO FD78-NUM-DAYS-RECV                  
+              GO                         TO 3400-EXIT                           
+           END-IF.                                                              
+                                                                                
+           MOVE WS-DJ-CCYYDDD            TO WS-DTE-RECV-JUL.                    
+                                                                                
+           COMPUTE WS-NO-DAYS = WS-CURRDATE-NUM - WS-DTE-RECV-NUM.              
+                                                                                
+           MOVE WS-NO-DAYS               TO FD78-NUM-DAYS-RECV.                 
+                                                                                
+           MOVE ZEROES   TO  WS-NO-DAYS.                                        
+                                                                                
+           IF ( FD78-DTE-SNP-SIGNED NOT = SPACES ) AND                          
+              ( FD78-DTE-SNP-APPT   NOT = SPACES ) AND                          
+              ( FD78-DTE-SNP-SIGNED NOT = SPACES ) AND                          
+              ( FD78-DTE-SNP-RETURNED   = SPACES )                              
+                                                                                
+              MOVE SPACES                TO LINK-REC                            
+              MOVE FD78-DTE-SNP-SIGNED   TO WS-IN-DATE                          
+              MOVE 'DJ'                  TO WS-IN-OPTION                        
+              PERFORM 4000-CALL-AV02C001 THRU 4000-EXIT                         
+           ELSE                                                                 
+              MOVE '0'                   TO FD78-NUM-DAYS-SGND                  
+              GO                         TO 3400-EXIT                           
+           END-IF.                                                              
+                                                                                
+           MOVE WS-DJ-CCYYDDD            TO WS-DTE-SGND-JUL.                    
+                                                                                
+           COMPUTE WS-NO-DAYS = WS-CURRDATE-NUM - WS-DTE-SGND-NUM.              
+                                                                                
+           MOVE WS-NO-DAYS               TO FD78-NUM-DAYS-SGND.                 
+                                                                                
+                                                                                
+       3400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3500-READ-BP13KD30.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+            INITIALIZE            BP13KD30-REC.                                 
+            MOVE SPACES        TO BP13KD30-REC.                                 
+            MOVE FD00-NUM-REGN TO KD30-NUM-REGN.                                
+                                                                                
+            READ BP13KD30.                                                      
+                                                                                
+            EVALUATE KD30-STATUS                                                
+            WHEN 00                                                             
+                 IF KD30-DTE-CHEQUE-SENT(1) NOT = SPACES AND LOW-VALUES         
+                                                         AND ZEROS              
+                    MOVE KD30-DTE-CHEQUE-SENT(1) TO FD78-DTE-CHEQUE-SENT        
+                 ELSE                                                           
+                    MOVE SPACES                  TO FD78-DTE-CHEQUE-SENT        
+                 END-IF                                                         
+            WHEN 23                                                             
+                 CONTINUE                                                       
+            WHEN OTHER                                                          
+                 DISPLAY 'BP13KD30 - ERROR READ, STATUS: '                      
+                          KD30-STATUS ' KEY ' KD30-NUM-REGN                     
+            END-EVALUATE.                                                       
+                                                                                
+                                                                                
+       3500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4000-CALL-AV02C001.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           CALL 'AV02C001'      USING LINK-REC.                                 
+                                                                                
+           IF WS-RETURN = 'EID' OR 'EOP'                                        
+              DISPLAY 'ERROR IN CALLING AV02C001-' WS-RETURN                    
+                      ' ' WS-IN-DATE                                            
+           END-IF.                                                              
+                                                                                
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       9000-CLOSING-ROUTINE.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           DISPLAY SPACES.                                                      
+           DISPLAY '***************************************'.                   
+           DISPLAY 'PROGRAM ID     :  BP13CC40'.                                
+           DISPLAY 'CURRENT DATE   : ' WS-CURRENT-DATE.                         
+           DISPLAY '***************************************'.                   
+           DISPLAY 'NO. OF BP13FD00 READ     : ' WS-FD00-READ.                  
+           DISPLAY 'NO. OF BM06F120 READ     : ' WS-F120-READ.                  
+           DISPLAY 'NO. OF F120 UNMATCHED    : ' WS-UNMATCH-F120.               
+           DISPLAY 'NO. OF FD00 UNMATCHED    : ' WS-UNMATCH-FD00.               
+           DISPLAY 'NO. OF FD00/F120 MATCHED : ' WS-MATCH-REGN.                 
+           DISPLAY 'NO. OF P13FD78A  WRITTEN : ' WS-FD78A-WRITTEN.              
+           DISPLAY 'NO. OF P13FD78B  WRITTEN : ' WS-FD78B-WRITTEN.              
+                                                                                
+           CLOSE BM06F120                                                       
+                 BP13FD00                                                       
+                 BP13K022                                                       
+                 BP13K800                                                       
+                 BP13KD30                                                       
+                 BP27K800                                                       
+                 P13FD78A                                                       
+                 P13FD78B.                                                      
+                                                                                
+           IF K022-STATUS NOT = 00                                              
+              DISPLAY 'CLOSE BP13K022 ERROR STATUS =  '                         
+                       K022-STATUS                                              
+           END-IF.                                                              
+                                                                                
+           IF K800-STATUS NOT = 00                                              
+              DISPLAY 'CLOSE BP13K800 ERROR STATUS =  '                         
+                       K800-STATUS                                              
+           END-IF.                                                              
+                                                                                
+           IF KD30-STATUS NOT = 00                                              
+              DISPLAY 'CLOSE BP13KD30 ERROR STATUS =  '                         
+                       KD30-STATUS                                              
+           END-IF.                                                              
+                                                                                
+           IF BP27K800-STATUS NOT = 00                                          
+              DISPLAY 'CLOSE BP27K800 ERROR STATUS =  '                         
+                       BP27K800-STATUS                                          
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

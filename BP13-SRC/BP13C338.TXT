@@ -1,0 +1,930 @@
+      *--------------------------------------------------------*                
+       IDENTIFICATION DIVISION.                                                 
+      *--------------------------------------------------------*                
+       PROGRAM-ID.    BP13C338.                                                 
+      *AUTHOR.        MCC.                                                      
+      *DATE-WRITTEN.  28/04/2003.                                               
+                                                                                
+      **********************************************************                
+      *                                                        *                
+      *    SYSTEM NAME : SYSTEM OF COMMITMENT                  *                
+      *                                                        *                
+      *    SYSTEM ID : BP13                                    *                
+      *                                                        *                
+      *    OBJECTIVE  : TO CREATE CPF TRANSACTION ON SOC CPF   *                
+      *                 FOR THE BANK LOAN CASES (TP)           *                
+      *                                                        *                
+      *     INPUT FILES:                                       *                
+      *           1. BP13F400                                  *                
+      *           2. SY02F001                                  *                
+      *                                                        *                
+      *     I-O   FILES:                                       *                
+      *           1. BP13K671                                  *                
+      *                                                        *                
+      *     OUTPUT FILES:                                      *                
+      *           1. BP13F121 (CPF TRANSACTIONS FILE)          *                
+      *           2. BP13L338 (CONTROL LISTING)                *                
+      *                                                        *                
+      * CHGE-NO  BY  DATE      DESCRIPTION                     *                
+      *--------------------------------------------------------*                
+      * BP132341 MCC 05032002  WRITE  TO BP13F121              *                
+      * BP132526 SK  18062004  INCREASE BP13K671 TO 3000       *                
+      * BP139211 KAC1 04012023 CHANGED BP13C902 TO DYNAMIC CALL*                
+      * BP139485 KAC1 02012024 TO CALL BP13C90C TO GET 9 % GST *                
+      *                        WEF 20240101                    *                
+      **********************************************************                
+                                                                                
+      *--------------------------------------------------------*                
+       ENVIRONMENT DIVISION.                                                    
+      *--------------------------------------------------------*                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F400 ASSIGN TO BP13F400.                                  
+           SELECT BP13F121 ASSIGN TO BP13F121.                                  
+           SELECT BP13F440 ASSIGN TO BP13F440.                                  
+           SELECT SY02F001 ASSIGN TO SY02F001.                                  
+                                                                                
+           SELECT BP13K671 ASSIGN TO BP13K671                                   
+                  ACCESS MODE     IS RANDOM                                     
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K671-NUM-REGN                              
+                  FILE STATUS     IS WS-K671-STATUS.                            
+                                                                                
+           SELECT BP13L338 ASSIGN TO BP13L338.                                  
+                                                                                
+      *--------------------------------------------------------*                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *--------------------------------------------------------*                
+       FD  BP13F400                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 2000 CHARACTERS                                      
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+       COPY BP13F400.                                                           
+                                                                                
+       FD   BP13K671                                                            
+            RECORD CONTAINS 3000 CHARACTERS.                                    
+       COPY BP13K671.                                                           
+                                                                                
+       FD  BP13F121                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 150 CHARACTERS                                       
+           LABEL RECORDS ARE OMITTED                                            
+           RECORDING MODE IS F.                                                 
+       COPY BP13F121.                                                           
+                                                                                
+       FD  BP13F440                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 100 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+       COPY BP13F440.                                                           
+                                                                                
+       COPY SY02F001.                                                           
+                                                                                
+       FD  BP13L338                                                             
+           LABEL RECORDS ARE OMITTED                                            
+           RECORD CONTAINS 132 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+       01 L338-REC              PIC X(132).                                     
+                                                                                
+      *--------------------------------------------------------*                
+       WORKING-STORAGE SECTION.                                                 
+      *--------------------------------------------------------*                
+                                                                                
+       01  WS-SWITCHES.                                                         
+           05  WS-F400-EOF                PIC X       VALUE 'N'.                
+           05  WS-F001-EOF                PIC X       VALUE 'N'.                
+               88 EOF-F001                            VALUE 'Y'.                
+           05  WS-K671-FOUND              PIC X       VALUE 'N'.                
+           05  WS-K671-STATUS             PIC 9(2)    VALUE ZEROES.             
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F400-READ               PIC 9(8)    VALUE ZEROES.             
+           05  WS-K671-READ               PIC 9(8)    VALUE ZEROES.             
+           05  WS-K671-NOTFD              PIC 9(8)    VALUE ZEROES.             
+           05  WS-K671-REWR               PIC 9(8)    VALUE ZEROES.             
+           05  WS-F121-WRITE              PIC 9(8)    VALUE ZEROES.             
+           05  WS-F440-WRITE              PIC 9(8)    VALUE ZEROES.             
+           05  WS-LINE-NO                 PIC 9(2)    VALUE 55.                 
+           05  WS-PAGE-NO                 PIC 9(5)    VALUE ZEROES.             
+           05  WS-CNT-PRINTED             PIC 9(5)    VALUE ZERO.               
+           05  WS-CTR                     PIC 9       VALUE ZERO.               
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-AMT-CPF                 PIC 9(7)V99 VALUE ZEROES.             
+           05  WS-BASE-AMT                PIC 9(7)V99 VALUE ZEROES.             
+           05  WS-ICP-TOTAL               PIC 9(7)V99 VALUE ZEROES.             
+           05  WS-NUM-BO                  PIC X(02)   VALUE SPACES.             
+           05  WS-PAYM-TYPE               PIC 9       VALUE ZERO.               
+               88 SOC                                 VALUE 1.                  
+               88 LRF                                 VALUE 2.                  
+               88 SRV                                 VALUE 3.                  
+               88 SST                                 VALUE 4.                  
+       01   WS-LINK-REC.                                                        
+            05 WS-LINK-NUM-OFFICE         PIC X(8).                             
+            05 WS-LINK-NUM-TYPE-OFFICE    PIC X(15).                            
+            05 WS-LINK-NUM-SQNC           PIC X(2).                             
+       01   WS-SQL-CODE                   PIC 9(4).                             
+                                                                                
+       01   WS-BP13C902                   PIC X(8)    VALUE 'BP13C902'.         
+                                                                                
+       01  WS-TABLE.                                                            
+           05  WS-F400-REC                OCCURS 4.                             
+               10  WS-NRIC                PIC X(9).                             
+               10  WS-DTE-CPF             PIC X(8).                             
+               10  WS-ICP                 PIC 9(7)V99.                          
+               10  WS-LSE-ESCR            PIC 9(7)V99.                          
+               10  WS-LSE-REGN            PIC 9(7)V99.                          
+               10  WS-SURVEY              PIC 9(7)V99.                          
+               10  WS-LUMPSUM-PD          PIC 9(7)V99.                          
+               10  WS-LSE-ESCR-PD         PIC 9(7)V99.                          
+               10  WS-LSE-REGN-PD         PIC 9(7)V99.                          
+               10  WS-SURVEY-PD           PIC 9(7)V99.                          
+               10  WS-LUMPSUM-BAL         PIC 9(7)V99.                          
+               10  WS-LSE-ESCR-BAL        PIC 9(7)V99.                          
+               10  WS-LSE-REGN-BAL        PIC 9(7)V99.                          
+               10  WS-SURVEY-BAL          PIC 9(7)V99.                          
+                                                                                
+       01  WS-SYSTEM-DATE                 PIC 9(8)    VALUE ZEROES.             
+                                                                                
+       01  WS-DETAIL-VARIABLES.                                                 
+           05 WS-CPF-NO                   PIC X(9)    VALUE SPACES.             
+           05 WS-AMT-BALANCE              PIC 9(7)V99 VALUE ZEROES.             
+           05 WS-AMT-RECEIVED             PIC 9(7)V99 VALUE ZEROES.             
+           05 WS-AMT-COLLECTED            PIC 9(7)V99 VALUE ZEROES.             
+           05 WS-CPF-TYPE                 PIC 9(1)    VALUE ZERO.               
+                                                                                
+      *-----------------------------------------------------------*             
+      *    WS VARIABLES PASSED TO SUB-PROGRAM "AV02C021"          *             
+      *-----------------------------------------------------------*             
+       COPY P13GST01.                                                           
+                                                                                
+       COPY P13COMM4.                                                           
+      *--------------------------------------------------------------           
+      *  REPORT LAYOUT FOR CONTROL LISTING (BP13L338).                          
+      *--------------------------------------------------------------           
+       01  L338-HEADER1.                                                        
+           05  FILLER              PIC X(8)      VALUE 'BP13L338'.              
+           05  FILLER              PIC X(5)      VALUE SPACES .                 
+           05  FILLER              PIC X(8)      VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(24)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+                         'S Y S T E M   O F   C O M M I T M E N T'.             
+           05  FILLER              PIC X(17)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE : '.               
+           05  L338-DATE           PIC X(10).                                   
+           05  FILLER              PIC X(9)      VALUE '  PAGE : '.             
+           05  L338-PAGE-NO        PIC ZZZZ9 .                                  
+                                                                                
+       01  L338-HEADER2.                                                        
+           05  FILLER              PIC X(38)     VALUE SPACES .                 
+           05  FILLER              PIC X(56)     VALUE                          
+             'CONTROL LISTING FOR BO TRANSACTIONS WITH CPF BALANCE(TP)'.        
+           05  FILLER              PIC X(38)     VALUE SPACES.                  
+                                                                                
+       01  L338-HEADER3.                                                        
+           05  FILLER              PIC X(08)                                    
+                  VALUE '    SNO '.                                             
+           05  FILLER              PIC X(11)                                    
+                  VALUE '   REGN-NO '.                                          
+           05  FILLER              PIC X(12)                                    
+                  VALUE '    CPF NO  '.                                         
+           05  FILLER              PIC X(18)                                    
+                  VALUE '     CPF TYPE     '.                                   
+           05  FILLER              PIC X(15)                                    
+                  VALUE '   AMT RECEIVED'.                                      
+           05  FILLER              PIC X(16)                                    
+                  VALUE '   AMT COLLECTED'.                                     
+           05  FILLER              PIC X(15)                                    
+                  VALUE '   AMT BALANCE '.                                      
+                                                                                
+       01  L338-DETAILS.                                                        
+           05  FILLER              PIC X(03)     VALUE SPACES .                 
+           05  L338-SNO            PIC ZZZZ9.                                   
+           05  FILLER              PIC X(03)     VALUE SPACES .                 
+           05  L338-REGN-NO        PIC X(08).                                   
+           05  FILLER              PIC X(03)     VALUE SPACES .                 
+           05  L338-CPF-NO         PIC X(09).                                   
+           05  FILLER              PIC X(03)     VALUE SPACES .                 
+           05  L338-CPF-TYPE       PIC X(15).                                   
+           05  FILLER              PIC X(03)     VALUE SPACES .                 
+           05  L338-AMT-RECEIVED   PIC Z,ZZZ,ZZ9.99.                            
+           05  FILLER              PIC X(03)     VALUE SPACES .                 
+           05  L338-AMT-COLLECTED  PIC Z,ZZZ,ZZ9.99.                            
+           05  FILLER              PIC X(04)     VALUE SPACES .                 
+           05  L338-AMT-BALANCE    PIC Z,ZZZ,ZZ9.99.                            
+                                                                                
+       01  L338-EMPTY.                                                          
+           05  FILLER              PIC X(55)     VALUE SPACES .                 
+           05  FILLER              PIC X(22)     VALUE                          
+                                   '***  EMPTY REPORT  ***'.                    
+                                                                                
+      *--------------------------------------------------------*                
+       PROCEDURE DIVISION.                                                      
+      *--------------------------------------------------------*                
+                                                                                
+      *--------------------------------------------------------*                
+       0000-MAIN.                                                               
+      *--------------------------------------------------------*                
+           PERFORM 1000-OPEN-FILE       THRU 1000-EXIT.                         
+           PERFORM 2000-READ-BP13F400   THRU 2000-EXIT.                         
+           PERFORM 3000-PROCESS         THRU 3000-EXIT                          
+                   UNTIL WS-F400-EOF = 'Y'.                                     
+           PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT.                         
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       1000-OPEN-FILE.                                                          
+      *--------------------------------------------------------*                
+           OPEN INPUT  BP13F400                                                 
+                       SY02F001                                                 
+                I-O    BP13K671                                                 
+                OUTPUT BP13F121                                                 
+                       BP13F440                                                 
+                       BP13L338.                                                
+                                                                                
+           IF WS-K671-STATUS NOT = 00 AND 97                                    
+              MOVE WS-K671-STATUS      TO RETURN-CODE                           
+              DISPLAY 'ERROR OPENING BP13K671. STATUS ' WS-K671-STATUS          
+              PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                         
+           END-IF.                                                              
+                                                                                
+           READ SY02F001 AT END MOVE 'Y'  TO WS-F001-EOF.                       
+           IF EOF-F001                                                          
+              DISPLAY 'RECORD NOT FOUND IN SY01F001 '                           
+              DISPLAY 'PROCESSING TERMINATED '                                  
+              PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                         
+           ELSE                                                                 
+              MOVE F001-DTE-CURRENT      TO   WS-SYSTEM-DATE                    
+           END-IF.                                                              
+                                                                                
+           STRING WS-SYSTEM-DATE(7:2) '/'                                       
+                  WS-SYSTEM-DATE(5:2) '/'                                       
+                  WS-SYSTEM-DATE(1:4)                                           
+                  DELIMITED BY SIZE INTO L338-DATE.                             
+                                                                                
+           PERFORM 6100-PRINT-HEADING THRU 6100-EXIT.                           
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       2000-READ-BP13F400.                                                      
+      *--------------------------------------------------------*                
+           READ BP13F400                                                        
+                AT END  MOVE 'Y' TO WS-F400-EOF                                 
+                GO TO 2000-EXIT                                                 
+           END-READ.                                                            
+                                                                                
+           ADD 1 TO WS-F400-READ.                                               
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       3000-PROCESS.                                                            
+      *--------------------------------------------------------*                
+           PERFORM 3100-UPDATE-BO       THRU 3100-EXIT.                         
+           PERFORM 4000-GET-CPF-DTE     THRU 4000-EXIT.                         
+           PERFORM 5000-POST-ICP        THRU 5000-EXIT.                         
+           PERFORM 5100-POST-LIE        THRU 5100-EXIT.                         
+           PERFORM 5200-POST-LRF        THRU 5200-EXIT.                         
+           PERFORM 5300-POST-SRV        THRU 5300-EXIT.                         
+           PERFORM 2000-READ-BP13F400   THRU 2000-EXIT.                         
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       3100-UPDATE-BO.                                                          
+      *--------------------------------------------------------*                
+           MOVE 'N'              TO WS-K671-FOUND.                              
+           MOVE F400-NUM-REGN    TO K671-NUM-REGN.                              
+                                                                                
+           READ BP13K671.                                                       
+                                                                                
+           EVALUATE WS-K671-STATUS                                              
+              WHEN 00                                                           
+                 MOVE 'Y' TO WS-K671-FOUND                                      
+                 ADD   1  TO WS-K671-READ                                       
+                 PERFORM 3200-UPDATE-BP13K671 THRU 3200-EXIT                    
+              WHEN 23                                                           
+                 MOVE 'N' TO WS-K671-FOUND                                      
+                 ADD 1    TO WS-K671-NOTFD                                      
+                 DISPLAY 'NOT FOUND IN BP13K671. REGN : ' F400-NUM-REGN         
+              WHEN OTHER                                                        
+                 MOVE WS-K671-STATUS     TO RETURN-CODE                         
+                 DISPLAY 'ERROR READING BP13K671, STATUS = '                    
+                                        WS-K671-STATUS                          
+                 PERFORM 9000-CLOSE-ROUTINE  THRU 9000-EXIT                     
+           END-EVALUATE.                                                        
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       3200-UPDATE-BP13K671.                                                    
+      *--------------------------------------------------------*                
+           PERFORM 3300-INITIALIZE-FLDS   THRU 3300-EXIT.                       
+                                                                                
+      * COMPUTE FOR K671-AMT-LUMPSUM-CPF-BAL                                    
+           PERFORM VARYING WS-CTR FROM 1 BY 1 UNTIL WS-CTR > 4                  
+              IF WS-LUMPSUM-PD(WS-CTR) > ZEROES                                 
+                 COMPUTE WS-LUMPSUM-BAL(WS-CTR) =                               
+                         WS-LUMPSUM-PD(WS-CTR) - WS-ICP(WS-CTR)                 
+                 IF WS-LUMPSUM-BAL(WS-CTR) > ZEROES                             
+                    MOVE WS-LUMPSUM-BAL(WS-CTR) TO WS-AMT-BALANCE               
+                    MOVE WS-LUMPSUM-PD (WS-CTR) TO WS-AMT-RECEIVED              
+                    MOVE WS-ICP        (WS-CTR) TO WS-AMT-COLLECTED             
+                    MOVE 1                      TO WS-CPF-TYPE                  
+                    PERFORM 6000-CONTROL-LIST-PRINT THRU 6000-EXIT              
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+      * COMPUTE FOR K671-AMT-LSE-ESCR-CPF-BAL                                   
+              IF WS-LSE-ESCR-PD(WS-CTR) > ZEROES                                
+                 COMPUTE WS-LSE-ESCR-BAL(WS-CTR) =                              
+                         WS-LSE-ESCR-PD(WS-CTR) - WS-LSE-ESCR(WS-CTR)           
+                 IF WS-LSE-ESCR-BAL(WS-CTR) > ZEROES                            
+                    MOVE WS-LSE-ESCR-BAL(WS-CTR) TO WS-AMT-BALANCE              
+                    MOVE WS-LSE-ESCR-PD (WS-CTR) TO WS-AMT-RECEIVED             
+                    MOVE WS-LSE-ESCR    (WS-CTR) TO WS-AMT-COLLECTED            
+                    MOVE 2                       TO WS-CPF-TYPE                 
+                    PERFORM 6000-CONTROL-LIST-PRINT THRU 6000-EXIT              
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+      * COMPUTE FOR K671-AMT-LSE-REGN-CPF-BAL                                   
+              IF WS-LSE-REGN-PD(WS-CTR) > ZEROES                                
+                 COMPUTE WS-LSE-REGN-BAL(WS-CTR) =                              
+                         WS-LSE-REGN-PD(WS-CTR) - WS-LSE-REGN(WS-CTR)           
+                 IF WS-LSE-REGN-BAL(WS-CTR) > ZEROES                            
+                    MOVE WS-LSE-REGN-BAL(WS-CTR) TO WS-AMT-BALANCE              
+                    MOVE WS-LSE-REGN-PD (WS-CTR) TO WS-AMT-RECEIVED             
+                    MOVE WS-LSE-REGN    (WS-CTR) TO WS-AMT-COLLECTED            
+                    MOVE 3                       TO WS-CPF-TYPE                 
+                    PERFORM 6000-CONTROL-LIST-PRINT THRU 6000-EXIT              
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+      * COMPUTE FOR K671-AMT-SRVY-FEE-CPF-BAL                                   
+              IF WS-SURVEY-PD(WS-CTR) > ZEROES                                  
+                 COMPUTE WS-SURVEY-BAL(WS-CTR) =                                
+                         WS-SURVEY-PD(WS-CTR) - WS-SURVEY(WS-CTR)               
+                 IF WS-SURVEY-BAL(WS-CTR) > ZEROES                              
+                    MOVE WS-SURVEY-BAL(WS-CTR) TO WS-AMT-BALANCE                
+                    MOVE WS-SURVEY-PD (WS-CTR) TO WS-AMT-RECEIVED               
+                    MOVE WS-SURVEY    (WS-CTR) TO WS-AMT-COLLECTED              
+                    MOVE 4                     TO WS-CPF-TYPE                   
+                    PERFORM 6000-CONTROL-LIST-PRINT THRU 6000-EXIT              
+                 END-IF                                                         
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           PERFORM 3400-REWRITE-BP13K671 THRU 3400-EXIT.                        
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       3300-INITIALIZE-FLDS.                                                    
+      *--------------------------------------------------------*                
+           MOVE SPACES TO WS-TABLE                                              
+           INITIALIZE     WS-TABLE.                                             
+                                                                                
+           IF F400-AMT-ICP-CPF1           NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-ICP-CPF1.                
+           IF F400-AMT-ICP-CPF2           NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-ICP-CPF2.                
+           IF F400-AMT-ICP-CPF3           NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-ICP-CPF3.                
+           IF F400-AMT-ICP-CPF4           NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-ICP-CPF4.                
+                                                                                
+           IF F400-AMT-LEASE-ESCROW-FEE   NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-LEASE-ESCROW-FEE.        
+           IF F400-AMT-LSE-ESCR-CPF1      NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-LSE-ESCR-CPF1.           
+           IF F400-AMT-LSE-ESCR-CPF2      NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-LSE-ESCR-CPF2.           
+           IF F400-AMT-LSE-ESCR-CPF3      NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-LSE-ESCR-CPF3.           
+           IF F400-AMT-LSE-ESCR-CPF4      NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-LSE-ESCR-CPF4.           
+                                                                                
+           IF F400-AMT-LEASE-REGN-FEE     NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-LEASE-REGN-FEE.          
+           IF F400-AMT-LSE-REGN-CPF1      NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-LSE-REGN-CPF1.           
+           IF F400-AMT-LSE-REGN-CPF2      NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-LSE-REGN-CPF2.           
+           IF F400-AMT-LSE-REGN-CPF3      NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-LSE-REGN-CPF3.           
+           IF F400-AMT-LSE-REGN-CPF4      NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-LSE-REGN-CPF4.           
+                                                                                
+           IF F400-AMT-SURVEY-FEE         NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-SURVEY-FEE.              
+           IF F400-AMT-SURVEY-FEE-GST     NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-SURVEY-FEE-GST.          
+           IF F400-AMT-SURVEY-FEE-CPF1    NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-SURVEY-FEE-CPF1.         
+           IF F400-AMT-SURVEY-FEE-CPF2    NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-SURVEY-FEE-CPF2.         
+           IF F400-AMT-SURVEY-FEE-CPF3    NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-SURVEY-FEE-CPF3.         
+           IF F400-AMT-SURVEY-FEE-CPF4    NOT NUMERIC                           
+              MOVE ZEROES                 TO  F400-AMT-SURVEY-FEE-CPF4.         
+                                                                                
+           IF K671-AMT-LUMPSUM-CPF1-PAID  NOT NUMERIC                           
+              MOVE ZEROES                 TO K671-AMT-LUMPSUM-CPF1-PAID.        
+           IF K671-AMT-LUMPSUM-CPF2-PAID  NOT NUMERIC                           
+              MOVE ZEROES                 TO K671-AMT-LUMPSUM-CPF2-PAID.        
+           IF K671-AMT-LUMPSUM-CPF3-PAID  NOT NUMERIC                           
+              MOVE ZEROES                 TO K671-AMT-LUMPSUM-CPF3-PAID.        
+           IF K671-AMT-LUMPSUM-CPF4-PAID  NOT NUMERIC                           
+              MOVE ZEROES                 TO K671-AMT-LUMPSUM-CPF4-PAID.        
+                                                                                
+           IF K671-AMT-SRVY-FEE-CPF1-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-SRVY-FEE-CPF1-PAID.        
+           IF K671-AMT-SRVY-FEE-CPF2-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-SRVY-FEE-CPF2-PAID.        
+           IF K671-AMT-SRVY-FEE-CPF3-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-SRVY-FEE-CPF3-PAID.        
+           IF K671-AMT-SRVY-FEE-CPF4-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-SRVY-FEE-CPF4-PAID.        
+                                                                                
+           IF K671-AMT-LSE-ESCR-CPF1-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-LSE-ESCR-CPF1-PAID.        
+           IF K671-AMT-LSE-ESCR-CPF2-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-LSE-ESCR-CPF2-PAID.        
+           IF K671-AMT-LSE-ESCR-CPF3-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-LSE-ESCR-CPF3-PAID.        
+           IF K671-AMT-LSE-ESCR-CPF4-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-LSE-ESCR-CPF4-PAID.        
+                                                                                
+           IF K671-AMT-LSE-REGN-CPF1-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-LSE-REGN-CPF1-PAID.        
+           IF K671-AMT-LSE-REGN-CPF2-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-LSE-REGN-CPF2-PAID.        
+           IF K671-AMT-LSE-REGN-CPF3-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-LSE-REGN-CPF3-PAID.        
+           IF K671-AMT-LSE-REGN-CPF4-PAID NOT NUMERIC                           
+              MOVE ZEROES                TO K671-AMT-LSE-REGN-CPF4-PAID.        
+                                                                                
+           MOVE F400-NRIC1                TO WS-NRIC(1).                        
+           MOVE F400-NRIC2                TO WS-NRIC(2).                        
+           MOVE F400-NRIC3                TO WS-NRIC(3).                        
+           MOVE F400-NRIC4                TO WS-NRIC(4).                        
+                                                                                
+           MOVE F400-AMT-ICP-CPF1         TO WS-ICP(1).                         
+           MOVE F400-AMT-ICP-CPF2         TO WS-ICP(2).                         
+           MOVE F400-AMT-ICP-CPF3         TO WS-ICP(3).                         
+           MOVE F400-AMT-ICP-CPF4         TO WS-ICP(4).                         
+                                                                                
+           MOVE F400-AMT-LSE-ESCR-CPF1    TO WS-LSE-ESCR(1).                    
+           MOVE F400-AMT-LSE-ESCR-CPF2    TO WS-LSE-ESCR(2).                    
+           MOVE F400-AMT-LSE-ESCR-CPF3    TO WS-LSE-ESCR(3).                    
+           MOVE F400-AMT-LSE-ESCR-CPF4    TO WS-LSE-ESCR(4).                    
+                                                                                
+           MOVE F400-AMT-LSE-REGN-CPF1    TO WS-LSE-REGN(1).                    
+           MOVE F400-AMT-LSE-REGN-CPF2    TO WS-LSE-REGN(2).                    
+           MOVE F400-AMT-LSE-REGN-CPF3    TO WS-LSE-REGN(3).                    
+           MOVE F400-AMT-LSE-REGN-CPF4    TO WS-LSE-REGN(4).                    
+                                                                                
+           MOVE F400-AMT-SURVEY-FEE-CPF1  TO WS-SURVEY(1).                      
+           MOVE F400-AMT-SURVEY-FEE-CPF2  TO WS-SURVEY(2).                      
+           MOVE F400-AMT-SURVEY-FEE-CPF3  TO WS-SURVEY(3).                      
+           MOVE F400-AMT-SURVEY-FEE-CPF4  TO WS-SURVEY(4).                      
+                                                                                
+           MOVE K671-AMT-LUMPSUM-CPF1-PAID  TO WS-LUMPSUM-PD(1).                
+           MOVE K671-AMT-LUMPSUM-CPF2-PAID  TO WS-LUMPSUM-PD(2).                
+           MOVE K671-AMT-LUMPSUM-CPF3-PAID  TO WS-LUMPSUM-PD(3).                
+           MOVE K671-AMT-LUMPSUM-CPF4-PAID  TO WS-LUMPSUM-PD(4).                
+                                                                                
+           MOVE K671-AMT-LSE-ESCR-CPF1-PAID TO WS-LSE-ESCR-PD(1).               
+           MOVE K671-AMT-LSE-ESCR-CPF2-PAID TO WS-LSE-ESCR-PD(2).               
+           MOVE K671-AMT-LSE-ESCR-CPF3-PAID TO WS-LSE-ESCR-PD(3).               
+           MOVE K671-AMT-LSE-ESCR-CPF4-PAID TO WS-LSE-ESCR-PD(4).               
+                                                                                
+           MOVE K671-AMT-LSE-REGN-CPF1-PAID TO WS-LSE-REGN-PD(1).               
+           MOVE K671-AMT-LSE-REGN-CPF2-PAID TO WS-LSE-REGN-PD(2).               
+           MOVE K671-AMT-LSE-REGN-CPF3-PAID TO WS-LSE-REGN-PD(3).               
+           MOVE K671-AMT-LSE-REGN-CPF4-PAID TO WS-LSE-REGN-PD(4).               
+                                                                                
+           MOVE K671-AMT-SRVY-FEE-CPF1-PAID TO WS-SURVEY-PD(1).                 
+           MOVE K671-AMT-SRVY-FEE-CPF2-PAID TO WS-SURVEY-PD(2).                 
+           MOVE K671-AMT-SRVY-FEE-CPF3-PAID TO WS-SURVEY-PD(3).                 
+           MOVE K671-AMT-SRVY-FEE-CPF4-PAID TO WS-SURVEY-PD(4).                 
+                                                                                
+       3300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------------           
+       3400-REWRITE-BP13K671.                                                   
+      *--------------------------------------------------------------           
+           PERFORM 3500-MOVE-TO-K671   THRU 3500-EXIT.                          
+                                                                                
+           REWRITE BP13K671-REC.                                                
+                                                                                
+           EVALUATE WS-K671-STATUS                                              
+              WHEN 00                                                           
+                 ADD 1 TO WS-K671-REWR                                          
+              WHEN 23                                                           
+                 DISPLAY 'RECORD NOTFD IN BP13K671. REGN ' F400-NUM-REGN        
+              WHEN OTHER                                                        
+                 MOVE WS-K671-STATUS     TO RETURN-CODE                         
+                 DISPLAY 'ERROR REWRITING BP13K671, STATUS = '                  
+                                        WS-K671-STATUS                          
+                 PERFORM 9000-CLOSE-ROUTINE  THRU 9000-EXIT                     
+           END-EVALUATE.                                                        
+                                                                                
+                                                                                
+       3400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       3500-MOVE-TO-K671.                                                       
+      *--------------------------------------------------------*                
+           MOVE WS-LUMPSUM-BAL(1)  TO K671-AMT-LUMPSUM-CPF1-BAL.                
+           MOVE WS-LUMPSUM-BAL(2)  TO K671-AMT-LUMPSUM-CPF2-BAL.                
+           MOVE WS-LUMPSUM-BAL(3)  TO K671-AMT-LUMPSUM-CPF3-BAL.                
+           MOVE WS-LUMPSUM-BAL(4)  TO K671-AMT-LUMPSUM-CPF4-BAL.                
+                                                                                
+           MOVE WS-LSE-ESCR-BAL(1) TO K671-AMT-LSE-ESCR-CPF1-BAL.               
+           MOVE WS-LSE-ESCR-BAL(2) TO K671-AMT-LSE-ESCR-CPF2-BAL.               
+           MOVE WS-LSE-ESCR-BAL(3) TO K671-AMT-LSE-ESCR-CPF3-BAL.               
+           MOVE WS-LSE-ESCR-BAL(4) TO K671-AMT-LSE-ESCR-CPF4-BAL.               
+                                                                                
+           MOVE WS-LSE-REGN-BAL(1) TO K671-AMT-LSE-REGN-CPF1-BAL.               
+           MOVE WS-LSE-REGN-BAL(2) TO K671-AMT-LSE-REGN-CPF2-BAL.               
+           MOVE WS-LSE-REGN-BAL(3) TO K671-AMT-LSE-REGN-CPF3-BAL.               
+           MOVE WS-LSE-REGN-BAL(4) TO K671-AMT-LSE-REGN-CPF4-BAL.               
+                                                                                
+           MOVE WS-SURVEY-BAL(1)   TO K671-AMT-SRVY-FEE-CPF1-BAL.               
+           MOVE WS-SURVEY-BAL(2)   TO K671-AMT-SRVY-FEE-CPF2-BAL.               
+           MOVE WS-SURVEY-BAL(3)   TO K671-AMT-SRVY-FEE-CPF3-BAL.               
+           MOVE WS-SURVEY-BAL(4)   TO K671-AMT-SRVY-FEE-CPF4-BAL.               
+                                                                                
+       3500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       4000-GET-CPF-DTE.                                                        
+      *--------------------------------------------------------*                
+           MOVE WS-SYSTEM-DATE      TO WS-DTE-CPF(1)                            
+                                       WS-DTE-CPF(2)                            
+                                       WS-DTE-CPF(3)                            
+                                       WS-DTE-CPF(4).                           
+                                                                                
+           IF WS-K671-FOUND = 'Y'                                               
+              IF K671-DTE-VALUE-CPF1 NOT = SPACES AND LOW-VALUES AND            
+                                           ZEROES                               
+                 MOVE K671-DTE-VALUE-CPF1 TO WS-DTE-CPF(1)                      
+              END-IF                                                            
+              IF K671-DTE-VALUE-CPF2 NOT = SPACES AND LOW-VALUES AND            
+                                           ZEROES                               
+                 MOVE K671-DTE-VALUE-CPF2 TO WS-DTE-CPF(2)                      
+              END-IF                                                            
+              IF K671-DTE-VALUE-CPF3 NOT = SPACES AND LOW-VALUES AND            
+                                           ZEROES                               
+                 MOVE K671-DTE-VALUE-CPF3 TO WS-DTE-CPF(3)                      
+              END-IF                                                            
+              IF K671-DTE-VALUE-CPF4 NOT = SPACES AND LOW-VALUES AND            
+                                           ZEROES                               
+                 MOVE K671-DTE-VALUE-CPF4 TO WS-DTE-CPF(4)                      
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       5000-POST-ICP.                                                           
+      *--------------------------------------------------------*                
+      * CREATE GL FOR F400-AMT-ICP-CPF1 TO CPF4                                 
+           MOVE ZEROES TO WS-ICP-TOTAL.                                         
+                                                                                
+           PERFORM VARYING WS-CTR FROM 1 BY 1 UNTIL WS-CTR > 4                  
+              IF WS-ICP(WS-CTR) > 0                                             
+                 MOVE WS-ICP(WS-CTR)          TO   WS-AMT-CPF                   
+                 COMPUTE WS-ICP-TOTAL = WS-ICP-TOTAL + WS-ICP(WS-CTR)           
+                 MOVE 1                       TO   WS-PAYM-TYPE                 
+                 PERFORM 7000-WRITE-BP13F121  THRU 7000-EXIT                    
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           IF WS-ICP-TOTAL > ZEROES                                             
+              PERFORM 8000-WRITE-BP13F440 THRU 8000-EXIT                        
+           END-IF.                                                              
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       5100-POST-LIE.                                                           
+      *--------------------------------------------------------*                
+      * CREATE GL FOR F400-AMT-LSE-ESCR-CPF1 TO CPF4                            
+                                                                                
+           IF F400-AMT-LEASE-ESCROW-FEE <= 0                                    
+              GO TO 5100-EXIT.                                                  
+                                                                                
+           PERFORM VARYING WS-CTR FROM 1 BY 1 UNTIL WS-CTR > 4                  
+              IF WS-LSE-ESCR(WS-CTR) > 0                                        
+                 MOVE WS-LSE-ESCR(WS-CTR)     TO   WS-AMT-CPF                   
+                 MOVE 2                       TO   WS-PAYM-TYPE                 
+                 PERFORM 7000-WRITE-BP13F121  THRU 7000-EXIT                    
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+       5100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       5200-POST-LRF.                                                           
+      *--------------------------------------------------------*                
+      * CREATE GL FOR F400-AMT-LSE-REGN-CPF1 TO CPF4                            
+                                                                                
+           IF F400-AMT-LEASE-REGN-FEE <= 0                                      
+              GO TO 5200-EXIT.                                                  
+                                                                                
+           PERFORM VARYING WS-CTR FROM 1 BY 1 UNTIL WS-CTR > 4                  
+              IF WS-LSE-REGN(WS-CTR) > 0                                        
+                 MOVE WS-LSE-REGN(WS-CTR)     TO   WS-AMT-CPF                   
+                 MOVE 2                       TO   WS-PAYM-TYPE                 
+                 PERFORM 7000-WRITE-BP13F121  THRU 7000-EXIT                    
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+       5200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       5300-POST-SRV.                                                           
+      *--------------------------------------------------------*                
+      * CREATE GL FOR F400-AMT-SURVEY-FEE-CPF1 TO CPF4                          
+                                                                                
+           IF F400-AMT-SURVEY-FEE + F400-AMT-SURVEY-FEE-GST <= 0                
+              GO TO 5300-EXIT.                                                  
+                                                                                
+           PERFORM 5400-COMPUTE-GST-RATE THRU 5400-EXIT.                        
+                                                                                
+           PERFORM VARYING WS-CTR FROM 1 BY 1 UNTIL WS-CTR > 4                  
+              IF WS-SURVEY(WS-CTR) > 0                                          
+                 MOVE WS-SURVEY(WS-CTR)       TO   WS-AMT-NETT                  
+                 PERFORM 5500-COMPUTE-GST     THRU 5500-EXIT                    
+                                                                                
+      * GL FOR BASE SURVEY FEE                                                  
+                 MOVE WS-BASE-AMT             TO   WS-AMT-CPF                   
+                 MOVE 3                       TO   WS-PAYM-TYPE                 
+                 PERFORM 7000-WRITE-BP13F121  THRU 7000-EXIT                    
+                                                                                
+      * GL FOR GST  SURVEY FEE                                                  
+                 MOVE WS-AMT-GST-103-104-105  TO   WS-AMT-CPF                   
+                 MOVE 4                       TO   WS-PAYM-TYPE                 
+                 PERFORM 7000-WRITE-BP13F121  THRU 7000-EXIT                    
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+       5300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------------           
+       5400-COMPUTE-GST-RATE.                                                   
+      *--------------------------------------------------------------           
+      *    CALL BP13C90C TO GET GST-RATE                                        
+           CALL 'BP13C90C' USING WS-COMM-AREA-GST.                              
+                                                                                
+       5400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------------           
+       5500-COMPUTE-GST.                                                        
+      *--------------------------------------------------------------           
+      *    COMPUTE GST                                                          
+           CALL 'AV02C021' USING WS-COMM-AREA-GST.                              
+                                                                                
+           COMPUTE WS-BASE-AMT = WS-AMT-NETT - WS-AMT-GST-103-104-105.          
+                                                                                
+       5500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------------           
+       6000-CONTROL-LIST-PRINT.                                                 
+      *--------------------------------------------------------------           
+           IF WS-LINE-NO > 50                                                   
+              PERFORM 6100-PRINT-HEADING THRU 6100-EXIT.                        
+                                                                                
+           MOVE SPACES TO L338-DETAILS.                                         
+           INITIALIZE     L338-DETAILS.                                         
+                                                                                
+           ADD 1                        TO WS-LINE-NO                           
+                                           WS-CNT-PRINTED.                      
+           MOVE WS-CNT-PRINTED          TO L338-SNO.                            
+           MOVE F400-NUM-REGN           TO L338-REGN-NO.                        
+           MOVE WS-NRIC(WS-CTR)         TO L338-CPF-NO.                         
+                                                                                
+           EVALUATE WS-CPF-TYPE                                                 
+             WHEN 1                                                             
+                MOVE 'LUMPSUM'          TO L338-CPF-TYPE                        
+             WHEN 2                                                             
+                MOVE 'LEASE IN ESCROW'  TO L338-CPF-TYPE                        
+             WHEN 3                                                             
+                MOVE 'LEASE REGN FEE'   TO L338-CPF-TYPE                        
+             WHEN 4                                                             
+                MOVE 'SURVEY FEE+GST'   TO L338-CPF-TYPE                        
+           END-EVALUATE.                                                        
+                                                                                
+           MOVE WS-AMT-RECEIVED         TO L338-AMT-RECEIVED.                   
+           MOVE WS-AMT-COLLECTED        TO L338-AMT-COLLECTED.                  
+           MOVE WS-AMT-BALANCE          TO L338-AMT-BALANCE.                    
+                                                                                
+           WRITE L338-REC FROM L338-DETAILS AFTER 1.                            
+                                                                                
+       6000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *--------------------------------------------------------------           
+       6100-PRINT-HEADING.                                                      
+      *--------------------------------------------------------------           
+            MOVE ZERO             TO WS-LINE-NO.                                
+            ADD 1                 TO WS-PAGE-NO.                                
+            MOVE WS-PAGE-NO       TO L338-PAGE-NO.                              
+            MOVE SPACES           TO L338-REC.                                  
+            WRITE L338-REC        FROM L338-HEADER1 AFTER PAGE.                 
+            WRITE L338-REC        FROM L338-HEADER2 AFTER 2.                    
+            WRITE L338-REC        FROM L338-HEADER3 AFTER 2.                    
+            INSPECT L338-REC REPLACING CHARACTERS BY '-'.                       
+            WRITE L338-REC.                                                     
+                                                                                
+            MOVE SPACES TO L338-REC.                                            
+            WRITE L338-REC AFTER 2.                                             
+                                                                                
+       6100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       7000-WRITE-BP13F121.                                                     
+      *--------------------------------------------------------*                
+           MOVE SPACES                TO BP13F121-CPFTRAN.                      
+           INITIALIZE                    BP13F121-CPFTRAN.                      
+                                                                                
+           MOVE F400-NUM-REGN         TO F121-NUM-REGN.                         
+           MOVE WS-SYSTEM-DATE        TO F121-DTE-POST.                         
+           MOVE WS-DTE-CPF(WS-CTR)    TO F121-DTE-TRANS.                        
+           MOVE ZEROS                 TO F121-COUNT-HISTORY.                    
+           MOVE WS-AMT-CPF            TO F121-AMT-RECIEPT.                      
+           MOVE F400-NUM-SCH-ACC      TO F121-NUM-SCH-ACCT.                     
+           MOVE WS-NRIC(WS-CTR)       TO F121-NUM-NRIC.                         
+           MOVE 'C'                   TO F121-CDE-CRDR.                         
+           MOVE WS-CTR                TO F121-CDE-APPLT-CPF.                    
+                                                                                
+           IF K671-NUM-HBL-TYP = '2'                                            
+              MOVE 'BANK LOAN CPF2'   TO F121-NUM-RECPT-JRNO                    
+           ELSE                                                                 
+              MOVE 'BANK LOAN CPF1'   TO F121-NUM-RECPT-JRNO                    
+           END-IF.                                                              
+                                                                                
+           EVALUATE TRUE                                                        
+           WHEN SOC                                                             
+                MOVE '34'             TO F121-CDE-TRANS-TYPE                    
+                MOVE 'MRT'            TO F121-CDE-PAYMENT-TYPE                  
+           WHEN LRF                                                             
+                MOVE '31'             TO F121-CDE-TRANS-TYPE                    
+                MOVE 'LRF'            TO F121-CDE-PAYMENT-TYPE                  
+           WHEN SRV                                                             
+                MOVE '30'             TO F121-CDE-TRANS-TYPE                    
+                MOVE 'SRV'            TO F121-CDE-PAYMENT-TYPE                  
+                PERFORM 7100-GET-AREA-DESCR THRU 7100-EXIT                      
+                MOVE WS-NUM-BO        TO F121-CDE-BO                            
+           WHEN SST                                                             
+                MOVE '30'             TO F121-CDE-TRANS-TYPE                    
+                MOVE 'SST'            TO F121-CDE-PAYMENT-TYPE                  
+           END-EVALUATE.                                                        
+                                                                                
+           WRITE BP13F121-CPFTRAN.                                              
+           ADD 1 TO WS-F121-WRITE.                                              
+                                                                                
+       7000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *------------------------*                                                
+       7100-GET-AREA-DESCR.                                                     
+      *------------------------*                                                
+           MOVE SPACES       TO BP13COMM4-REC.                                  
+           INITIALIZE           BP13COMM4-REC.                                  
+                                                                                
+           MOVE F400-CDE-BO  TO WS-LINK-NUM-OFFICE.                             
+           MOVE 'BO'         TO WS-LINK-NUM-TYPE-OFFICE.                        
+           MOVE '00'         TO WS-LINK-NUM-SQNC.                               
+                                                                                
+           CALL WS-BP13C902 USING                                               
+                 WS-LINK-REC, BP13COMM4-REC                                     
+           END-CALL.                                                            
+                                                                                
+           IF COMM4-CDE-SYSERR NOT = 0                                          
+              MOVE COMM4-CDE-SYSERR TO WS-SQL-CODE                              
+              MOVE SPACES           TO WS-NUM-BO                                
+              IF COMM4-CDE-SYSERR = 100                                         
+                 DISPLAY 'OFFICE NOT FND = ' WS-LINK-REC                        
+                 DISPLAY 'SQL ERROR CODE = ' WS-SQL-CODE                        
+              ELSE                                                              
+                 DISPLAY 'ERROR IN READING OFFICE TABLE' WS-SQL-CODE            
+              END-IF                                                            
+           ELSE                                                                 
+              MOVE COMM4-NUM-OFFICE-GL-BO(1)    TO WS-NUM-BO                    
+           END-IF.                                                              
+                                                                                
+       7100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *------------------------*                                                
+       8000-WRITE-BP13F440.                                                     
+      *------------------------*                                                
+           MOVE SPACES                   TO BP13F440-REC.                       
+           INITIALIZE BP13F440-REC.                                             
+           MOVE WS-SYSTEM-DATE(7:2)      TO F440-DTE-TRANS-DD                   
+                                            F440-DTE-JR-DD-NW.                  
+           MOVE WS-SYSTEM-DATE(5:2)      TO F440-DTE-TRANS-MM                   
+                                            F440-DTE-JR-MM-NW.                  
+           MOVE WS-SYSTEM-DATE(3:2)      TO F440-DTE-TRANS-YY                   
+                                            F440-DTE-JR-YY-NW.                  
+           MOVE WS-SYSTEM-DATE(1:2)      TO F440-DTE-TRANS-CC.                  
+           MOVE WS-ICP-TOTAL             TO F440-AMT-INST-LOAN                  
+                                            F440-AMT-TOTL.                      
+           MOVE 'CPF-C'                  TO F440-TXT-DESC.                      
+           MOVE 'C'                      TO F440-CDE-CR-DR.                     
+           MOVE 'JR'                     TO F440-CDE-JR-TYP-NW.                 
+           MOVE 'NC'                     TO F440-CDE-TRANS-POSTNG.              
+           MOVE F400-NUM-SCH-ACC         TO F440-NUM-HDB-REF.                   
+                                                                                
+           WRITE BP13F440-REC.                                                  
+           ADD 1 TO WS-F440-WRITE.                                              
+                                                                                
+       8000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       9000-CLOSE-ROUTINE.                                                      
+      *--------------------------------------------------------*                
+           IF WS-CNT-PRINTED = ZEROES                                           
+              MOVE SPACES TO L338-REC                                           
+              WRITE L338-REC FROM L338-EMPTY AFTER 3.                           
+                                                                                
+           DISPLAY '******  BP13C338 *************'.                            
+           DISPLAY SPACE.                                                       
+           DISPLAY 'NO OF F400 READ     : ' WS-F400-READ.                       
+           DISPLAY 'NO OF F121 WRITTEN  : ' WS-F121-WRITE.                      
+           DISPLAY 'NO OF F440 WRITTEN  : ' WS-F440-WRITE.                      
+           DISPLAY 'NO OF K671 FOUND    : ' WS-K671-READ.                       
+           DISPLAY 'NO OF K671 NOT FOUND: ' WS-K671-NOTFD.                      
+           DISPLAY 'NO OF K671 REWRITTEN: ' WS-K671-REWR.                       
+           DISPLAY 'NO OF L338 PRINTED  : ' WS-CNT-PRINTED.                     
+                                                                                
+           CLOSE BP13F400                                                       
+                 BP13K671                                                       
+                 BP13F121                                                       
+                 BP13F440                                                       
+                 SY02F001                                                       
+                 BP13L338.                                                      
+                                                                                
+           IF WS-K671-STATUS NOT = 00 AND 97                                    
+              MOVE WS-K671-STATUS TO RETURN-CODE                                
+              DISPLAY 'ERROR CLOSING BP13K671. STATUS ' WS-K671-STATUS          
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

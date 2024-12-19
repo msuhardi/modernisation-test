@@ -1,0 +1,190 @@
+//BP13D416 JOB (BP13P),'BP13D416',MSGLEVEL=(1,1),CLASS=I,MSGCLASS=N,            
+//             NOTIFY=CSD0071                                                   
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//*                                                                             
+//*=================================================================            
+//* DESCRIPTION : PULL IRAS STAMP REFUND FEE ACK FILE FROM                      
+//*               IDEAL SERVER (FTP) INTO MAINFRAME                             
+//*                                                                             
+//*     IDEAL FILENAME: ISDSHDBSDRefundAck_CCYYMMDD.TXT                         
+//*     IDEAL FILENAME: ISDSHDBREFUNDUP_CCYYMMDD.TXT - new                      
+//*     MAINFRAME DSN  : BP13.F416.RECVIRAS                                     
+//*                                                                             
+//*=================================================================            
+//* DATE MOD  BY      REF      DESCRIPTION                                      
+//* --------  ----  -------    -----------                                      
+//* 05/09/16  KVL1  BP136262   NEW JCL                                          
+//* 12/12/16  KVL1  BP136538   ADDED INITIALIZING OF INPUT FILE FOR             
+//*                            CASES WHERE FTP RETUNS 166                       
+//*                            REMOVED DELETE STEP AND CHANGED FILES            
+//*                            DISP TO OLD (STEPS 1,4,7)                        
+//* 23/02/23  LJL1  BP138916   change ISDSHDBSDRefundAck_CCYYMMDD.TXT           
+//*                            to ISDSHDBREFUNDUP_CCYYMMDD.TXT                  
+//*=================================================================    00011200
+//******************************************************************            
+//* CREATE SEQ DATASET FOR FTP PUT FILE USING SAS STATEMENTS                    
+//******************************************************************            
+//STEP01   EXEC SAS                                                             
+//BP13FTP  DD DSN=BP13.SEQ.FTPPUT1.RECV,DISP=OLD                                
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+  %GLOBAL DDMM;                                                                 
+                                                                                
+  DATA SY02F001;                                                                
+     INFILE SY02F001;                                                           
+     INPUT @01  CURRYY    $CHAR04.                                              
+           @05  CURRMM    $CHAR02.                                              
+           @07  CURRDD    $CHAR02.;                                             
+                                                                                
+  CURRDTE =  CURRYY||CURRMM||CURRDD;                                            
+  CALL SYMPUT('CCYYMMDD',CURRDTE);                                              
+                                                                                
+  DATA _NULL_;                                                                  
+  FILE BP13FTP;                                                                 
+                                                                                
+     PUT    'CD /PROD/APPN/DATA/BP13/TO-HDB/IRAS/MF';                           
+     PUT    'ASCII';                                                            
+     STDPUT   = ".TXT";                                                         
+     STDPUT01 = "&CCYYMMDD";                                                    
+     STDPUT02 = "GET ISDSHDBREFUNDUP_"||STDPUT01||STDPUT;                       
+     STDPUT03 = " 'BP13.F416.RECVIRAS' (REPLACE ";                              
+     STDPUT04 = STDPUT02||STDPUT03;                                             
+     STDPUT05 = "QUIT";                                                         
+     PUT STDPUT04;                                                              
+     PUT STDPUT05;                                                              
+//*                                                                             
+//******************************************************************            
+//* RUN FTP STATEMENT TO PUT IRAS STAMP FEE REFUND FILE IN MAINFRAME            
+//* INTO IDEAL SERVER                                                           
+//* COND01 - FOR RC=166 WILL INITIALIZE THE INPUT FILE TO REMOVE PRE-           
+//*          VIOUS CASES AND MAKE IT EMPTY FILE FOR FURTHER PROCESSING          
+//******************************************************************            
+//STEP02   EXEC FTP,PARM='SGNETSTAGE (EXIT',COND=(0,NE)                         
+//NETRC    DD DSN=SY08.FTP.NETRC.BP13,DISP=SHR                                  
+//INPUT    DD DSN=BP13.SEQ.FTPPUT1.RECV,DISP=SHR                                
+//COND01 IF RC = 166 THEN                                                       
+//TRUE     EXEC   PGM=IEBGENER                                                  
+//SYSPRINT DD  SYSOUT=*                                                 00000070
+//SYSUT1   DD  DSN=NULLFILE,                                            00000080
+//             RECFM=FB,LRECL=100,                                      00000090
+//             BLKSIZE=27900                                            00000100
+//SYSUT2   DD  DSN=BP13.F416.RECVIRAS,DISP=SHR                          00000110
+//SYSIN    DD  DUMMY                                                    00000170
+//IFEND  ENDIF                                                                  
+//*                                                                             
+//******************************************************************            
+//*  BACKUP THE IRAS RECV FILE INTO GDG AND ACCUM FILE                          
+//*  COND01 - FOR RC=166 TO CONSIDER IT AS NOT ABEND RC AND WILL DO A           
+//*           A BACKUP OF AN EMPTY FILE                                         
+//*--------------------------------------------------------------------*        
+//STEP03   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.F416.RECVIRAS,DISP=SHR                                   
+//OUTPUT1  DD DSN=BP13.F416.RECVIRAS.ACCUM,DISP=MOD                             
+//OUTPUT2  DD DSN=BP13.F416.RECVIRAS.BKUP(+1),DISP=(NEW,CATLG,DELETE),          
+//            SPACE=(CYL,(50,10),RLSE),                                         
+//            DCB=(BP13.GDG,BLKSIZE=27900,LRECL=100,RECFM=FB)                   
+    REPRO INFILE(INPUT1) OUTFILE(OUTPUT1)                                       
+    REPRO INFILE(INPUT1) OUTFILE(OUTPUT2)                                       
+//COND01 IF STEP02.FTPSTEP.RC = 166 THEN                                        
+//TRUE     EXEC   PGM=IDCAMS                                                    
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.F416.RECVIRAS,DISP=SHR                                   
+//OUTPUT1  DD DSN=BP13.F416.RECVIRAS.ACCUM,DISP=MOD                             
+//OUTPUT2  DD DSN=BP13.F416.RECVIRAS.BKUP(+1),DISP=(NEW,CATLG,DELETE),          
+//            SPACE=(CYL,(50,10),RLSE),                                         
+//            DCB=(BP13.GDG,BLKSIZE=27900,LRECL=100,RECFM=FB)                   
+    REPRO INFILE(INPUT1) OUTFILE(OUTPUT1)                                       
+    REPRO INFILE(INPUT1) OUTFILE(OUTPUT2)                                       
+//IFEND  ENDIF                                                                  
+//*                                                                             
+//******************************************************************            
+//* CREATE SEQ DATASET FOR FTP DELETE TXT FILE USING SAS STATEMENTS             
+//******************************************************************            
+//STEP04   EXEC SAS,COND=(0,NE)                                                 
+//BP13FTP  DD DSN=BP13.SEQ.FTPDEL1.RECV,DISP=OLD                                
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+  %GLOBAL DDMM;                                                                 
+                                                                                
+  DATA SY02F001;                                                                
+     INFILE SY02F001;                                                           
+     INPUT @01  CURRYY    $CHAR04.                                              
+           @05  CURRMM    $CHAR02.                                              
+           @07  CURRDD    $CHAR02.;                                             
+                                                                                
+  CURRDTE =  CURRYY||CURRMM||CURRDD;                                            
+  CALL SYMPUT('CCYYMMDD',CURRDTE);                                              
+                                                                                
+  DATA _NULL_;                                                                  
+  FILE BP13FTP;                                                                 
+                                                                                
+     PUT    'CD /PROD/APPN/DATA/BP13/TO-HDB/IRAS/MF';                           
+     PUT    'DIR';                                                              
+     PUT    'BINARY';                                                           
+     STDPUT   = ".TXT";                                                         
+     STDPUT01 = "&CCYYMMDD";                                                    
+     STDPUT02 = "MDEL ISDSHDBREFUNDUP_"||STDPUT01||STDPUT;                      
+     STDPUT03 = "DIR";                                                          
+     STDPUT04 = "QUIT";                                                         
+     PUT STDPUT02;                                                              
+     PUT STDPUT03;                                                              
+     PUT STDPUT04;                                                              
+//*                                                                             
+//******************************************************************            
+//* RUN FTP STATEMENT TO DELETE ISDSHDBSDRefundAck TXT FILE                     
+//******************************************************************            
+//STEP05   EXEC FTP,PARM='SGNETSTAGE (EXIT',COND=(0,NE)                         
+//NETRC    DD DSN=SY08.FTP.NETRC.BP13,DISP=SHR                                  
+//INPUT    DD DSN=BP13.SEQ.FTPDEL1.RECV,DISP=SHR                                
+//*                                                                             
+//******************************************************************            
+//* CREATE SEQ DATASET FOR FTP DELETE P7 FILE USING SAS STATEMENTS              
+//******************************************************************            
+//STEP06   EXEC SAS,COND=(0,NE)                                                 
+//BP13FTP  DD DSN=BP13.SEQ.FTPDEL2.RECV,DISP=OLD                                
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+  %GLOBAL DDMM;                                                                 
+                                                                                
+  DATA SY02F001;                                                                
+     INFILE SY02F001;                                                           
+     INPUT @01  CURRYY    $CHAR04.                                              
+           @05  CURRMM    $CHAR02.                                              
+           @07  CURRDD    $CHAR02.;                                             
+                                                                                
+  CURRDTE =  CURRYY||CURRMM||CURRDD;                                            
+  CALL SYMPUT('CCYYMMDD',CURRDTE);                                              
+                                                                                
+  DATA _NULL_;                                                                  
+  FILE BP13FTP;                                                                 
+                                                                                
+     PUT    'CD /PROD/APPN/DATA/BP13/TO-HDB/IRAS/MF';                           
+     PUT    'DIR';                                                              
+     PUT    'BINARY';                                                           
+     STDPUT   = ".TXT.P7";                                                      
+     STDPUT01 = "&CCYYMMDD";                                                    
+     STDPUT02 = "MDEL ISDSHDBREFUNDUP_"||STDPUT01||STDPUT;                      
+     STDPUT03 = "DIR";                                                          
+     STDPUT04 = "QUIT";                                                         
+     PUT STDPUT02;                                                              
+     PUT STDPUT03;                                                              
+     PUT STDPUT04;                                                              
+//*                                                                             
+//******************************************************************            
+//* RUN FTP STATEMENT TO DELETE ISDSHDBSDRefundAck TXT P7 FILE                  
+//******************************************************************            
+//STEP07   EXEC FTP,PARM='SGNETSTAGE (EXIT',COND=(0,NE)                         
+//NETRC    DD DSN=SY08.FTP.NETRC.BP13,DISP=SHR                                  
+//INPUT    DD DSN=BP13.SEQ.FTPDEL2.RECV,DISP=SHR                                
+//*                                                                             
+//*------------------------------------------------------------*                
+//*                  END OF BP13D416                                            
+//*------------------------------------------------------------*                
+

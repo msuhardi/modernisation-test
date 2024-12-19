@@ -1,0 +1,209 @@
+//BP13A982 JOB (BP13P),'BP13A982',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//             NOTIFY=CSD0071                                                   
+//JOBLIB   DD  DSN=BP13.BATCH.LOADCOB,DISP=SHR                                  
+//*=====================================================================        
+//* IMPORTANT NOTE :                                                            
+//* THIS JCL IS FOR GENERATING MGPS UNITS FOR PARENTS ONLY                      
+//*=====================================================================        
+//* CHGE REQ  BY  DDMMCCYY DESCRIPTION                                          
+//* -------- ---- -------- --------------------------------------------         
+//* BP134482 SMR2 16032012 NEW JCL                                              
+//* BP134558 SMR2 13062012 INCLUDE BLOCK IN STEP04 & STEP05                     
+//* BP134627 IL5  09082012 ADD NEW PROGRAM BP13C91H                             
+//* BP135080 SMR2 03102013 CATER FOR PARENT-FT                                  
+//* BP135140 SMR2 21102013 SPLIT INTO 3 JCLS THE PROCESSING OF PARENT,          
+//*                        CHILD AND REMAINING UNITS FOR MGPS                   
+//* BP135140 SMR2 16012014 CATER FOR 3GEN - REMOVE FT = '5B'                    
+//* BP135485 IL5  06112014 STOP PRINTING L91B FROM PRG BP13C91D                 
+//*=====================================================================        
+//*    TO SEND DYNAMIC JDE AHEAD OF THE PRINT DATASET                           
+//*---------------------------------------------------------------------        
+//PRT01  EXEC  PGM=IEBGENER,COND=(0,NE)                                         
+//SYSUT1   DD  *                                                                
+$DJDE$ JDE=BP13D,COPIES=2,JDL=BP13,END;                                         
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EAALSS1A                                   
+//SYSUT2   DD  SYSOUT=2,OUTPUT=(*.FORMID)                                       
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  DUMMY                                                            
+//*---------------------------------------------------------------------        
+//* VERIFY FILES BEFORE JOB RUN                                                 
+//*---------------------------------------------------------------------        
+//STEP00 EXEC  PGM=IDCAMS,COND=(0,NE)                                           
+//INPUT1   DD  DSN=BP13.K115.MGPSUNIT,DISP=OLD                                  
+//INPUT2   DD  DSN=BP13.K120.MGPSUNIT.CHILD,DISP=OLD                            
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  *                                                                
+          VFY  FILE(INPUT1)                                                     
+          VFY  FILE(INPUT2)                                                     
+//*---------------------------------------------------------------------        
+//* SORT BP13FLE1 - SORT OUT UNITS FOR PARENT                                   
+//*---------------------------------------------------------------------        
+//STEP01 EXEC  SORT,COND=(0,NE)                                                 
+//SYSPRINT DD  SYSOUT=*                                                         
+//SORTIN   DD  DSN=BP13.F100.MGPUNIT,DISP=SHR                                   
+//SORTOUT  DD  DSN=BP13.F100.SLCTUNIT.PARENT,DISP=OLD                           
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(120,3,A,72,2,A,59,4,A,63,4,A,67,5,A,19,28,A),                    
+               FORMAT=CH                                                        
+  INCLUDE COND=(72,1,CH,LE,C'3')                                                
+//*---------------------------------------------------------------------        
+//* SORT BP13FLE2 - SORT OUT UNITS FOR CHILD                                    
+//* OMIT FT = '5B' (3GEN CASES)                                                 
+//*---------------------------------------------------------------------        
+//STEP02 EXEC  SORT,COND=(0,NE)                                                 
+//SYSPRINT DD  SYSOUT=*                                                         
+//SORTIN   DD  DSN=BP13.F100.MGPUNIT,DISP=SHR                                   
+//SORTOUT  DD  DSN=BP13.F100.SLCTUNIT.CHILD,DISP=OLD                            
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(120,3,A,72,2,A,59,4,A,63,4,A,67,5,A,19,28,A),                    
+               FORMAT=CH                                                        
+  INCLUDE COND=(72,1,CH,GT,C'3',AND,72,2,CH,NE,C'5B')                           
+//*---------------------------------------------------------------------        
+//* DELETE / DEFINE VSAM FILE BP13K120                                          
+//*---------------------------------------------------------------------        
+//STEP03   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//INPUT1   DD DSN=BP13.BLANK.CHAR200,DISP=SHR                                   
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+          DEL 'BP13.K120.MGPSUNIT.CHILD' CL PURGE                               
+          DEF CLUSTER                                -                          
+              (NAME(BP13.K120.MGPSUNIT.CHILD)        -                          
+              CYL(10 5)                              -                          
+              STORCLAS(PRODRLS)                      -                          
+              LOG(NONE)                              -                          
+              UNIQUE                                 -                          
+              SHR(2 3))                              -                          
+              DATA                                   -                          
+              (NAME(BP13.K120.MGPSUNIT.CHILD.DATA)   -                          
+              KEYS(55 0)                             -                          
+              RECSZ(200 200)                         -                          
+              CISZ(4096)                             -                          
+              FSPC(10 10))                           -                          
+              INDEX                                  -                          
+              (NAME(BP13.K120.MGPSUNIT.CHILD.INDEX)  -                          
+              CISZ(4096))                                                       
+      IF MAXCC = 0  THEN                             -                          
+      REPRO IFILE(INPUT1)                            -                          
+            ODS(BP13.K120.MGPSUNIT.CHILD)            -                          
+            REUSE                                                               
+//*---------------------------------------------------------------------        
+//* RUN PROGRAM BP13C91D - SELECT UNITS FOR PARENT                              
+//*---------------------------------------------------------------------        
+//STEP04 EXEC  PGM=BP13C91D,COND=(0,NE)                                         
+//BP13FLE1 DD  DSN=BP13.F100.SLCTUNIT.PARENT,DISP=SHR                           
+//BP13K115 DD  DSN=BP13.K115.MGPSUNIT,DISP=OLD                                  
+//BP13K120 DD  DSN=BP13.K120.MGPSUNIT.CHILD,DISP=OLD                            
+//BP13FLE2 DD  DSN=BP13.F100.SLCTUNIT.CHILD,DISP=MOD                            
+//BP13L91B DD  SYSOUT=*                                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+//*---------------------------------------------------------------------        
+//* OUTREC PARENT MGPS UNITS FOR REPORT                                         
+//*---------------------------------------------------------------------        
+//STEP05 EXEC  SORT,COND=(0,NE)                                                 
+//SYSPRINT DD  SYSOUT=*                                                         
+//SORTIN   DD  DSN=BP13.K120.MGPSUNIT.CHILD,DISP=SHR                            
+//SORTOUT  DD  DSN=&&BP13MGPS,DISP=(NEW,PASS),                                  
+//             SPACE=(CYL,(5,2),RLSE),                                          
+//             DCB=(RECFM=FB,LRECL=800,BLKSIZE=0)                               
+//SYSIN    DD  *                                                                
+  SORT FIELDS=COPY                                                              
+  INCLUDE COND=(1,3,CH,NE,C'   ')                                               
+  OUTREC FIELDS=(119,11,7X,18,28,130,1,131,2,133,1,5X,100,3,4,4,                
+                 8,4,12,5,117,2,66,2,68,32,56,2,58,4,62,3,103,3,                
+                 1,3,106,3,109,6,115,2,65,1,666X)                               
+//*------------------------------------------------------------------           
+//* SORT OUT BY RANDOM #                                                        
+//*------------------------------------------------------------------           
+//STEP06 EXEC  SORT,COND=(0,NE)                                                 
+//SYSPRINT DD  SYSOUT=*                                                         
+//SORTIN   DD  DSN=BP13.F100.MGPUNIT,DISP=SHR                                   
+//SORTOUT  DD  DSN=&&P13F100A,DISP=(NEW,PASS),                                  
+//             SPACE=(CYL,(5,5),RLSE),                                          
+//             DCB=(RECFM=FB,LRECL=800,BLKSIZE=0)                               
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(19,28,A),FORMAT=CH                                               
+//*------------------------------------------------------------------           
+//* SORT OUT BY RANDOM #                                                        
+//*------------------------------------------------------------------           
+//STEP07 EXEC  SORT,COND=(0,NE)                                                 
+//SYSPRINT DD  SYSOUT=*                                                         
+//SORTIN   DD  DSN=&&BP13MGPS,DISP=(OLD,PASS)                                   
+//SORTOUT  DD  DSN=&&P13F100B,DISP=(NEW,PASS),                                  
+//             SPACE=(CYL,(5,5),RLSE),                                          
+//             DCB=(RECFM=FB,LRECL=800,BLKSIZE=0)                               
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(19,28,A),FORMAT=CH                                               
+//*------------------------------------------------------------------           
+//* APPEND UNUSED UNITS FOR THE REPORT                                          
+//*------------------------------------------------------------------           
+//STEP08 EXEC PGM=SORT,COND=(0,NE)                                              
+//SORTJNF1 DD DSN=&&P13F100A,DISP=(OLD,DELETE)                                  
+//SORTJNF2 DD DSN=&&P13F100B,DISP=(OLD,DELETE)                                  
+//F1ONLY   DD DSN=&&BP13MGPS,DISP=(MOD,PASS),                                   
+//             SPACE=(CYL,(5,2),RLSE),                                          
+//             DCB=(RECFM=FB,LRECL=800,BLKSIZE=0)                               
+//SYSIN DD *                                                                    
+  JOINKEYS FILE=F1,FIELDS=(19,28,A)                                             
+  JOINKEYS FILE=F2,FIELDS=(19,28,A)                                             
+  JOIN UNPAIRED,F1,ONLY                                                         
+  REFORMAT FIELDS=(F1:1,800)                                                    
+  OUTFILE FNAMES=F1ONLY                                                         
+  OPTION COPY                                                                   
+/*                                                                              
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT BY NT, NGHBRD, CNTRCT, BLOCK, FT, RANDOM #                             
+//* REMAINING FLAT LIST AFTER GRO                                               
+//*---------------------------------------------------------------------        
+//STEP09 EXEC  SORT,COND=(0,NE)                                                 
+//SYSPRINT DD  SYSOUT=*                                                         
+//SORTIN   DD  DSN=&&BP13MGPS,DISP=(OLD,DELETE)                                 
+//SORTOUT  DD  DSN=BP13.REPORT.BP13A985,DISP=OLD                                
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(120,3,A,59,4,A,63,4,A,67,5,A,72,2,A,19,28,A),                    
+               FORMAT=CH                                                        
+  OUTREC FIELDS=(19,28,C';',56,3,C';',59,4,C';',63,4,C';',                      
+                 67,5,C';',72,2,C';',108,2,C';',110,4,C';',                     
+                 117,3,C';',120,3,C';',123,3,C';',126,6,C';',                   
+                 134,1,C';',132,2,C';',66X)                                     
+//*---------------------------------------------------------------------        
+//* OUTREC F100SUMM - SELECTED GRO UNITS                                        
+//*---------------------------------------------------------------------        
+//STEP10 EXEC  SORT,COND=(0,NE)                                                 
+//SYSPRINT DD  SYSOUT=*                                                         
+//SORTIN   DD  DSN=BP13.F100.FNLSLCT,DISP=SHR                                   
+//SORTOUT  DD  DSN=&&F100SUMM,DISP=(NEW,PASS),                                  
+//             SPACE=(CYL,(5,2),RLSE),                                          
+//             DCB=(RECFM=FB,LRECL=800,BLKSIZE=0)                               
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(800,1,A,120,3,A,67,5,A),FORMAT=CH                                
+  OUTREC FIELDS=(1,799,C'A')                                                    
+//*---------------------------------------------------------------------        
+//* DELETE SEQUENTIAL FILE                                                      
+//*---------------------------------------------------------------------        
+//STEP10A  EXEC  PGM=IDCAMS,COND=(0,NE)                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  *                                                                
+     DEL (BP13.REPORT.BP13A982.L907)                                            
+     IF MAXCC < 12 THEN                                                         
+        SET MAXCC = 0                                                           
+//*---------------------------------------------------------------------        
+//* SAS PROGRAM TO PRINT REPORT                                                 
+//*---------------------------------------------------------------------        
+//STEP11 EXEC  SAS,COND=(0,NE)                                                  
+//WORK     DD  UNIT=SYSDA,SPACE=(CYL,(10,5))                                    
+//FT42F001 DD  DSN=BP13.REPORT.BP13A982.L907,DISP=(NEW,CATLG),                  
+//             DCB=(RECFM=FBA,LRECL=133,BLKSIZE=27930),                         
+//             SPACE=(CYL,(10,5),RLSE)                                          
+//BP13FSMY DD  DSN=&&F100SUMM,DISP=(OLD,DELETE)                                 
+//SYSIN    DD  DSN=BP13.BATCH.SRC(BP13S907),DISP=SHR                            
+//*---------------------------------------------------------------------        
+//* END OF JOB BP13A982                                                         
+//*---------------------------------------------------------------------        
+

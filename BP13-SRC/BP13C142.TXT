@@ -1,0 +1,778 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID. BP13C142.                                                    
+      *AUTHOR. RHB.                                                             
+      *DATE-WRITTEN. 19/12/96.                                                  
+      * ====================================================== *                
+      * SYSTEM OF COMMITMENT (SOC)                             *                
+      * ====================================================== *                
+      *                                                        *                
+      *    OBJECTIVE :                                         *                
+      *                                                        *                
+      *  INPUT FILES:                                          *                
+      *    1. BM06F142                                         *                
+      *    2. BP13K060                                         *                
+      *                                                        *                
+      *  OUTPUT FILE:                                          *                
+      *    1. BP13L142 - MATCHED RECORDS WITH K030-CDE-ACCT-   *                
+      *                  STAT = 'C'                            *                
+      *                                                        *                
+      *--------------------------------------------------------*                
+      * CHG REF  BY   DATE      DESCRIPTION                    *                
+      * -------- ---- --------  -----------                    *                
+      * BP130227 RHB  19/12/96  NEW MODULE                     *                
+      * BP130418 CLT  25/08/98  TO CATER FOR Y2K.              *                
+      * BP130447 SRN  18/01/99  REFER TO BP13F142, REMOVE      *                
+      *                         COMPUTATION OF MONTH           *                
+      *                         ADD SIGN FIELD TO REPORT       *                
+      * BP132450 SSS  26/11/03  ADD KEY-AVAIL DATE TO RPT      *                
+      * BP135548 RJB  04/11/16  INCLUDE NEW COLUMNS FOR:       *                
+      *                         (I)MONITORING THE NUMBER OF    *                
+      *                         MONTHS OUTSTANDING             *                
+      *                         (II)OIC OF THE CASES. THIS IS  *                
+      *                         WRITTEN INTO A NEW OUTPUT L142A*                
+      * ====================================================== *                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13K060   ASSIGN TO BP13K060                                 
+                  ORGANIZATION IS INDEXED                                       
+                  ACCESS MODE  IS RANDOM                                        
+                  RECORD KEY   IS K060-KEY-FLD                                  
+                  FILE STATUS  IS BP13K060-STATUS.                              
+                                                                                
+           SELECT BP13K024   ASSIGN TO BP13K024                                 
+                  ACCESS MODE  IS RANDOM                                        
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY   IS K024-KEY-FLD                                  
+                  FILE STATUS  IS BP13K024-STATUS.                              
+                                                                                
+           SELECT BP13K022   ASSIGN TO BP13K022                                 
+                  ORGANIZATION IS INDEXED                                       
+                  ACCESS MODE  IS DYNAMIC                                       
+                  RECORD KEY   IS K022-KEY-FLD                                  
+                  ALTERNATE KEY   IS K022-NUM-REGN                              
+                  FILE STATUS  IS BP13K022-STATUS.                              
+                                                                                
+           SELECT BP13F142  ASSIGN TO BP13F142.                                 
+                                                                                
+           SELECT BP13L142  ASSIGN TO BP13L142.                                 
+           SELECT P13L142A  ASSIGN TO P13L142A.                                 
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD   BP13F142                                                            
+            RECORD CONTAINS 300 CHARACTERS                                      
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORDING MODE IS F                                                 
+            LABEL RECORDS ARE STANDARD.                                         
+                                                                                
+       COPY BP13F142.                                                           
+                                                                                
+       FD   BP13K060                                                            
+            RECORD CONTAINS 25  CHARACTERS.                                     
+                                                                                
+       COPY BP13K060.                                                           
+                                                                                
+       FD   BP13K022                                                            
+            RECORD CONTAINS 100 CHARACTERS.                                     
+       COPY BP13K022.                                                           
+                                                                                
+       FD   BP13K024                                                            
+            RECORD CONTAINS 100 CHARACTERS.                                     
+       COPY BP13K024.                                                           
+                                                                                
+       FD  BP13L142                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           LABEL  RECORDS  ARE OMITTED.                                         
+       01  BP13L142-REC                 PIC X(132).                             
+                                                                                
+       FD  P13L142A                                                             
+           RECORD CONTAINS 170 CHARACTERS                                       
+           LABEL  RECORDS  ARE OMITTED.                                         
+       01  P13L142A-REC                 PIC X(170).                             
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+       01  WS-F142-READ            PIC 9(08)    VALUE ZERO.                     
+       01  WS-F142-OUTPUT          PIC 9(08)    VALUE ZERO.                     
+       01  WS-F142-OUTPUTX         PIC 9(08)    VALUE ZERO.                     
+       01  F142-EOF                PIC X        VALUE 'N'.                      
+       01  WS-PREV-DATE            PIC X(06)    VALUE SPACES.                   
+       01  WS-PREV-MONTH           PIC X(03)    VALUE SPACES.                   
+       01  WS-PAGE                 PIC 9(03)    VALUE ZERO.                     
+       01  WS-CNT                  PIC 9(02)    VALUE 99.                       
+       01  WS-NO-CASES             PIC 9(03)    VALUE ZEROES.                   
+       01  BP13K060-STATUS         PIC 9(02)    VALUE ZEROES.                   
+       01  BP13K022-STATUS         PIC 9(02)    VALUE ZEROES.                   
+       01  BP13K024-STATUS         PIC 9(02)    VALUE ZEROES.                   
+                                                                                
+       01  WS-ACCUMULATORS.                                                     
+           05  WS-142-AMT-ST       PIC S9(12)V99 VALUE ZEROES.                  
+           05  WS-142-AMT-GT       PIC S9(12)V99 VALUE ZEROES.                  
+                                                                                
+       01  WS-DATE.                                                             
+           05  WS-DATE-CCYY        PIC 9(4)     VALUE ZEROES.                   
+           05  WS-DATE-MM          PIC 9(2)     VALUE ZEROES.                   
+           05  WS-DATE-DD          PIC 9(2)     VALUE ZEROES.                   
+                                                                                
+       01  WS-NUM-OIC                  PIC X(5)   VALUE SPACES.                 
+       01  WS-K022-FND                 PIC X      VALUE 'N'.                    
+       01  WS-TEAM                     PIC X      VALUE SPACES.                 
+       01  WS-COMPUTE-MTH              PIC S9(2)  VALUE ZEROES.                 
+       01  WS-PROCESS-DATE.                                                     
+           05  WS-PROCESS-CCYY         PIC 9(4).                                
+           05  WS-PROCESS-MM           PIC 9(2).                                
+           05  WS-PROCESS-DD           PIC 9(2).                                
+       01  WS-DTE-COMPUTE.                                                      
+           05  WS-COMPUTE-CCYY         PIC 9(4).                                
+           05  WS-COMPUTE-MM           PIC 9(2).                                
+           05  WS-COMPUTE-DD           PIC 9(2).                                
+       01  WS-MONTH-DIFF               PIC 9(3).                                
+       01  WS-MONTH-DIFF-RED REDEFINES WS-MONTH-DIFF.                           
+           05  WS-MONTH-DIFF-R         PIC X(3).                                
+                                                                                
+       01  L142-PR-HEAD-01.                                                     
+           05  FILLER              PIC X(14)   VALUE 'BP13L142      '.          
+           05  FILLER              PIC X(8)    VALUE 'HDB3    '.                
+           05  FILLER              PIC X(18)   VALUE SPACES.                    
+           05  FILLER              PIC X(39)   VALUE                            
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER              PIC X(13)   VALUE SPACES.                    
+           05  FILLER              PIC X(7)    VALUE 'DATE: '.                  
+           05  L142-DATE           PIC X(10)   VALUE SPACES.                    
+           05  FILLER              PIC X(3)    VALUE SPACES.                    
+           05  FILLER              PIC X(7)    VALUE 'PAGE: '.                  
+           05  L142-PAGE           PIC ZZZ9    VALUE ZEROS.                     
+                                                                                
+       01  L142-PR-HEAD-02.                                                     
+           05  FILLER              PIC X(29)   VALUE SPACES.                    
+           05  FILLER              PIC X(50)   VALUE                            
+           'LISTING OF COMMITMENT DEPOSITS >= 24 MONTHS AS AT '.                
+           05  L142-CD-DATE.                                                    
+               10 L142-CD-DD          PIC X(2)    VALUE '01'.                   
+               10 FILLER              PIC X       VALUE '/'.                    
+               10 L142-CD-MM          PIC X(2)    VALUE SPACES.                 
+               10 FILLER              PIC X       VALUE '/'.                    
+               10 L142-CD-CCYY        PIC X(4)    VALUE SPACES.                 
+           05  FILLER                 PIC X(11)   VALUE                         
+               ' FROM SALES'.                                                   
+                                                                                
+       01  L142-PR-HEAD-03.                                                     
+           05  FILLER              PIC X(40)   VALUE SPACES.                    
+           05  FILLER              PIC X(50)   VALUE                            
+           'AGREEMENT DATE AND KEYS ARE AVAILABLE'.                             
+                                                                                
+       01  L142-PR-HEAD-04.                                                     
+           05  FILLER              PIC X(40)   VALUE                            
+           'S/N      SALE AGREEMENT      KEY        '.                          
+           05  FILLER              PIC X(20)   VALUE                            
+           '    KEY HANDOVER'.                                                  
+           05  FILLER              PIC X(54)   VALUE                            
+           'REGISTRATION           NEW TOWN            OUTSTANDING'.            
+                                                                                
+       01  L142-PR-HEAD-05.                                                     
+           05  FILLER              PIC X(40)   VALUE                            
+           '              DATE           AVAILABLE'.                            
+           05  FILLER              PIC X(20)   VALUE                            
+           '    APPNT. DATE'.                                                   
+           05  FILLER              PIC X(40)   VALUE                            
+           '  NUMBER                               '.                           
+           05  FILLER              PIC X(23)   VALUE                            
+           'COMMITMENT DEPOSIT ($)'.                                            
+                                                                                
+       01  L142-PR-DETAIL.                                                      
+           05  L142-SN             PIC ZZZZZZZ9.                                
+           05  FILLER              PIC X(3)  VALUE SPACE.                       
+           05  L142-DTE-SA         PIC X(10) VALUE SPACES.                      
+           05  FILLER              PIC X(08) VALUE SPACES.                      
+           05  L142-DTE-KEYAVA     PIC X(10) VALUE SPACES.                      
+           05  FILLER              PIC X(06) VALUE SPACES.                      
+           05  L142-KEY-HND        PIC X(10) VALUE SPACES.                      
+           05  FILLER              PIC X(07) VALUE SPACES.                      
+           05  L142-REGNO          PIC X(08).                                   
+           05  FILLER              PIC X(08) VALUE SPACES.                      
+           05  L142-NT             PIC X(20).                                   
+           05  FILLER              PIC X(04) VALUE SPACES.                      
+           05  L142-142-AMT        PIC ---,---,---,--9.99.                      
+                                                                                
+       01  L142-FOOTER-1.                                                       
+           05  FILLER              PIC X(46) VALUE                              
+               'NO. OF MONTHS O/S FROM SALES AGREEMENT DATE : '.                
+           05  L142-MM-DIFF        PIC ZZ9.                                     
+           05  FILLER              PIC X(3)  VALUE ' / '.                       
+           05  L142-NO-CASES       PIC ZZ9.                                     
+           05  FILLER              PIC X(47) VALUE SPACES.                      
+           05  L142-142-AMT-ST     PIC ---,---,---,--9.99.                      
+                                                                                
+       01  L142-FOOTER-2.                                                       
+           05  FILLER              PIC X(46) VALUE                              
+               '                                GRAND TOTAL : '.                
+           05  FILLER              PIC X(56) VALUE  SPACES.                     
+           05  L142-142-AMT-GT     PIC ---,---,---,--9.99.                      
+                                                                                
+       01  L142-FOOTER-LINE.                                                    
+           05  FILLER              PIC X(100) VALUE SPACES.                     
+           05  FILLER              PIC X(22)  VALUE ALL '-'.                    
+                                                                                
+      *NEW REPORT                                                               
+       01  L142-PR-HEAD-01X.                                                    
+           05  FILLER              PIC X(14)   VALUE 'BP13L142      '.          
+           05  FILLER              PIC X(8)    VALUE 'HDB3    '.                
+           05  FILLER              PIC X(18)   VALUE SPACES.                    
+           05  FILLER              PIC X(39)   VALUE                            
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER              PIC X(13)   VALUE SPACES.                    
+           05  FILLER              PIC X(7)    VALUE 'DATE: '.                  
+           05  L142-DATEX          PIC X(10)   VALUE SPACES.                    
+           05  FILLER              PIC X(3)    VALUE SPACES.                    
+                                                                                
+       01  L142-PR-HEAD-02X.                                                    
+           05  FILLER              PIC X(29)   VALUE SPACES.                    
+           05  FILLER              PIC X(50)   VALUE                            
+           'LISTING OF COMMITMENT DEPOSITS >= 24 MONTHS AS AT '.                
+           05  L142-CD-DATEX.                                                   
+               10 L142-CD-DDX         PIC X(2)    VALUE '01'.                   
+               10 FILLER              PIC X       VALUE '/'.                    
+               10 L142-CD-MMX         PIC X(2)    VALUE SPACES.                 
+               10 FILLER              PIC X       VALUE '/'.                    
+               10 L142-CD-CCYYX       PIC X(4)    VALUE SPACES.                 
+           05  FILLER                 PIC X(11)   VALUE                         
+               ' FROM SALES'.                                                   
+                                                                                
+       01  L142-PR-HEAD-03X.                                                    
+           05  FILLER              PIC X(40)   VALUE SPACES.                    
+           05  FILLER              PIC X(50)   VALUE                            
+           'AGREEMENT DATE AND KEYS ARE AVAILABLE'.                             
+                                                                                
+       01  L142-HDG5AX.                                                         
+           05  FILLER              PIC X(16)  VALUE  SPACES.                    
+           05  FILLER              PIC X(10)  VALUE 'NO. OF    '.               
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE  SPACES.                    
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(10)  VALUE 'NO. OF    '.               
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE  SPACES.                    
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE 'NO. OF     '.              
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(92)  VALUE  SPACES.                    
+                                                                                
+       01  L142-HDG5BX.                                                         
+           05  FILLER              PIC X(16)  VALUE  SPACES.                    
+           05  FILLER              PIC X(10)  VALUE 'MONTHS O/S'.               
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE  SPACES.                    
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(10)  VALUE 'MONTHS O/S'.               
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE  SPACES.                    
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE 'MONTHS O/S '.              
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(92)  VALUE  SPACES.                    
+                                                                                
+       01  L142-HDG5CX.                                                         
+           05  FILLER              PIC X(05)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE 'SALE     '.                
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(10)  VALUE 'FROM SALES'.               
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE  SPACES.                    
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(10)  VALUE 'FROM KEY  '.               
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE 'KEY        '.              
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE 'FROM KEY   '.              
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(33)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE 'TEAM:    '.                
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE  SPACES.                    
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE 'TEAM:    '.                
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(10)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE 'OUTSTANDING'.              
+                                                                                
+       01  L142-HDG5DX.                                                         
+           05  FILLER              PIC X(03)  VALUE 'S/N'.                      
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE 'AGREEMENT'.                
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(10)  VALUE 'AGREEMENT '.               
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE 'KEY      '.                
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(10)  VALUE 'AVAILABLE '.               
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE 'HANDOVER   '.              
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE 'FROM KEY   '.              
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(06)  VALUE 'CANCEL'.                   
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(12)  VALUE 'REGISTRATION'.             
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE 'CSM(PREB)'.                
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE 'CSM(PREB)'.                
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE 'CSM(POSB)'.                
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE 'CSM(POSB)'.                
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(08)  VALUE 'NEW TOWN'.                 
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE 'COMMITMENT '.              
+                                                                                
+       01  L142-HDG5EX.                                                         
+           05  FILLER              PIC X(03)  VALUE  SPACES.                    
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE 'DATE     '.                
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(10)  VALUE 'DATE      '.               
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(09)  VALUE 'AVAILABLE'.                
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(10)  VALUE 'DATE      '.               
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE 'APPNT. DATE'.              
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE 'APPNT. DATE'.              
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(06)  VALUE 'DATE  '.                   
+           05  FILLER              PIC X(02)  VALUE  SPACES.                    
+           05  FILLER              PIC X(12)  VALUE 'NUMBER      '.             
+           05  FILLER              PIC X(56)  VALUE  SPACES.                    
+           05  FILLER              PIC X(11)  VALUE 'DEPOSIT ($)'.              
+                                                                                
+       01  L142-PR-DETAILX.                                                     
+           05  L142-SNX            PIC 9(4)  VALUE ZEROS.                       
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-DTE-SAX        PIC X(08) VALUE SPACES.                      
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-NOM-SAX        PIC X(03) VALUE SPACES.                      
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-DTE-KEYAVAX    PIC X(08) VALUE SPACES.                      
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-NOM-KEYX       PIC X(03) VALUE SPACES.                      
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-KEY-HNDX       PIC X(08) VALUE SPACES.                      
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-NOM-HNDX       PIC X(03) VALUE SPACES.                      
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-CANCEL-DTEX    PIC X(08) VALUE SPACES.                      
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-REGNOX         PIC X(08).                                   
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-CSM-PREBX      PIC X(5)  VALUE SPACES.                      
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-TM-CSM-PREBX   PIC X(1)  VALUE SPACES.                      
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-CSM-POSBX      PIC X(5)  VALUE SPACES.                      
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-TM-CSM-POSBX   PIC X(1)  VALUE SPACES.                      
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-NTX            PIC X(20).                                   
+           05  FILLER              PIC X(1)  VALUE ';'.                         
+           05  L142-142-AMTX       PIC ---,---,---,--9.99.                      
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN-LOGIC.                                                         
+      *-------------------------------------------------------------            
+           PERFORM 1000-INITIALIZATION.                                         
+           PERFORM 2000-READ-F142 THRU 2000-EXIT.                               
+           MOVE F142-DTE-SA(1:6)        TO WS-PREV-DATE.                        
+           MOVE F142-NUM-MONTH          TO WS-PREV-MONTH                        
+           PERFORM 4000-PRINT-ROUTINE   THRU 4000-EXIT                          
+                   UNTIL F142-EOF = 'Y'.                                        
+           PERFORM 4500-PRINT-FOOTER    THRU 4500-EXIT.                         
+           PERFORM 6000-PRINT-GRNTOT    THRU 6000-EXIT.                         
+           PERFORM 9000-CLOSING-ROUTINE THRU 9000-EXIT.                         
+       0000-FINISH.                                                             
+            EXIT.                                                               
+                                                                                
+                                                                                
+       1000-INITIALIZATION.                                                     
+      *-------------------------------------------------------------            
+            OPEN INPUT  BP13K060                                                
+                        BP13F142                                                
+                        BP13K022                                                
+                        BP13K024                                                
+                 OUTPUT BP13L142                                                
+                        P13L142A.                                               
+                                                                                
+            IF BP13K060-STATUS NOT = ZEROES AND 97                              
+               DISPLAY 'OPENING ERROR, K060-STATUS ' BP13K060-STATUS            
+               MOVE BP13K060-STATUS TO RETURN-CODE                              
+               PERFORM 9000-CLOSING-ROUTINE THRU 9000-EXIT                      
+            END-IF.                                                             
+                                                                                
+            IF BP13K022-STATUS NOT = ZEROES AND 97                              
+               DISPLAY 'OPENING ERROR, K022-STATUS ' BP13K022-STATUS            
+               MOVE BP13K022-STATUS TO RETURN-CODE                              
+               PERFORM 9000-CLOSING-ROUTINE THRU 9000-EXIT                      
+            END-IF.                                                             
+                                                                                
+            IF BP13K024-STATUS NOT = ZEROES AND 97                              
+               DISPLAY 'OPENING ERROR, K024-STATUS ' BP13K024-STATUS            
+               MOVE BP13K024-STATUS TO RETURN-CODE                              
+               PERFORM 9000-CLOSING-ROUTINE THRU 9000-EXIT                      
+            END-IF.                                                             
+                                                                                
+            MOVE FUNCTION CURRENT-DATE TO WS-DATE.                              
+                                                                                
+       1000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       2000-READ-F142.                                                          
+      *-------------------------------------------------------------            
+            READ BP13F142  AT END MOVE 'Y' TO F142-EOF                          
+                 GO TO 2000-EXIT.                                               
+            ADD 1 TO WS-F142-READ.                                              
+                                                                                
+       2000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       3000-READ-K060.                                                          
+      *-------------------------------------------------------------            
+            MOVE SPACES TO K060-KEY-FLD.                                        
+            MOVE '02' TO K060-SERIAL-NO.                                        
+            MOVE F142-NUM-NT TO K060-CODE.                                      
+            READ BP13K060.                                                      
+                                                                                
+            EVALUATE BP13K060-STATUS                                            
+            WHEN 00                                                             
+                 MOVE K060-DESC TO L142-NT L142-NTX                             
+            WHEN 23                                                             
+                 DISPLAY 'CODE NOT FOUND IN BP13K060 : '                        
+                         F142-NUM-NT                                            
+                 MOVE  '** NOT FOUND **' TO L142-NT L142-NTX                    
+                 GO TO 3000-EXIT                                                
+            WHEN OTHER                                                          
+               DISPLAY 'READ ERROR, K060-STATUS ' BP13K060-STATUS               
+               MOVE BP13K060-STATUS TO RETURN-CODE                              
+               PERFORM 9000-CLOSING-ROUTINE THRU 9000-EXIT                      
+            END-EVALUATE.                                                       
+                                                                                
+       3000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       4000-PRINT-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+            IF WS-CNT > 50                                                      
+               MOVE  0              TO WS-CNT                                   
+               ADD   1              TO WS-PAGE                                  
+               MOVE  WS-PAGE        TO L142-PAGE                                
+                                                                                
+               STRING WS-DATE(7:2) '/' WS-DATE(5:2) '/' WS-DATE(1:4)            
+                      DELIMITED BY SIZE INTO L142-DATE                          
+                                                                                
+               WRITE BP13L142-REC FROM L142-PR-HEAD-01 AFTER PAGE               
+                                                                                
+               MOVE  WS-DATE-CCYY    TO L142-CD-CCYY                            
+               MOVE  WS-DATE-MM      TO L142-CD-MM                              
+                                                                                
+               WRITE BP13L142-REC FROM L142-PR-HEAD-02                          
+               WRITE BP13L142-REC FROM L142-PR-HEAD-03                          
+               WRITE BP13L142-REC FROM L142-PR-HEAD-04 AFTER 2                  
+               WRITE BP13L142-REC FROM L142-PR-HEAD-05                          
+               MOVE  SPACES       TO   BP13L142-REC                             
+               WRITE BP13L142-REC AFTER 2                                       
+               ADD 8 TO WS-CNT                                                  
+            END-IF.                                                             
+                                                                                
+            IF F142-DTE-SA(1:6) = WS-PREV-DATE                                  
+               ADD 1 TO WS-F142-OUTPUT                                          
+               ADD 1 TO WS-NO-CASES                                             
+               ADD F142-AMT-CASH TO WS-142-AMT-ST                               
+               ADD F142-AMT-CASH TO WS-142-AMT-GT                               
+               PERFORM 3000-READ-K060     THRU 3000-EXIT                        
+                                                                                
+      *------ MOVE DETAILS                                                      
+                                                                                
+               MOVE SPACES                    TO L142-DTE-SA                    
+                                                 L142-DTE-KEYAVA                
+                                                 L142-KEY-HND                   
+                                                 L142-REGNO                     
+                                                                                
+               MOVE WS-F142-OUTPUT             TO L142-SN                       
+                                                                                
+               STRING F142-DTE-SA(7:2) '/'                                      
+                      F142-DTE-SA(5:2) '/'                                      
+                      F142-DTE-SA(1:4)                                          
+                      DELIMITED BY SIZE INTO L142-DTE-SA                        
+                                                                                
+               STRING F142-DTE-KEY-AVAIL(7:2) '/'                               
+                      F142-DTE-KEY-AVAIL(5:2) '/'                               
+                      F142-DTE-KEY-AVAIL(1:4)                                   
+                      DELIMITED BY SIZE INTO L142-DTE-KEYAVA                    
+                                                                                
+               STRING F142-DTE-SO-APPMT(7:2) '/'                                
+                      F142-DTE-SO-APPMT(5:2) '/'                                
+                      F142-DTE-SO-APPMT(1:4)                                    
+                      DELIMITED BY SIZE INTO L142-KEY-HND                       
+                                                                                
+               MOVE F142-NUM-REGN              TO L142-REGNO                    
+               MOVE F142-AMT-CASH              TO L142-142-AMT                  
+               MOVE SPACES TO BP13L142-REC                                      
+               WRITE BP13L142-REC FROM L142-PR-DETAIL                           
+               PERFORM 4100-WRITE-L142A  THRU 4100-EXIT                         
+            ELSE                                                                
+               PERFORM 4500-PRINT-FOOTER THRU 4500-EXIT                         
+               GO TO 4000-EXIT                                                  
+                                                                                
+            END-IF.                                                             
+                                                                                
+            ADD 1 TO WS-CNT.                                                    
+            PERFORM 2000-READ-F142     THRU 2000-EXIT.                          
+                                                                                
+       4000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       4100-WRITE-L142A.                                                        
+      *-------------------------------------------------------------            
+           MOVE SPACES  TO L142-DTE-SAX       L142-DTE-KEYAVAX                  
+                           L142-KEY-HNDX      L142-REGNOX                       
+                           L142-NOM-SAX       L142-NOM-KEYX                     
+                           L142-NOM-HNDX      L142-CANCEL-DTEX                  
+                           L142-CSM-PREBX     L142-TM-CSM-PREBX                 
+                           L142-CSM-POSBX     L142-TM-CSM-POSBX.                
+           MOVE ZEROES  TO L142-142-AMTX.                                       
+                                                                                
+           IF WS-F142-OUTPUTX < 1                                               
+              STRING WS-DATE(7:2) '/' WS-DATE(5:2) '/' WS-DATE(1:4)             
+                     DELIMITED BY SIZE INTO L142-DATEX                          
+                                                                                
+              WRITE P13L142A-REC FROM L142-PR-HEAD-01X                          
+                                                                                
+              MOVE  WS-DATE-CCYY    TO L142-CD-CCYYX                            
+              MOVE  WS-DATE-MM      TO L142-CD-MMX                              
+                                                                                
+              WRITE P13L142A-REC FROM L142-PR-HEAD-02X                          
+              WRITE P13L142A-REC FROM L142-PR-HEAD-03X                          
+              WRITE P13L142A-REC FROM L142-HDG5AX                               
+              WRITE P13L142A-REC FROM L142-HDG5BX                               
+              WRITE P13L142A-REC FROM L142-HDG5CX                               
+              WRITE P13L142A-REC FROM L142-HDG5DX                               
+              WRITE P13L142A-REC FROM L142-HDG5EX                               
+              MOVE  SPACES       TO   P13L142A-REC                              
+              WRITE P13L142A-REC                                                
+           END-IF.                                                              
+                                                                                
+           ADD 1 TO WS-F142-OUTPUTX                                             
+                                                                                
+           PERFORM 4120-READ-K022       THRU  4120-EXIT.                        
+           IF WS-K022-FND = 'Y'                                                 
+              MOVE K022-NUM-OIC           TO  WS-NUM-OIC                        
+                                              L142-CSM-POSBX                    
+              PERFORM 4130-READ-K024    THRU  4130-EXIT                         
+              MOVE WS-TEAM                TO  L142-TM-CSM-POSBX                 
+              IF K022-NUM-OIC-APPL NOT = SPACES AND LOW-VALUES                  
+                 MOVE K022-NUM-OIC-APPL   TO  WS-NUM-OIC                        
+                                              L142-CSM-PREBX                    
+                 PERFORM 4130-READ-K024 THRU  4130-EXIT                         
+                 MOVE WS-TEAM             TO  L142-TM-CSM-PREBX                 
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           MOVE WS-F142-OUTPUTX            TO L142-SNX                          
+           MOVE F142-DTE-SA                TO L142-DTE-SAX                      
+           IF F142-DTE-SA NOT = SPACES AND LOW-VALUES AND ZEROS                 
+              MOVE F142-DTE-SA             TO WS-DTE-COMPUTE                    
+              MOVE ZEROES                  TO WS-COMPUTE-MTH                    
+              PERFORM 4150-COMPUTE-MONTHS THRU  4150-EXIT                       
+              MOVE WS-COMPUTE-MTH          TO WS-MONTH-DIFF                     
+              MOVE WS-MONTH-DIFF-R         TO L142-NOM-SAX                      
+           END-IF.                                                              
+                                                                                
+           MOVE F142-DTE-KEY-AVAIL         TO L142-DTE-KEYAVAX                  
+           IF F142-DTE-KEY-AVAIL NOT = SPACES AND LOW-VALUES AND ZEROS          
+              MOVE F142-DTE-KEY-AVAIL      TO WS-DTE-COMPUTE                    
+              MOVE ZEROES                  TO WS-COMPUTE-MTH                    
+              PERFORM 4150-COMPUTE-MONTHS THRU  4150-EXIT                       
+              MOVE WS-COMPUTE-MTH          TO WS-MONTH-DIFF                     
+              MOVE WS-MONTH-DIFF-R         TO L142-NOM-KEYX                     
+           END-IF.                                                              
+                                                                                
+           MOVE F142-DTE-SO-APPMT          TO L142-KEY-HNDX                     
+           IF F142-DTE-SO-APPMT NOT = SPACES AND LOW-VALUES AND ZEROS           
+              MOVE F142-DTE-SO-APPMT       TO WS-DTE-COMPUTE                    
+              MOVE ZEROES                  TO WS-COMPUTE-MTH                    
+              PERFORM 4150-COMPUTE-MONTHS THRU  4150-EXIT                       
+              MOVE WS-COMPUTE-MTH          TO WS-MONTH-DIFF                     
+              MOVE WS-MONTH-DIFF-R         TO L142-NOM-HNDX                     
+           END-IF.                                                              
+                                                                                
+           MOVE F142-DTE-CANCEL            TO L142-CANCEL-DTEX.                 
+           MOVE F142-NUM-REGN              TO L142-REGNOX                       
+           MOVE F142-AMT-CASH              TO L142-142-AMTX                     
+           MOVE SPACES TO P13L142A-REC                                          
+           WRITE P13L142A-REC FROM L142-PR-DETAILX.                             
+                                                                                
+       4100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       4120-READ-K022.                                                          
+      *------------------------*                                                
+           MOVE SPACES                     TO BP13K022-REC.                     
+           INITIALIZE                         BP13K022-REC.                     
+           MOVE 'N'                        TO WS-K022-FND.                      
+                                                                                
+           MOVE F142-NUM-REGN              TO K022-NUM-REGN.                    
+                                                                                
+           READ BP13K022 KEY IS K022-NUM-REGN.                                  
+                                                                                
+           EVALUATE BP13K022-STATUS                                             
+           WHEN  00                                                             
+                 MOVE 'Y'                  TO WS-K022-FND                       
+                                                                                
+           WHEN  23                                                             
+                 DISPLAY 'RECORD NOT FOUND IN BP13K022 : '                      
+                                                K022-NUM-REGN                   
+           WHEN  OTHER                                                          
+                 DISPLAY 'ERROR READING BP13K022 : ' BP13K022-STATUS            
+                 DISPLAY 'K022 KEY FIELD         : ' K022-NUM-REGN              
+                 MOVE     BP13K022-STATUS       TO   RETURN-CODE                
+                 PERFORM  9000-CLOSING-ROUTINE  THRU 9000-EXIT                  
+           END-EVALUATE.                                                        
+                                                                                
+       4120-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       4130-READ-K024.                                                          
+      *------------------------*                                                
+           MOVE SPACES                     TO BP13K024-REC.                     
+           INITIALIZE                         BP13K024-REC.                     
+           MOVE SPACES                     TO WS-TEAM.                          
+                                                                                
+           MOVE WS-NUM-OIC                 TO K024-NUM-OIC.                     
+                                                                                
+           READ BP13K024.                                                       
+                                                                                
+           EVALUATE BP13K024-STATUS                                             
+           WHEN  00                                                             
+                 MOVE K024-CDE-TEAM        TO WS-TEAM                           
+                                                                                
+           WHEN  23                                                             
+                 DISPLAY 'RECORD NOT FOUND IN BP13K024 : '                      
+                                                K024-NUM-OIC                    
+           WHEN  OTHER                                                          
+                 DISPLAY 'ERROR READING BP13K022 : ' BP13K024-STATUS            
+                 DISPLAY 'K024 OIC               : ' K024-NUM-OIC               
+                 MOVE     BP13K024-STATUS       TO   RETURN-CODE                
+                 PERFORM  9000-CLOSING-ROUTINE  THRU 9000-EXIT                  
+           END-EVALUATE.                                                        
+                                                                                
+       4130-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       4150-COMPUTE-MONTHS.                                                     
+      *------------------------*                                                
+           MOVE WS-DATE-MM    TO WS-PROCESS-MM.                                 
+           MOVE WS-DATE-CCYY  TO WS-PROCESS-CCYY.                               
+                                                                                
+           IF WS-PROCESS-MM < WS-COMPUTE-MM                                     
+              COMPUTE WS-PROCESS-MM = WS-PROCESS-MM + 12                        
+              COMPUTE WS-PROCESS-CCYY = WS-DATE-CCYY - 1                        
+           ELSE                                                                 
+              IF WS-PROCESS-MM = WS-COMPUTE-MM                                  
+                 MOVE 0               TO WS-PROCESS-MM.                         
+                                                                                
+           IF WS-PROCESS-MM = ZEROES                                            
+              IF WS-PROCESS-CCYY > WS-COMPUTE-CCYY                              
+              COMPUTE WS-COMPUTE-MTH = WS-PROCESS-MM +                          
+                           ((WS-PROCESS-CCYY - WS-COMPUTE-CCYY) * 12)           
+              ELSE                                                              
+              COMPUTE WS-COMPUTE-MTH = 0                                        
+           ELSE                                                                 
+              COMPUTE WS-PROCESS-MM = WS-PROCESS-MM +                           
+                           ((WS-PROCESS-CCYY - WS-COMPUTE-CCYY) * 12)           
+           COMPUTE WS-COMPUTE-MTH = WS-PROCESS-MM - WS-COMPUTE-MM.              
+                                                                                
+           IF  WS-COMPUTE-MTH < 0                                               
+               DISPLAY 'ERROR NEGATIVE FIGURES'.                                
+                                                                                
+       4150-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       4500-PRINT-FOOTER.                                                       
+      *-------------------------------------------------------------            
+            MOVE WS-PREV-MONTH      TO L142-MM-DIFF.                            
+            MOVE WS-NO-CASES        TO L142-NO-CASES.                           
+            MOVE WS-142-AMT-ST      TO L142-142-AMT-ST.                         
+            MOVE SPACES             TO BP13L142-REC.                            
+            WRITE BP13L142-REC    FROM L142-FOOTER-LINE.                        
+            WRITE BP13L142-REC    FROM L142-FOOTER-1.                           
+                                                                                
+            MOVE SPACES             TO BP13L142-REC.                            
+            WRITE BP13L142-REC.                                                 
+                                                                                
+            ADD 3                   TO WS-CNT                                   
+            MOVE F142-DTE-SA(1:6)   TO WS-PREV-DATE.                            
+            MOVE F142-NUM-MONTH     TO WS-PREV-MONTH                            
+            MOVE 0                  TO WS-142-AMT-ST                            
+                                       WS-NO-CASES.                             
+                                                                                
+       4500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       6000-PRINT-GRNTOT.                                                       
+      *-------------------------------------------------------------            
+            MOVE  WS-142-AMT-GT TO L142-142-AMT-GT.                             
+            MOVE  SPACES TO BP13L142-REC.                                       
+            WRITE BP13L142-REC FROM L142-FOOTER-2 AFTER 2.                      
+                                                                                
+       6000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       9000-CLOSING-ROUTINE.                                                    
+      *-------------------------------------------------------------            
+             DISPLAY '- BP13C142 CONTROL TOTAL ----------'.                     
+             DISPLAY ' F142-READ      ' WS-F142-READ.                           
+             DISPLAY ' F142-OUTPUT    ' WS-F142-OUTPUT.                         
+             DISPLAY ' '.                                                       
+             DISPLAY 'GRAND TOT  : - ' L142-142-AMT-GT                          
+             DISPLAY ' '.                                                       
+                                                                                
+           CLOSE      BP13K060                                                  
+                      BP13F142                                                  
+                      BP13K022                                                  
+                      BP13K024                                                  
+                      P13L142A                                                  
+                      BP13L142.                                                 
+                                                                                
+           IF BP13K060-STATUS NOT = 0 AND NOT = 97                              
+              DISPLAY ' CLOSING ERROR, K060-STATUS '                            
+                        BP13K060-STATUS.                                        
+                                                                                
+           IF BP13K022-STATUS NOT = 0 AND NOT = 97                              
+              DISPLAY ' CLOSING ERROR, K022-STATUS '                            
+                        BP13K022-STATUS.                                        
+                                                                                
+           IF BP13K024-STATUS NOT = 0 AND NOT = 97                              
+              DISPLAY ' CLOSING ERROR, K024-STATUS '                            
+                        BP13K024-STATUS.                                        
+                                                                                
+             STOP RUN.                                                          
+                                                                                
+       9000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+

@@ -1,0 +1,647 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CC03.                                                 
+       AUTHOR.        SHARON DUMDUM.                                            
+       DATE-WRITTEN.  19 APRIL 2006.                                            
+      *****************************************************************         
+      * OBJECTIVE - TO IDENTIFY AND COMPUTE INTEREST RAISED  ON       *         
+      *             MONTHLY REST                                      *         
+      *                                                               *         
+      * SUBROUTINE     - BP13C950                                     *         
+      *                                                               *         
+      * IDENTICAL PGM  - AB03C400                                     *         
+      * OUTPUT FILE    - BP13FD69 = AB03F074                          *         
+      * AB03F074=X(120)                                               *         
+      * AB03F001=X(100)                                               *         
+      *                                                               *         
+      *---------------------------------------------------------------*         
+      *  CHGREQ    DATE    BY  AMENDMENTS/ENHANCEMENTS                *         
+      * -------- -------- ---- -------------------------------------- *         
+      * BP132772 19042006 SD10 NEW PROGRAM                            *         
+      * BP132864 19062006 BA3  GET CURRENT DATE FROM SY02F001.        *         
+      * BP132888 01032007 SD10 ADD FD69-NUM-REGN                      *         
+      * BP133173 22102007 BA3  - ADD NUM-LOAN-SCH                     *         
+      *                        - USE CODE LOAN SCHEME TO GET          *         
+      *                          INTEREST RATE                        *         
+      * BP133173 12112007 BA3  - INCLUDE F125-AMT-INTEREST            *         
+      * BP133091 16112007 RB12 EXPAND FD00 LENGTH FR 1200 TO 1600     *         
+      * BP133209 12022008 ED1  - ADD BP13KD43 CHECK & COMPUTE PER DAY *         
+      *                          IF REPUD DTE IS SAME W/ CURR YR & MTH*         
+      * BP133040 18032008 LSB  - BYPASS LN-BAL <= 0 OR ACCT-STAT = Z  *         
+      *                          REMOVE BP13KD43                      *         
+      * BP133209 02042008 ED1  - IF DTE-REPUD YR & MO IS SAME WITH    *         
+      *                          CUR-DTE, COMPUTE INTEREST PER DAY    *         
+      * BP133450 24092008 JB8  TO CATER FOR FD00-DTE-EFF-TRANSFER     *         
+      * BP133588 28042009 JB8  - NOT OUTPUT WHEN INTEREST <= 0        *         
+      * BP134154 02032011 JB8  - TO CATER FOR RE-FINANCE DATE         *         
+      *****************************************************************         
+                                                                                
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13FD69  ASSIGN TO BP13FD69.                                 
+                                                                                
+           SELECT BP13FD00  ASSIGN TO BP13FD00.                                 
+                                                                                
+           SELECT SY02F001  ASSIGN TO SY02F001.                                 
+                                                                                
+           SELECT BP13KD65  ASSIGN TO BP13KD65                                  
+                  ORGANIZATION     IS INDEXED                                   
+                  RECORD KEY       IS KD65-CDE-FILEID                           
+                  FILE STATUS      IS KD65-STATUS                               
+                  ACCESS           IS RANDOM.                                   
+                                                                                
+           SELECT BP13F125  ASSIGN TO BP13F125.                                 
+                                                                                
+           SELECT BP13LC03  ASSIGN TO BP13LC03.                                 
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD  BP13FD00                   BLOCK  CONTAINS    0 RECORDS              
+                                      RECORD CONTAINS 1600 CHARACTERS           
+                                      LABEL  RECORDS  ARE  STANDARD             
+                                      RECORDING MODE  IS   F.                   
+       COPY BP13FD00.                                                           
+                                                                                
+       COPY SY02F001.                                                           
+       COPY AV02COMM.                                                           
+                                                                                
+       FD  BP13KD65                   RECORD CONTAINS  200 CHARACTERS.          
+       COPY BP13KD65.                                                           
+                                                                                
+       FD  BP13FD69                   BLOCK  CONTAINS    0 RECORDS              
+                                      RECORD CONTAINS  120 CHARACTERS           
+                                      LABEL  RECORDS  ARE  STANDARD             
+                                      RECORDING MODE  IS   F.                   
+       COPY BP13FD69.                                                           
+                                                                                
+       FD  BP13F125                   BLOCK  CONTAINS    0 RECORDS              
+                                      RECORD CONTAINS  150 CHARACTERS           
+                                      LABEL  RECORDS  ARE  STANDARD             
+                                      RECORDING MODE  IS   F.                   
+       COPY BP13F125.                                                           
+                                                                                
+       FD   BP13LC03                   BLOCK  CONTAINS    0 RECORDS             
+                                       RECORD CONTAINS  132 CHARACTERS          
+                                       LABEL  RECORD   IS   STANDARD            
+                                       RECORDING MODE  IS   F.                  
+       01  BP13LC03-REC      PIC X(132).                                        
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       77  WS-RETURN-CODE             PIC 9(2)     VALUE ZERO.                  
+                                                                                
+       01  WS-STATUS.                                                           
+           05 FD00-STATUS             PIC 99       VALUE ZEROS.                 
+           05 KD65-STATUS             PIC 99       VALUE ZEROS.                 
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05 WS-CNT-FD00-RD          PIC 9(7)     VALUE 0.                     
+           05 WS-CNT-FD00-BYP         PIC 9(7)     VALUE 0.                     
+           05 WS-CNT-FD69-WRT         PIC 9(7)     VALUE 0.                     
+           05 WS-CNT-F125-WRT         PIC 9(7)     VALUE 0.                     
+           05 WS-CNT-UPD-KD65         PIC 9(7)     VALUE 0.                     
+                                                                                
+       01  WS-SWITCH.                                                           
+           05  WS-FD00-SW             PIC X        VALUE 'N'.                   
+               88  FD00-EOF                        VALUE 'Y'.                   
+           05  WS-FD00-VALID-SW       PIC X        VALUE 'N'.                   
+               88  VALID-FD00                      VALUE 'Y'.                   
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-CURR-DATE.                                                    
+               10 WS-CURR-CC           PIC X(2).                                
+               10 WS-CURR-DTE.                                                  
+                  15 WS-CURR-YY        PIC X(2).                                
+                  15 WS-CURR-MM        PIC X(2).                                
+                  15 WS-CURR-DD        PIC X(2).                                
+           05  WS-CUR-DTE REDEFINES WS-CURR-DATE.                               
+               10 WS-CURR-CYM          PIC X(6).                                
+               10 WS-CURR-DD1          PIC X(2).                                
+           05  WS-CUR-DTE-NO REDEFINES WS-CUR-DTE.                              
+               10 WS-CURDTE-CCYYMM     PIC 9(6).                                
+               10 WS-CURDTE-DD         PIC 9(2).                                
+           05  WS-TMP-DATE.                                                     
+               10 WS-TMP-CCYY          PIC 9(4).                                
+               10 WS-TMP-MM            PIC 9(2).                                
+               10 WS-TMP-DD            PIC 9(2).                                
+           05  WS-DTE-COMPARE REDEFINES WS-TMP-DATE.                            
+               10 WS-COMP-CYM          PIC X(6).                                
+               10 WS-COMP-DD           PIC X(2).                                
+           05  WS-INT-RATE             PIC 99V9999.                             
+           05  WS-INT-RAISE            PIC 9(6)V99.                             
+           05  WS-INT-RAISE-PER-DAY    PIC 9(6)V9(10).                          
+           05  WS-TMP-INTRATE          PIC 99V99.                               
+           05  WS-INT-FORM REDEFINES WS-TMP-INTRATE.                            
+               10 WS-PCT1              PIC X.                                   
+               10 WS-PCT2              PIC X.                                   
+               10 WS-PCT3              PIC X(2).                                
+           05  WS-DTE-CURR-FIN.                                                 
+               10 WS-DTE-CURR-FIN-CCYY PIC 9(4).                                
+               10 WS-DTE-CURR-FIN-MM   PIC 9(2).                                
+           05  WS-PAGE                 PIC 9(4) VALUE ZEROES.                   
+           05  WS-SNO                  PIC 9(4) VALUE ZEROES.                   
+           05  WS-LINE                 PIC 9(2) VALUE 60.                       
+           05  WS-DTE-REPUD-CHAR       PIC X(08) VALUE SPACES.                  
+           05  WS-DTE-REPUD-R REDEFINES WS-DTE-REPUD-CHAR.                      
+               10 WS-DTE-REPUD.                                                 
+                  15 WS-DTE-REPUD-CCYYMM  PIC 9(06).                            
+                  15 WS-DTE-REPUD-DD      PIC 9(02).                            
+           05  WS-LAST-DAY-CHAR        PIC X(02) VALUE SPACES.                  
+           05  WS-LAST-DAY REDEFINES WS-LAST-DAY-CHAR                           
+                                       PIC 9(02).                               
+                                                                                
+      *-----------------------------------------------------------*             
+      *    WS VARIABLES PASSED  TO SUB-PROGRAM "BP13C950"         *             
+      *-----------------------------------------------------------*             
+       01  C950-FIELD.                                                          
+           05  C950-PROCESS-DATE       PIC X(08).                               
+           05  C950-PROCESS-DATE-NUM REDEFINES C950-PROCESS-DATE.               
+               10  C950-PROCESS-CC     PIC 99.                                  
+               10  C950-PROCESS-YY     PIC 99.                                  
+               10  C950-PROCESS-MM     PIC 99.                                  
+               10  C950-PROCESS-DD     PIC 99.                                  
+           05  C950-INTEREST-RATE      PIC 9(02)V9(4).                          
+           05  C950-FACT               PIC 9(02).                               
+           05  C950-REPYMT-PERIOD      PIC 9(02).                               
+           05  C950-CDE-LOAN-SCH       PIC X(01).                               
+                                                                                
+      *--------------------------------------------------------------           
+      *   REPORT LAYOUT                                                         
+      *--------------------------------------------------------------           
+       01  LC03-PR-HEAD-01.                                                     
+           05  LC03-RPTNAME        PIC X(8)      VALUE 'BP13LC03'.              
+           05  FILLER              PIC X(5)      VALUE SPACES .                 
+           05  FILLER              PIC X(8)      VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(24)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER              PIC X(17)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE :'.                
+           05  LC03-DATE           PIC X(10)     VALUE SPACES.                  
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'PAGE : '.               
+           05  LC03-PRT-PAGE       PIC ZZZZ9     VALUE ZEROES.                  
+                                                                                
+       01  LC03-PR-HEAD-02.                                                     
+           05  FILLER              PIC X(41)     VALUE SPACES .                 
+           05  FILLER              PIC X(36)     VALUE                          
+               'ERROR REPORT ON INTEREST RAISED FOR '.                          
+           05  LC03-FORDATE        PIC X(08)     VALUE SPACES.                  
+                                                                                
+       01  LC03-PR-HEAD-03.                                                     
+           05  FILLER              PIC X(04)     VALUE                          
+               'SNO'.                                                           
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(08)     VALUE                          
+               'REGN NO'.                                                       
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(11)     VALUE                          
+               'SCH ACCT NO'.                                                   
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE                          
+               'CDE LOAN SCH'.                                                  
+           05  FILLER              PIC X(10)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE                          
+               'REMARKS'.                                                       
+                                                                                
+       01  LC03-PR-HEAD-04.                                                     
+           05  FILLER              PIC X(04)     VALUE ALL '-'.                 
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(08)     VALUE ALL '-'.                 
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(11)     VALUE ALL '-'.                 
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE ALL '-'.                 
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(21)     VALUE ALL '-'.                 
+                                                                                
+       01  LC03-PR-DTL.                                                         
+           05  LC03-PRT-SNO        PIC ZZZ9  VALUE ZEROES.                      
+           05  FILLER              PIC X(05) VALUE SPACES.                      
+           05  LC03-REGN-NO        PIC X(08) VALUE SPACES.                      
+           05  FILLER              PIC X(05) VALUE SPACES.                      
+           05  LC03-SCH-ACCT       PIC X(11) VALUE SPACES.                      
+           05  FILLER              PIC X(09) VALUE SPACES.                      
+           05  LC03-CDE-LOAN-SCH   PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(08) VALUE SPACES.                      
+           05  LC03-REMARKS        PIC X(30) VALUE SPACES.                      
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+      ******************************************************************        
+       0000-MAIN.                                                               
+      ******************************************************************        
+                                                                                
+           PERFORM 1000-START-UP          THRU 1000-EXIT.                       
+           PERFORM 2000-READ-BP13FD00     THRU 2000-EXIT.                       
+           PERFORM 3000-INTEREST-RAISED   THRU 3000-EXIT                        
+                   UNTIL FD00-EOF.                                              
+           PERFORM 4000-PROC-BP13KD65  THRU 4000-EXIT.                          
+           PERFORM 9999-WRAP-UP.                                                
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       1000-START-UP.                                                           
+      ******************************************************************        
+                                                                                
+            OPEN INPUT  BP13FD00                                                
+                        SY02F001                                                
+                 I-O    BP13KD65                                                
+                 OUTPUT BP13FD69                                                
+                        BP13F125                                                
+                        BP13LC03.                                               
+                                                                                
+           IF  KD65-STATUS NOT = 00 AND 97                                      
+               DISPLAY 'ERROR OPEN BP13KD65 : ' KD65-STATUS                     
+               MOVE KD65-STATUS TO RETURN-CODE                                  
+               GO TO 9999-WRAP-UP                                               
+           END-IF.                                                              
+                                                                                
+           PERFORM 1500-READ-SY02F001   THRU 1500-EXIT.                         
+           STRING WS-CURR-DATE(7:2) '/'                                         
+                  WS-CURR-DATE(5:2) '/'                                         
+                  WS-CURR-DATE(1:4)                                             
+                  DELIMITED BY SIZE INTO LC03-DATE.                             
+                                                                                
+      *-----------------------------------------------------------------        
+      *    CHECK IF PREVIOUS MONTH BALANCES HAS BEEN CLOSED BEFORE              
+      *    RAISING INTEREST                                                     
+      *-----------------------------------------------------------------        
+                                                                                
+           MOVE 'KD65' TO KD65-CDE-FILEID.                                      
+                                                                                
+           READ BP13KD65.                                                       
+                                                                                
+           IF KD65-STATUS NOT = 0                                               
+               DISPLAY 'ERROR READ BP13KD65 : ' KD65-STATUS                     
+               MOVE KD65-STATUS TO RETURN-CODE                                  
+               GO TO 9999-WRAP-UP                                               
+           END-IF.                                                              
+                                                                                
+           MOVE KD65-DTE-BAL-CLOSE TO WS-DTE-CURR-FIN.                          
+                                                                                
+           ADD 1 TO WS-DTE-CURR-FIN-MM.                                         
+                                                                                
+           IF WS-DTE-CURR-FIN-MM > 12                                           
+              MOVE 1 TO WS-DTE-CURR-FIN-MM                                      
+              ADD  1 TO WS-DTE-CURR-FIN-CCYY                                    
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-CURR-FIN NOT = WS-CURR-CYM                                 
+              DISPLAY 'CANNOT RAISE INTEREST : BALANCE NOT CLOSED'              
+              MOVE 44 TO RETURN-CODE                                            
+              PERFORM 9999-WRAP-UP                                              
+           END-IF.                                                              
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       1500-READ-SY02F001.                                                      
+      ******************************************************************        
+                                                                                
+           READ SY02F001.                                                       
+           MOVE F001-DTE-CURRENT      TO WS-CURR-DATE.                          
+                                                                                
+           STRING F001-TXT-CURRENT-MTH(1:3) ' '                                 
+                  F001-DTE-CURRENT(1:4)                                         
+                  DELIMITED BY SIZE INTO LC03-FORDATE.                          
+                                                                                
+       1500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       2000-READ-BP13FD00.                                                      
+      ******************************************************************        
+                                                                                
+           READ BP13FD00 AT END                                                 
+                MOVE 'Y' TO WS-FD00-SW                                          
+                GO TO 2000-EXIT.                                                
+           ADD 1 TO WS-CNT-FD00-RD.                                             
+                                                                                
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       3000-INTEREST-RAISED.                                                    
+      ******************************************************************        
+           IF FD00-DTE-REPUDIATE IS NOT NUMERIC                                 
+              MOVE ZEROS TO FD00-DTE-REPUDIATE                                  
+           END-IF.                                                              
+           IF FD00-DTE-EFF-TRANSFER IS NOT NUMERIC                              
+              MOVE ZEROS TO FD00-DTE-EFF-TRANSFER                               
+           END-IF.                                                              
+           IF FD00-DTE-REFINANCE IS NOT NUMERIC                                 
+              MOVE ZEROS TO FD00-DTE-REFINANCE                                  
+           END-IF.                                                              
+                                                                                
+           MOVE ZEROS TO WS-DTE-REPUD-CHAR.                                     
+           MOVE FD00-DTE-EFF-TRANSFER     TO WS-DTE-REPUD-CHAR                  
+           IF FD00-DTE-REPUDIATE > WS-DTE-REPUD-CHAR                            
+              MOVE FD00-DTE-REPUDIATE     TO WS-DTE-REPUD-CHAR                  
+           END-IF.                                                              
+           IF FD00-DTE-REFINANCE > WS-DTE-REPUD-CHAR                            
+              MOVE FD00-DTE-REFINANCE     TO WS-DTE-REPUD-CHAR                  
+           END-IF.                                                              
+                                                                                
+           IF  (FD00-AMT-LOAN-BAL <= +0)  OR                                    
+               (FD00-CDE-ACCT-STAT = 'Z')                                       
+               ADD 1 TO WS-CNT-FD00-BYP                                         
+               PERFORM 2000-READ-BP13FD00  THRU 2000-EXIT                       
+               GO TO 3000-EXIT                                                  
+           END-IF.                                                              
+                                                                                
+           IF FD00-CDE-LOAN-SCH = 'P' OR 'A'                                    
+              CONTINUE                                                          
+           ELSE                                                                 
+              IF FD00-CDE-LOAN-SCH = 'C' OR 'S' OR 'M'                          
+                 PERFORM 7000-PRINT-REPORT THRU 7000-EXIT                       
+              END-IF                                                            
+              ADD 1 TO WS-CNT-FD00-BYP                                          
+              PERFORM 2000-READ-BP13FD00   THRU 2000-EXIT                       
+              GO TO 3000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           MOVE SPACES            TO BP13FD69-REC.                              
+           INITIALIZE BP13FD69-REC.                                             
+                                                                                
+      *-----------GET INTEREST RATE                                             
+           PERFORM 3100-GET-INTEREST-RATE  THRU 3100-EXIT.                      
+           IF WS-INT-RAISE > 0                                                  
+              PERFORM 3200-PROC-BP13FD69   THRU 3200-EXIT                       
+              PERFORM 3300-PROC-BP13F125   THRU 3300-EXIT                       
+              MOVE 'N' TO WS-FD00-VALID-SW                                      
+           END-IF.                                                              
+           PERFORM 2000-READ-BP13FD00      THRU 2000-EXIT.                      
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       3100-GET-INTEREST-RATE.                                                  
+      ******************************************************************        
+      * CALL BP13C950 TO GET INTEREST RATE                                      
+                                                                                
+           MOVE WS-CURR-DATE     TO WS-TMP-DATE.                                
+           MOVE 01               TO WS-TMP-DD.                                  
+           MOVE WS-TMP-DATE      TO C950-PROCESS-DATE.                          
+           MOVE FD00-CDE-LOAN-SCH   TO C950-CDE-LOAN-SCH.                       
+                                                                                
+           CALL 'BP13C950' USING C950-FIELD.                                    
+                                                                                
+           MOVE C950-INTEREST-RATE   TO WS-INT-RATE.                            
+           COMPUTE WS-INT-RAISE ROUNDED =                                       
+                        ( FD00-AMT-LOAN-BAL * WS-INT-RATE ) / 12.               
+                                                                                
+           IF (WS-DTE-REPUD-CCYYMM = WS-CURDTE-CCYYMM) AND                      
+              (WS-DTE-REPUD-CCYYMM NOT = ZEROES)                                
+              PERFORM 3150-COMPUTE-INTEREST-PER-DAY THRU 3150-EXIT              
+           END-IF.                                                              
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3150-COMPUTE-INTEREST-PER-DAY.                                           
+      ******************************************************************        
+           PERFORM 3160-GET-LASTDAY-OF-MTH THRU 3160-EXIT.                      
+                                                                                
+           COMPUTE WS-INT-RAISE-PER-DAY ROUNDED =                               
+                   WS-INT-RAISE / WS-LAST-DAY.                                  
+                                                                                
+           COMPUTE WS-INT-RAISE         ROUNDED =                               
+                   WS-INT-RAISE-PER-DAY * WS-DTE-REPUD-DD.                      
+                                                                                
+       3150-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       3160-GET-LASTDAY-OF-MTH.                                                 
+      ******************************************************************        
+           STRING WS-CURR-CYM '01'                                              
+           DELIMITED BY SIZE  INTO WS-IN-DATE.                                  
+           MOVE 'LM'            TO WS-IN-OPTION.                                
+           MOVE ZEROS           TO WS-RETURN.                                   
+                                                                                
+           CALL 'AV02C001'             USING LINK-REC.                          
+                                                                                
+           MOVE WS-RET-MM     TO WS-LAST-DAY-CHAR.                              
+                                                                                
+       3160-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       3200-PROC-BP13FD69.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE FD00-NUM-SCH-ACCNT  TO FD69-NUM-HDB-REF                         
+           MOVE WS-CURR-DATE        TO FD69-DTE-TRANS.                          
+           MOVE '01'                TO FD69-DTE-TRANS-DD.                       
+           COMPUTE WS-TMP-INTRATE = WS-INT-RATE * 100.                          
+           IF  WS-PCT1 = 0                                                      
+               STRING 'I'               DELIMITED BY SIZE                       
+                      FD00-CDE-LOAN-SCH DELIMITED BY SIZE                       
+                      '-'               DELIMITED BY SIZE                       
+                      WS-PCT2           DELIMITED BY SIZE                       
+                      '.'               DELIMITED BY SIZE                       
+                      WS-PCT3           DELIMITED BY SIZE                       
+                      INTO              FD69-TXT-DESC                           
+           ELSE                                                                 
+               STRING 'I'               DELIMITED BY SIZE                       
+                      FD00-CDE-LOAN-SCH DELIMITED BY SIZE                       
+                      '-'               DELIMITED BY SIZE                       
+                      WS-PCT1           DELIMITED BY SIZE                       
+                      WS-PCT2           DELIMITED BY SIZE                       
+                      '.'               DELIMITED BY SIZE                       
+                      WS-PCT3           DELIMITED BY SIZE                       
+                      INTO              FD69-TXT-DESC                           
+           END-IF.                                                              
+                                                                                
+                                                                                
+           MOVE WS-INT-RAISE      TO FD69-AMT-INST-LOAN                         
+                                     FD69-AMT-TOTL.                             
+           MOVE 'D'               TO FD69-CDE-CR-DR.                            
+           MOVE 'SM'              TO FD69-CDE-JR-TYP                            
+           MOVE WS-CURR-MM        TO FD69-DTE-JR-MM.                            
+           MOVE WS-CURR-YY        TO FD69-DTE-JR-YY.                            
+           MOVE '62'              TO FD69-CDE-TRANS-TYP.                        
+           MOVE 'IT'              TO FD69-CDE-TRANS-POSTNG.                     
+           MOVE SPACES            TO FD69-CDE-BO.                               
+           MOVE FD00-CDE-LOAN-SCH TO FD69-CDE-LOAN-SCH                          
+           MOVE FD00-CDE-INT      TO FD69-CDE-INT.                              
+           IF FD00-CDE-LOAN-SCH = 'M'                                           
+              MOVE FD00-NUM-LOAN-REPYMT-PERIOD                                  
+                                  TO FD69-NUM-LOAN-REPYMT-PERIOD                
+           END-IF.                                                              
+           MOVE WS-TMP-INTRATE    TO FD69-PCT-INT-RATE.                         
+           MOVE FD00-AMT-LOAN-BAL TO FD69-AMT-LOAN-BAL.                         
+           MOVE FD00-NUM-REGN     TO FD69-NUM-REGN.                             
+                                                                                
+           WRITE BP13FD69-REC.                                                  
+           ADD 1 TO WS-CNT-FD69-WRT.                                            
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       3300-PROC-BP13F125.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE SPACES              TO BP13F125-CASHTRAN.                       
+           INITIALIZE                  BP13F125-CASHTRAN.                       
+                                                                                
+           MOVE FD00-NUM-REGN       TO F125-NUM-REGN.                           
+           MOVE WS-TMP-DATE         TO F125-DTE-POST                            
+                                       F125-DTE-TRANS.                          
+           MOVE ZEROES              TO F125-COUNT-HISTORY.                      
+           MOVE FD00-NUM-SCH-ACCNT  TO F125-NUM-SCH-ACCT.                       
+                                                                                
+           COMPUTE WS-TMP-INTRATE = WS-INT-RATE * 100.                          
+           IF  WS-PCT1 = 0                                                      
+               STRING 'I'               DELIMITED BY SIZE                       
+                      FD00-CDE-LOAN-SCH DELIMITED BY SIZE                       
+                      '-'               DELIMITED BY SIZE                       
+                      WS-PCT2           DELIMITED BY SIZE                       
+                      '.'               DELIMITED BY SIZE                       
+                      WS-PCT3           DELIMITED BY SIZE                       
+                      INTO              F125-NUM-RECPT-JRNO                     
+           ELSE                                                                 
+               STRING 'I'               DELIMITED BY SIZE                       
+                      FD00-CDE-LOAN-SCH DELIMITED BY SIZE                       
+                      '-'               DELIMITED BY SIZE                       
+                      WS-PCT1           DELIMITED BY SIZE                       
+                      WS-PCT2           DELIMITED BY SIZE                       
+                      '.'               DELIMITED BY SIZE                       
+                      WS-PCT3           DELIMITED BY SIZE                       
+                      INTO              F125-NUM-RECPT-JRNO                     
+           END-IF.                                                              
+                                                                                
+           MOVE WS-INT-RAISE        TO F125-AMT-RECEIPT                         
+                                       F125-AMT-INTEREST.                       
+                                                                                
+           MOVE FD00-CDE-LOAN-SCH   TO F125-NUM-LOAN-SCH.                       
+           MOVE 'D'                 TO F125-CDE-CRDR.                           
+           MOVE '62'                TO F125-CDE-TRANS-TYPE.                     
+           MOVE 'IT'                TO F125-CDE-PAYMENT-TYPE.                   
+           MOVE SPACES              TO F125-CDE-BO.                             
+                                                                                
+           WRITE BP13F125-CASHTRAN.                                             
+           ADD 1 TO WS-CNT-F125-WRT.                                            
+                                                                                
+       3300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       4000-PROC-BP13KD65.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE WS-CURR-CC        TO KD65-DTE-INT-CC.                           
+           MOVE WS-CURR-YY        TO KD65-DTE-INT-YY.                           
+           MOVE WS-CURR-MM        TO KD65-DTE-INT-MM.                           
+                                                                                
+           REWRITE BP13KD65-REC.                                                
+           IF KD65-STATUS = 0                                                   
+              ADD 1 TO WS-CNT-UPD-KD65                                          
+           ELSE                                                                 
+              DISPLAY 'REWRITE FAILED FOR BP13KD65 ' KD65-CDE-FILEID            
+                      'STATUS IS ' KD65-STATUS                                  
+           END-IF.                                                              
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       7000-PRINT-REPORT.                                                       
+      ****************************************************************          
+                                                                                
+           IF WS-LINE > 50                                                      
+              ADD 1 TO WS-PAGE                                                  
+              MOVE WS-PAGE TO LC03-PRT-PAGE                                     
+              WRITE BP13LC03-REC FROM LC03-PR-HEAD-01  AFTER PAGE               
+              WRITE BP13LC03-REC FROM LC03-PR-HEAD-02  AFTER 2                  
+              WRITE BP13LC03-REC FROM LC03-PR-HEAD-03  AFTER 2                  
+              WRITE BP13LC03-REC FROM LC03-PR-HEAD-04                           
+              MOVE SPACES TO BP13LC03-REC                                       
+              WRITE BP13LC03-REC                                                
+              MOVE  5 TO WS-LINE                                                
+           END-IF.                                                              
+                                                                                
+           MOVE FD00-NUM-REGN          TO LC03-REGN-NO.                         
+           MOVE FD00-NUM-SCH-ACCNT     TO LC03-SCH-ACCT.                        
+           MOVE FD00-CDE-LOAN-SCH      TO LC03-CDE-LOAN-SCH.                    
+           MOVE 'CDE-LOAN-SCH NOT "P"' TO LC03-REMARKS.                         
+                                                                                
+           ADD 1                       TO WS-SNO.                               
+           MOVE WS-SNO                 TO LC03-PRT-SNO.                         
+           WRITE BP13LC03-REC          FROM LC03-PR-DTL.                        
+           ADD 1                       TO WS-LINE.                              
+                                                                                
+       7000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       9999-WRAP-UP.                                                            
+      ******************************************************************        
+                                                                                
+           DISPLAY  SPACES.                                                     
+           DISPLAY '***********    CONTROL   COUNTS   ***********'.             
+           DISPLAY 'PROGRAM-ID : BP13CC03'.                                     
+           DISPLAY '============================================='.             
+           DISPLAY  SPACES.                                                     
+           DISPLAY 'NO. OF BP13FD00 RECS READ                   : '             
+                                                WS-CNT-FD00-RD.                 
+           DISPLAY 'NO. OF BP13FD00 RECS BYPASS TOTAL           : '             
+                                                WS-CNT-FD00-BYP.                
+           DISPLAY 'NO. OF BP13FD69 RECS WRITTEN                : '             
+                                                WS-CNT-FD69-WRT.                
+           DISPLAY 'NO. OF BP13F125 RECS WRITTEN                : '             
+                                                WS-CNT-F125-WRT.                
+           DISPLAY 'NO. OF BP13KD65 RECS UPDATED                : '             
+                                                WS-CNT-UPD-KD65.                
+                                                                                
+           CLOSE  BP13FD00                                                      
+                  BP13F125                                                      
+                  SY02F001                                                      
+                  BP13KD65                                                      
+                  BP13FD69                                                      
+                  BP13LC03.                                                     
+                                                                                
+           IF  FD00-STATUS NOT = 00                                             
+               DISPLAY 'ERROR CLOSE BP13FD00 : ' FD00-STATUS                    
+               MOVE FD00-STATUS TO RETURN-CODE                                  
+           END-IF.                                                              
+                                                                                
+           IF  KD65-STATUS NOT = 00                                             
+               DISPLAY 'ERROR CLOSE BP13KD65 : ' KD65-STATUS                    
+               MOVE KD65-STATUS TO RETURN-CODE                                  
+           END-IF.                                                              
+                                                                                
+           MOVE RETURN-CODE TO WS-RETURN-CODE.                                  
+                                                                                
+           IF WS-RETURN-CODE NOT = ZERO                                         
+              MOVE WS-RETURN-CODE TO RETURN-CODE                                
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+      * ------------  END OF SOURCE  ------------ *                             
+

@@ -1,0 +1,165 @@
+//BP13A651 JOB (BP13P),'BP13A651',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//         NOTIFY=CSD0071                                                       
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//*====================================================================         
+//* IMPORTANT NOTE :                                                            
+//* THIS JCL IS FOR CONFIRMATION LETTERS (BTO/SBF)                              
+//*   -WRITING A RECORD INTO DB2 TABLE BASED ON TYPE                            
+//*====================================================================         
+//* CHG-REF#  BY  DDMMCCYY DESCRIPTION                                          
+//* -------- ---- -------- --------------------------------------------         
+//* BP138342 AM25 03032022 NEW JOB STREAM                                       
+//*====================================================================         
+//*--------------------------------------------------------------------         
+//* DELETE SEQUENTIAL FILE                                                      
+//*--------------------------------------------------------------------         
+//STEP01   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+     DEL (BP13.F730.MATURERQ.A651)                                              
+     DEL (BP13.REPORT.BP13A651.L10ZA)                                           
+     DEL (BP13.REPORT.BP13A651.L10ZB)                                           
+     DEL (BP13.REPORT.BP13A651.L10ZC)                                           
+     IF MAXCC < 12 THEN                                                         
+        SET MAXCC = 0                                                           
+//*--------------------------------------------------------------------         
+//* REPRO VSAM FILE TO SEQUENTIAL FILE                                          
+//*--------------------------------------------------------------------         
+//STEP02   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.K730.MATURERQ,DISP=SHR                                   
+//OUTPUT1  DD DSN=BP13.F730.MATURERQ.A651,DISP=(NEW,CATLG),                     
+//            DCB=(BLKSIZE=27500,LRECL=500,RECFM=FB),                           
+//            SPACE=(CYL,(80,10),RLSE),DATACLAS=MULTIVOL                        
+//SYSIN    DD *                                                                 
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                       
+//*--------------------------------------------------------------------         
+//* OMIT CANCELLED APPLICATIONS                                                 
+//*--------------------------------------------------------------------         
+//STEP03   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F500.NT,DISP=SHR                                         
+//SORTOUT  DD DSN=&&BP13F500,DISP=(NEW,PASS),                                   
+//            DCB=(BLKSIZE=27500,LRECL=500,RECFM=FB),                           
+//            UNIT=SYSDA,SPACE=(CYL,(80,10),RLSE)                               
+//SYSIN    DD *                                                                 
+    SORT FIELDS=(123,8,A,29,2,A),FORMAT=CH                                      
+    OMIT COND=(260,1,CH,EQ,C'C')                                                
+//*--------------------------------------------------------------------         
+//* SELECT LAST RECORD GEN FOR EACH APPL                                        
+//*--------------------------------------------------------------------         
+//STEP04   EXEC PGM=BP13CB14,COND=(0,NE)                                        
+//BP13F740 DD DSN=&&BP13F500,DISP=(OLD,DELETE)                                  
+//P13F740B DD DSN=&&F730LAST,DISP=(,PASS),                                      
+//            UNIT=(SYSDA,3),SPACE=(CYL,(48,10),RLSE),                          
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*--------------------------------------------------------------------         
+//* UPDATE BALLOT CHANCES INTO BP13K730                                         
+//*--------------------------------------------------------------------         
+//STEP05   EXEC PGM=BP13CB19,COND=(0,NE)                                        
+//BP13F730 DD DSN=&&F730LAST,DISP=(OLD,PASS)                                    
+//BP13K730 DD DSN=BP13.K730.MATURERQ,DISP=SHR                                   
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*--------------------------------------------------------------------         
+//* UPDATE BALLOT HOUSEHOLD INTO BP13K730                                       
+//*--------------------------------------------------------------------         
+//STEP06   EXEC PGM=BP13CF63,COND=(0,NE)                                        
+//BP13F730 DD DSN=&&F730LAST,DISP=(OLD,PASS)                                    
+//BP13K730 DD DSN=BP13.K730.MATURERQ,DISP=SHR                                   
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*--------------------------------------------------------------------         
+//* REFORMAT F730 TO GET DTE-DEBAR FOR MATCHING REGNO FROM BP13CH14             
+//*--------------------------------------------------------------------         
+//STEP07   EXEC SORT,COND=(0,NE)                                                
+//SORTJNF1 DD DSN=&&F730LAST,DISP=(OLD,PASS)                                    
+//SORTJNF2 DD DSN=BP13.FH14.BP13A601,DISP=SHR                                   
+//OUTPUT   DD DSN=&&F730,DISP=(NEW,PASS),                                       
+//            UNIT=SYSDA,SPACE=(CYL,(50,5),RLSE),                               
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=0)                                
+//SYSIN DD *                                                                    
+   JOINKEYS FILE=F1,FIELDS=(123,8,A)                                            
+   JOINKEYS FILE=F2,FIELDS=(1,8,A)                                              
+   JOIN UNPAIRED,F1                                                             
+   REFORMAT FIELDS=(F2:35,10,F1:11,490)                                         
+   OPTION COPY                                                                  
+   OUTFILE FNAMES=OUTPUT                                                        
+/*                                                                              
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*--------------------------------------------------------------------         
+//* GENERATE CONFIRMATION LETTERS INTO DB2 TABLE                                
+//*--------------------------------------------------------------------         
+//STEP08A  EXEC PGM=IKJEFT01,DYNAMNBR=20,COND=(0,NE)                            
+//BP13F730 DD DSN=&&F730,DISP=(OLD,DELETE)                                      
+//BP13K730 DD DSN=BP13.K730.MATURERQ,DISP=SHR,                                  
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//BP13K757 DD DSN=BP13.K757.BTO,DISP=SHR,                                       
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//BP13K813 DD DSN=BP13.K813.BTOBE,DISP=SHR                                      
+//P13L10ZA DD DSN=BP13.REPORT.BP13A651.L10ZA,DISP=(NEW,CATLG),                  
+//            DCB=(LRECL=133,RECFM=FBA,BLKSIZE=27930),                          
+//            SPACE=(CYL,(50,5),RLSE)                                           
+//P13L10ZB DD DSN=BP13.REPORT.BP13A651.L10ZB,DISP=(NEW,CATLG),                  
+//            DCB=(LRECL=133,RECFM=FBA,BLKSIZE=27930),                          
+//            SPACE=(CYL,(50,5),RLSE)                                           
+//P13L10ZC DD DSN=BP13.REPORT.BP13A651.L10ZC,DISP=(NEW,CATLG),                  
+//            DCB=(LRECL=133,RECFM=FBA,BLKSIZE=27930),                          
+//            SPACE=(CYL,(50,5),RLSE)                                           
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+BP13A651                                                                        
+//SYSTSIN  DD *                                                                 
+ DSN SYSTEM(DSN)                                                                
+ RUN PROGRAM(BP13C10Z) PLAN(BP13PCC) -                                          
+     LIB('BP13.BATCH.LOADCOB')                                                  
+ END                                                                            
+//*-----------------------------------------------------------------            
+//* PRINT L10ZA REPORT - INSERTED                                               
+//*-----------------------------------------------------------------            
+//STEP08B  EXEC PGM=IEBGENER,COND=(0,NE)                                        
+//SYSUT1   DD DSN=BP13.REPORT.BP13A651.L10ZA,DISP=SHR                           
+//SYSUT2   DD SYSOUT=8,DEST=IOM8                                                
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*-----------------------------------------------------------------            
+//* PRINT L10ZB REPORT - EXCEPTION                                              
+//*-----------------------------------------------------------------            
+//STEP08C  EXEC PGM=IEBGENER,COND=(0,NE)                                        
+//SYSUT1   DD DSN=BP13.REPORT.BP13A651.L10ZB,DISP=SHR                           
+//SYSUT2   DD SYSOUT=8,DEST=IOM8                                                
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*-----------------------------------------------------------------            
+//* PRINT L10ZC REPORT - UPDATED                                                
+//*-----------------------------------------------------------------            
+//STEP08D  EXEC PGM=IEBGENER,COND=(0,NE)                                        
+//SYSUT1   DD DSN=BP13.REPORT.BP13A651.L10ZC,DISP=SHR                           
+//SYSUT2   DD SYSOUT=8,DEST=IOM8                                                
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*--------------------------------------------------------------------         
+//* GENERATE REPORT BP13L037                                                    
+//*--------------------------------------------------------------------         
+//STEP09   EXEC SAS,COND=(0,NE)                                                 
+//WORK     DD  UNIT=SYSDA,SPACE=(CYL,(60,20))                                   
+//BP13F730 DD DSN=&&F730LAST,DISP=(OLD,DELETE)                                  
+//BP13L037 DD SYSOUT=*                                                          
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13S037),DISP=SHR                             
+//*--------------------------------------------------------------------         
+//*                      END OF JOB                                             
+//*--------------------------------------------------------------------         
+

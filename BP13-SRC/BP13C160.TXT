@@ -1,0 +1,829 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID. BP13C160.                                                    
+      *AUTHOR. SIA.                                                             
+      *DATE-WRITTEN : 03/10/97.                                                 
+      * ============================================================== *        
+      * SYSTEM OF COMMITMENT (BP13)                                    *        
+      * ============================================================== *        
+      *                                                                *        
+      * SIMILAR PGM  : BP13C164 - FOR BO TO VERIFY RDB MOVE-IN-DATE    *        
+      *                                                                *        
+      *  OBJECTIVE  1: PROGRAM TO UPDATE RDB MOVE-IN-DATE TO BP13F558  *        
+      *                FOR 5-YR CHECK ON TRANSFER CASES.               *        
+      *                                                                *        
+      *             2: BASED ON TRANSFER CASES, RE-COMPUTE MTH-RESIDE  *        
+      *                BASED ON MOVE-IN-DATE, IF SMALLER, UPDATE MTH-  *        
+      *                RESIDE.                                         *        
+      *                                                                *        
+      * CHGE ID  OIC  DATE   DESCRIPTION                               *        
+      * -------  ---  ----   -----------                               *        
+      * BP130445 SIA  031197 NEW PGM                                   *        
+      * BP130445 LSB  160398 - MTH-RESIDE-TR < 120, UPD TO MTH-RESIDE  *        
+      * BP130494 LSB  060698 - DO NOT ADD SUBLET, ADD IN BP13U739      *        
+      * BP130494 LSB  060698 -(MTH-RESIDE-TR - SUBLET), DO NOT MINUS   *        
+      *                        IN BP13U739                             *        
+      * BP130542 LSB  120898 -DIVORCE 10-YR CHK DTE-APPL  AFTER 1/9/97*         
+      * BP130630 NOR  140199 -CHGE F715 F716 EXPAND TO 350             *        
+      * BP130715 NOR  040599 -IF THE DIFFERENCE OF LAST MOVE OUT DATE &*        
+      *                       PREVIOUS MOVE IN  DATE IS < 3 MONTHS FOR *        
+      *                       MULTIPLE REC OF F716, SHOW THE LAST MOVE *        
+      *                       IN DATE IN THE REPORT OTHERWISE SHOW THE *        
+      *                       PREVIOUS MOVE IN DATE                    *        
+      * BP130825 SRA  060600 -INSTEAD OF WS-DTE-PREGN USED F716-DTE-REG*        
+      *                       N,REMOVED THE STMT MOVING 0 TO WS-DTE-REG*        
+      * BP130897 AKT  310700 -EXPAND F558 RECL FROM 400 TO 600         *        
+      * BP132603 JF4  281004 -CHANGE 10-YR TIMEBAR TO 5-YR             *        
+      * ============================================================== *        
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F713 ASSIGN TO BP13F713.                                  
+           SELECT BP13F716 ASSIGN TO BP13F716.                                  
+           SELECT BP13F558 ASSIGN TO BP13F558.                                  
+           SELECT P13F558A ASSIGN TO P13F558A.                                  
+           SELECT BP13L160 ASSIGN TO BP13L160.                                  
+                                                                                
+       DATA DIVISION.                                                           
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F558                                                            
+            BLOCK  CONTAINS 0 RECORDS                                           
+            RECORD CONTAINS 600 CHARACTERS                                      
+            RECORDING MODE IS F                                                 
+            LABEL RECORDS ARE STANDARD.                                         
+                                                                                
+       COPY BP13F558.                                                           
+                                                                                
+       FD   BP13F713                                                            
+            BLOCK  CONTAINS 0 RECORDS                                           
+            RECORD CONTAINS 20 CHARACTERS                                       
+            RECORDING MODE IS F                                                 
+            LABEL RECORDS ARE STANDARD.                                         
+                                                                                
+       COPY BP13F713.                                                           
+                                                                                
+       FD   BP13F716                                                            
+            BLOCK  CONTAINS 0 RECORDS                                           
+            RECORD CONTAINS 350 CHARACTERS                                      
+            RECORDING MODE IS F                                                 
+            LABEL RECORDS ARE STANDARD.                                         
+                                                                                
+       COPY BP13F716.                                                           
+                                                                                
+       FD   BP13L160                                                            
+            BLOCK  CONTAINS 0 RECORDS                                           
+            RECORD CONTAINS 132 CHARACTERS                                      
+            RECORDING MODE IS F                                                 
+            LABEL RECORDS ARE STANDARD.                                         
+                                                                                
+       01   L160-PRINT-REC         PIC X(132).                                  
+                                                                                
+       FD   P13F558A                                                            
+            BLOCK  CONTAINS 0 RECORDS                                           
+            RECORD CONTAINS 600 CHARACTERS                                      
+            RECORDING MODE IS F                                                 
+            LABEL RECORDS ARE STANDARD.                                         
+                                                                                
+       01   P13F558A-REC            PIC X(600).                                 
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F716-READ        PIC 9(8)    VALUE ZERO.                      
+           05  WS-F558-READ        PIC 9(8)    VALUE ZERO.                      
+           05  WS-MATCH            PIC 9(8)    VALUE ZERO.                      
+           05  WS-F716-NOTMATCH    PIC 9(8)    VALUE ZERO.                      
+           05  WS-F558-NOTMATCH    PIC 9(8)    VALUE ZERO.                      
+           05  WS-F558-STORED      PIC 9(8)    VALUE ZERO.                      
+           05  WS-F558-WRITE       PIC 9(8)    VALUE ZERO.                      
+           05  WS-PAGE             PIC 9(8)    VALUE ZERO.                      
+           05  WS-LINE             PIC 9(8)    VALUE 60.                        
+           05  WS-SNO              PIC 9(8)    VALUE ZERO.                      
+           05  WS-MULTIPLE-F716    PIC 9(2)    VALUE ZERO.                      
+           05  WS-PREV-F716-SCH    PIC X(9)    VALUE SPACES.                    
+                                                                                
+                                                                                
+       77  WS-EOF-F716             PIC X(3).                                    
+           88  EOF-OF-F716                     VALUE 'YES'.                     
+       77  WS-EOF-F558             PIC X(3).                                    
+           88  EOF-OF-F558                     VALUE 'YES'.                     
+                                                                                
+       01  WS-F558-REC             PIC X(600)  VALUE SPACES.                    
+       01  WS-CHK-MONTH            PIC 9(3)    VALUE ZEROES.                    
+                                                                                
+       01  WS-F558-KEY-FLD.                                                     
+           05  WS-F558-REGN        PIC X(8)    VALUE SPACES.                    
+           05  WS-F558-UIN         PIC X(9)    VALUE SPACES.                    
+                                                                                
+       01  WS-F716-KEY-FLD.                                                     
+           05  WS-F716-REGN        PIC X(8)    VALUE SPACES.                    
+           05  WS-F716-UIN         PIC X(9)    VALUE SPACES.                    
+                                                                                
+       01  WS-SYS-DATE.                                                         
+           05  WS-YYMMDD.                                                       
+               10  WS-YY                  PIC 9(4)  VALUE ZERO.                 
+               10  WS-MM                  PIC 9(2)  VALUE ZERO.                 
+               10  WS-DD                  PIC 9(2)  VALUE ZERO.                 
+                                                                                
+       01  WS-F558-QTR.                                                         
+           05  WS-F558-YR                 PIC 9(4)  VALUE ZERO.                 
+           05  WS-F558-MM                 PIC 9(2)  VALUE ZERO.                 
+                                                                                
+       01  WS-SYS-QTR-X.                                                        
+           05  WS-QTR-YR                  PIC 9(4)  VALUE ZERO.                 
+           05  WS-QTR-MM                  PIC 9(2)  VALUE ZERO.                 
+           05  WS-QTR-DD                  PIC 9(2)  VALUE ZERO.                 
+       01  WS-SYS-QTR REDEFINES WS-SYS-QTR-X PIC 9(8).                          
+                                                                                
+                                                                                
+       01  WS-UNFORMATTED-DTE.                                                  
+           05  WS-FMT-CCYY                PIC 9(4)  VALUE ZEROES.               
+           05  WS-FMT-MM                  PIC 9(2)  VALUE ZEROES.               
+           05  WS-FMT-DD                  PIC X(2)  VALUE SPACES.               
+                                                                                
+       01  WS-FORMATTED-DTE.                                                    
+           05  WS-FMT-DD                  PIC X(2)  VALUE SPACES.               
+           05  FILLER                     PIC X(1)  VALUE '/'.                  
+           05  WS-FMT-MM                  PIC X(2)  VALUE SPACES.               
+           05  FILLER                     PIC X(1)  VALUE '/'.                  
+           05  WS-FMT-CCYY                PIC X(4)  VALUE SPACES.               
+                                                                                
+       01  WS-DTE-MOVEIN                  PIC X(08) VALUE SPACES.               
+       01  WS-DTE-MOVEOUT                 PIC X(08) VALUE SPACES.               
+       01  WS-PREVIOUS-MOVE-DATE.                                               
+           05  WS-DTE-PMOVEIN             PIC X(08) VALUE SPACES.               
+           05  WS-DTE-PMOVEOUT            PIC X(08) VALUE SPACES.               
+       01  WS-LAST-MOVE-DATE.                                                   
+           05  WS-DTE-CMOVEIN             PIC X(08) VALUE SPACES.               
+           05  WS-DTE-CMOVEOUT            PIC X(08) VALUE SPACES.               
+       01  WS-MOVE-IN.                                                          
+           05  WS-YY-MOVE-IN              PIC 9(04) VALUE ZEROS.                
+           05  WS-MM-MOVE-IN              PIC 9(02) VALUE ZEROS.                
+       01  WS-MOVE-OUT.                                                         
+           05  WS-YY-MOVE-OUT             PIC 9(04) VALUE ZEROS.                
+           05  WS-MM-MOVE-OUT             PIC 9(02) VALUE ZEROS.                
+       01  WS-DIFFERENCE                  PIC 9(05) VALUE ZEROS.                
+       01  WS-MATCH-SCHEME-FLAG           PIC X(01).                            
+           88  WS-MATCH-SCHEME            VALUE 'Y'.                            
+       01  WS-DTE-REGN                    PIC X(08) VALUE SPACES.               
+       01  WS-DTE-PREGN                   PIC X(08) VALUE SPACES.               
+       01  WS-DISPLAY                     PIC X(80).                            
+       01  WS-LAPSE-CTR                   PIC 9(08)  VALUE ZEROS.               
+       01  WS-LAPSE-FLAG                  PIC X(01).                            
+           88  WS-LAPSE                   VALUE 'Y'.                            
+       01  WS-HDBREF-SYS-GRP              PIC X(3).                             
+           88  RSL-TRF                    VALUE '011'.                          
+           88  SMS-TRF                    VALUE '101'.                          
+           88  SMS-RSL                    VALUE '110'.                          
+           88  SMS-RSL-TRF                VALUE '111'.                          
+       01  WS-HDBREF-SYS REDEFINES WS-HDBREF-SYS-GRP.                           
+           05  WS-HDBREF-SMS              PIC X(1).                             
+           05  WS-HDBREF-RSL              PIC X(1).                             
+           05  WS-HDBREF-TRF              PIC X(1).                             
+       01  WS-MTHRES-LONG                 PIC X(3).                             
+       01  WS-MTHRES-LONG-N REDEFINES WS-MTHRES-LONG                            
+                                          PIC 9(3).                             
+                                                                                
+      *---------------------------*                                             
+      *    CTRL LIST FORMAT       *                                             
+      *---------------------------*                                             
+       01  L160-HDR-1.                                                          
+           05  FILLER               PIC X(14)  VALUE 'BP13L160'.                
+           05  FILLER               PIC X(08)  VALUE 'HDB3'.                    
+           05  FILLER               PIC X(18)  VALUE SPACES.                    
+           05  FILLER               PIC X(39)  VALUE                            
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER               PIC X(18)  VALUE SPACES.                    
+           05  FILLER               PIC X(07)  VALUE 'DATE: '.                  
+           05  L160-DATE            PIC X(10)  VALUE SPACES.                    
+           05  FILLER               PIC X(03)  VALUE SPACES.                    
+           05  FILLER               PIC X(07)  VALUE 'PAGE: '.                  
+           05  L160-PAGE            PIC ZZZZ9.                                  
+                                                                                
+       01  L160-HDR-2.                                                          
+           05  FILLER               PIC X(31)  VALUE SPACES.                    
+           05  FILLER               PIC X(57)  VALUE                            
+           'REPORT ON 5-YR TIME BAR FOR EX-LESSEE OF TRANSFER SYSTEM '.         
+           05  FILLER               PIC X(44)  VALUE SPACES.                    
+                                                                                
+       01  L160-HDR-3.                                                          
+           05  FILLER               PIC X(45)  VALUE                            
+               'SNO         REGN        NRIC'.                                  
+           05  FILLER               PIC X(02)  VALUE SPACES.                    
+                                                                                
+       01  L160-HDR-4.                                                          
+           05  FILLER               PIC X(36)  VALUE                            
+               '------------  S M S --------------  '.                          
+           05  FILLER               PIC X(34)  VALUE                            
+               '--- R  E  S  A  L  E  ---  -------'.                            
+           05  FILLER               PIC X(55)  VALUE                            
+             '------------- T R A N S F E R -------------------------'.         
+                                                                                
+       01  L160-HDR-5.                                                          
+           05  FILLER               PIC X(34)  VALUE                            
+               'HDB        SALES      DATE FLAT   '.                            
+           05  FILLER               PIC X(34)  VALUE                            
+               'HDB         FILE    DATE       '.                               
+           05  FILLER               PIC X(59)  VALUE                            
+            ' HDB       SL  SALE-EFF          MOVE-IN    APPLN    MTH'.         
+           05  FILLER               PIC X(20)  VALUE                            
+             ' REMARK'.                                                         
+                                                                                
+       01  L160-HDR-6.                                                          
+           05  FILLER               PIC X(34)  VALUE                            
+               'REF NO.   TYPE  MTH-RES  SOLD    '.                             
+           05  FILLER               PIC X(34)  VALUE                            
+               'REF NO.   STAT  EFF-SALE MTH  DIVR'.                            
+           05  FILLER               PIC X(60)  VALUE                            
+            ' REF NO.   TY   DATE      SUBLET   DTE      DTE      RES'.         
+                                                                                
+       01  L160-HDR-7.                                                          
+           05  FILLER               PIC X(34)  VALUE ALL '-'.                   
+           05  FILLER               PIC X(02)  VALUE SPACES.                    
+           05  FILLER               PIC X(26)  VALUE ALL '-'.                   
+           05  FILLER               PIC X(02)  VALUE SPACES.                    
+           05  FILLER               PIC X(55)  VALUE ALL '-'.                   
+                                                                                
+       01  L160-DTL-1.                                                          
+           05  L160-SNO             PIC ZZZZ.                                   
+           05  FILLER               PIC X(08)  VALUE SPACES.                    
+           05  L160-REGN            PIC X(08).                                  
+           05  FILLER               PIC X(03)  VALUE SPACES.                    
+           05  L160-NRIC            PIC X(09).                                  
+           05  FILLER               PIC X(100) VALUE SPACES.                    
+                                                                                
+       01  L160-DTL-2.                                                          
+           05  L160-NUM-HDB-REF-SMS      PIC X(11).                             
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+           05  L160-CDE-SALES-TYPE-SMS   PIC X(02).                             
+           05  FILLER                    PIC X(02)  VALUE SPACES.               
+           05  L160-MTH-RESIDE-SMS       PIC 9(03).                             
+           05  FILLER                    PIC X(02)  VALUE SPACES.               
+           05  L160-DTE-FLAT-SOLD-SMS    PIC X(10).                             
+                                                                                
+           05  FILLER                    PIC X(02)  VALUE SPACES.               
+           05  L160-NUM-HDB-REF-RSL      PIC X(11).                             
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+           05  L160-CDE-FILE-STATUS-RSL  PIC X(03).                             
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+           05  L160-DTE-RESALE-EFF       PIC X(10).                             
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+           05  L160-MTH-RESIDE-RSL       PIC 9(03).                             
+           05  FILLER                    PIC X(03)  VALUE SPACES.               
+           05  L160-NUM-DIVORCE-TR       PIC X(01).                             
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+           05  L160-NUM-HDB-REF-TR       PIC X(11).                             
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+           05  L160-NUM-SALES-TYPE-TR    PIC X(02).                             
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+           05  L160-DTE-EFF-SALE-TR      PIC X(10).                             
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+           05  L160-NUM-SUBLET-TR        PIC 9(03).                             
+           05  FILLER                    PIC X(02)  VALUE SPACES.               
+           05  L160-DTE-MOVE-IN-TR       PIC X(10).                             
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+           05  L160-DTE-APPLN-TR         PIC X(10).                             
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+           05  L160-NUM-MTH-RESIDE-TR    PIC ZZZ.                               
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+           05  L160-REMARK               PIC X(10).                             
+           05  FILLER                    PIC X(01)  VALUE SPACES.               
+                                                                                
+                                                                                
+                                                                                
+      ********************                                                      
+       PROCEDURE DIVISION.                                                      
+      ********************                                                      
+                                                                                
+      *--------------*                                                          
+       000-MAIN-LOGIC.                                                          
+      *--------------*                                                          
+                                                                                
+           PERFORM 100-INITIALIZATION THRU 100-EXIT.                            
+                                                                                
+           PERFORM 200-READ-F716      THRU 200-EXIT.                            
+                                                                                
+           PERFORM 300-READ-F558      THRU 300-EXIT.                            
+                                                                                
+           PERFORM 400-PROCESS        THRU 400-EXIT                             
+                   UNTIL WS-F716-KEY-FLD = HIGH-VALUE                           
+                    AND  WS-F558-KEY-FLD = HIGH-VALUE.                          
+                                                                                
+           PERFORM 900-FINALIZATION   THRU 900-EXIT.                            
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *------------------*                                                      
+       100-INITIALIZATION.                                                      
+      *------------------*                                                      
+                                                                                
+           OPEN INPUT  BP13F716                                                 
+                       BP13F558                                                 
+                       BP13F713                                                 
+                OUTPUT P13F558A                                                 
+                       BP13L160.                                                
+                                                                                
+           MOVE 'NO' TO WS-EOF-F716.                                            
+           MOVE 'NO' TO WS-EOF-F558.                                            
+                                                                                
+           READ BP13F713 AT END                                                 
+                DISPLAY 'BP13F713-REC EMPTY'                                    
+                PERFORM  900-FINALIZATION THRU 900-EXIT.                        
+                                                                                
+           IF F713-CDE-COHORT = 'OP'                                            
+              MOVE 60  TO WS-CHK-MONTH                                          
+           ELSE                                                                 
+              MOVE 60  TO WS-CHK-MONTH                                          
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8)  TO  WS-YYMMDD.                      
+           DISPLAY 'WS-SYS-DATE= ' WS-SYS-DATE.                                 
+           MOVE WS-SYS-DATE(1:4) TO WS-QTR-YR.                                  
+           EVALUATE TRUE                                                        
+           WHEN  WS-MM >= 1 AND WS-MM <= 3                                      
+                 MOVE  3 TO WS-QTR-MM                                           
+           WHEN  WS-MM >= 4 AND WS-MM <= 6                                      
+                 MOVE  6 TO WS-QTR-MM                                           
+           WHEN  WS-MM >= 7 AND WS-MM <= 9                                      
+                 MOVE  9 TO WS-QTR-MM                                           
+           WHEN  WS-MM >= 10 AND WS-MM <= 12                                    
+                 MOVE 12 TO WS-QTR-MM                                           
+           END-EVALUATE.                                                        
+                                                                                
+           STRING WS-SYS-DATE(7:2) '/'                                          
+                  WS-SYS-DATE(5:2) '/'                                          
+                  WS-SYS-DATE(1:4)                                              
+                  DELIMITED BY SIZE INTO L160-DATE.                             
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------*                                                           
+       200-READ-F716.                                                           
+      *-------------*                                                           
+                                                                                
+           READ BP13F716 AT END                                                 
+                MOVE 'YES'      TO WS-EOF-F716                                  
+                MOVE HIGH-VALUES TO WS-F716-KEY-FLD                             
+                GO TO 200-EXIT                                                  
+           END-READ.                                                            
+                                                                                
+            ADD 1 TO WS-F716-READ.                                              
+            MOVE F716-NUM-REGN  TO WS-F716-REGN.                                
+            MOVE F716-NUM-NRIC  TO WS-F716-UIN.                                 
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------*                                                           
+       300-READ-F558.                                                           
+      *-------------*                                                           
+                                                                                
+           READ BP13F558 AT END                                                 
+                MOVE 'YES'      TO WS-EOF-F558                                  
+                MOVE HIGH-VALUES TO WS-F558-KEY-FLD                             
+                GO TO 300-EXIT                                                  
+           END-READ.                                                            
+                                                                                
+           ADD 1 TO WS-F558-READ.                                               
+            MOVE F558-NUM-REGN  TO WS-F558-REGN.                                
+            MOVE F558-NUM-NRIC  TO WS-F558-UIN.                                 
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *****************************************************************         
+      *  MATCH  BY REGNNO AND NRIC                                    *         
+      *****************************************************************         
+                                                                                
+      *-----------*                                                             
+       400-PROCESS.                                                             
+      *-----------*                                                             
+                                                                                
+           MOVE ZEROS TO WS-MULTIPLE-F716.                                      
+           MOVE SPACES TO WS-PREV-F716-SCH.                                     
+           IF WS-F716-KEY-FLD = WS-F558-KEY-FLD                                 
+              ADD 1   TO WS-MATCH                                               
+              MOVE ZEROS   TO  WS-DTE-PMOVEIN WS-DTE-PMOVEOUT                   
+                               WS-DTE-CMOVEIN WS-DTE-CMOVEOUT                   
+                               WS-DTE-MOVEIN  WS-DTE-MOVEOUT                    
+              MOVE 'N'     TO  WS-MATCH-SCHEME-FLAG                             
+              MOVE SPACES  TO  WS-DTE-REGN WS-DISPLAY                           
+              MOVE 'N'                   TO  WS-LAPSE-FLAG                      
+              PERFORM 420-CHECK-LAPSE-MOVEIN-DATE THRU 420-EXIT                 
+                 UNTIL WS-F716-KEY-FLD NOT = WS-F558-KEY-FLD                    
+                 OR  WS-F716-KEY-FLD = HIGH-VALUES                              
+              PERFORM 450-CHECK-FILE-STATUS THRU 450-EXIT                       
+              IF WS-LAPSE                                                       
+                 ADD  1           TO WS-LAPSE-CTR                               
+              END-IF                                                            
+                                                                                
+              IF F558-NUM-HDB-REF-TR NOT = SPACES AND LOW-VALUES                
+                  IF F558-NUM-MTH-RESIDE-TR = SPACES                            
+                      PERFORM 480-NO-MOVE-IN-DATE THRU 480-EXIT                 
+                      PERFORM 500-PRINT-L160 THRU 500-EXIT                      
+                   END-IF                                                       
+              END-IF                                                            
+                                                                                
+              IF F558-NUM-MTH-RESIDE-SMS IS NOT NUMERIC                         
+                 MOVE ZEROS             TO  F558-NUM-MTH-RESIDE-SMS             
+              END-IF                                                            
+              IF F558-NUM-MTH-RESIDE-RSL IS NOT NUMERIC                         
+                 MOVE ZEROS             TO  F558-NUM-MTH-RESIDE-RSL             
+              END-IF                                                            
+              IF F558-NUM-MTH-RESIDE-SMS = ZEROS AND                            
+                     F558-NUM-MTH-RESIDE-RSL = ZEROS                            
+                  MOVE F558-NUM-MTH-RESIDE-TR TO F558-NUM-MTH-RESIDE            
+              ELSE                                                              
+                  PERFORM 410-UPDATE-MTHRES THRU 410-EXIT                       
+              END-IF                                                            
+                                                                                
+              ADD 1 TO WS-F558-WRITE                                            
+              WRITE P13F558A-REC FROM BP13F558-REC                              
+              PERFORM 300-READ-F558 THRU 300-EXIT                               
+           ELSE                                                                 
+               IF WS-F716-KEY-FLD  < WS-F558-KEY-FLD                            
+                   ADD 1 TO WS-F716-NOTMATCH                                    
+                   PERFORM 200-READ-F716 THRU 200-EXIT                          
+               ELSE                                                             
+                   IF F558-NUM-HDB-REF-TR NOT = SPACES AND LOW-VALUES           
+                      PERFORM 480-NO-MOVE-IN-DATE THRU 480-EXIT                 
+                      PERFORM 500-PRINT-L160 THRU 500-EXIT                      
+                   END-IF                                                       
+                                                                                
+                   ADD 1 TO WS-F558-NOTMATCH                                    
+                   WRITE P13F558A-REC FROM BP13F558-REC                         
+                   ADD 1 TO WS-F558-WRITE                                       
+                   PERFORM 300-READ-F558 THRU 300-EXIT                          
+               END-IF                                                           
+           END-IF.                                                              
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       410-UPDATE-MTHRES.                                                       
+           IF F558-NUM-MTH-RESIDE-SMS NOT NUMERIC                               
+              MOVE ZEROS TO F558-NUM-MTH-RESIDE-SMS                             
+           END-IF                                                               
+                                                                                
+           IF F558-NUM-MTH-RESIDE-RSL NOT NUMERIC                               
+              MOVE ZEROS TO F558-NUM-MTH-RESIDE-RSL                             
+           END-IF                                                               
+                                                                                
+           IF F558-NUM-MTH-RESIDE-TR NOT NUMERIC                                
+              MOVE ZEROS TO F558-NUM-MTH-RESIDE-TR                              
+           END-IF                                                               
+                                                                                
+           MOVE ZEROS TO WS-HDBREF-SYS                                          
+           IF F558-NUM-HDB-REF-SMS NOT = SPACES AND LOW-VALUES                  
+              MOVE 1 TO WS-HDBREF-SMS                                           
+           END-IF                                                               
+           IF F558-NUM-HDB-REF-RSL NOT = SPACES AND LOW-VALUES                  
+              MOVE 1 TO WS-HDBREF-RSL                                           
+           END-IF                                                               
+           IF F558-NUM-HDB-REF-TR  NOT = SPACES AND LOW-VALUES                  
+              MOVE 1 TO WS-HDBREF-TRF                                           
+           END-IF                                                               
+                                                                                
+           EVALUATE TRUE                                                        
+           WHEN RSL-TRF                                                         
+             IF F558-NUM-HDB-REF-RSL(1:9) = F558-NUM-HDB-REF-TR(1:9)            
+               IF F558-NUM-MTH-RESIDE-RSL > F558-NUM-MTH-RESIDE-TR              
+                  IF F558-NUM-MTH-RESIDE-RSL > F558-NUM-MTH-RESIDE              
+                    MOVE F558-NUM-MTH-RESIDE-RSL TO F558-NUM-MTH-RESIDE         
+                  END-IF                                                        
+               END-IF                                                           
+             END-IF                                                             
+           WHEN SMS-TRF                                                         
+             IF F558-NUM-HDB-REF-SMS(1:9) = F558-NUM-HDB-REF-TR(1:9)            
+               IF F558-NUM-MTH-RESIDE-SMS > F558-NUM-MTH-RESIDE-TR              
+                  IF F558-NUM-MTH-RESIDE-SMS > F558-NUM-MTH-RESIDE              
+                    MOVE F558-NUM-MTH-RESIDE-SMS TO F558-NUM-MTH-RESIDE         
+                  END-IF                                                        
+               END-IF                                                           
+             END-IF                                                             
+           WHEN SMS-RSL-TRF                                                     
+             IF F558-NUM-HDB-REF-SMS(1:9) = F558-NUM-HDB-REF-TR(1:9) AND        
+                F558-NUM-HDB-REF-RSL(1:9) = F558-NUM-HDB-REF-TR(1:9)            
+                MOVE LOW-VALUES TO WS-MTHRES-LONG                               
+                IF F558-NUM-MTH-RESIDE-SMS > WS-MTHRES-LONG                     
+                   MOVE F558-NUM-MTH-RESIDE-SMS TO WS-MTHRES-LONG               
+                END-IF                                                          
+                IF F558-NUM-MTH-RESIDE-RSL > WS-MTHRES-LONG                     
+                   MOVE F558-NUM-MTH-RESIDE-RSL TO WS-MTHRES-LONG               
+                END-IF                                                          
+                IF F558-NUM-MTH-RESIDE-TR  > WS-MTHRES-LONG                     
+                   MOVE F558-NUM-MTH-RESIDE-TR  TO WS-MTHRES-LONG               
+                END-IF                                                          
+                IF WS-MTHRES-LONG > F558-NUM-MTH-RESIDE                         
+                   MOVE WS-MTHRES-LONG-N TO F558-NUM-MTH-RESIDE                 
+                END-IF                                                          
+             END-IF                                                             
+           END-EVALUATE.                                                        
+                                                                                
+       410-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       420-CHECK-LAPSE-MOVEIN-DATE.                                             
+                                                                                
+           IF F558-DTE-APPLN-TR  < '19970901'                                   
+               PERFORM 200-READ-F716 THRU 200-EXIT                              
+               GO TO 420-EXIT.                                                  
+                                                                                
+           IF F558-NUM-HDB-REF-TR = SPACES OR                                   
+              F558-NUM-HDB-REF-TR (1:9) NOT = F716-NUM-SCH-ACCNT                
+              PERFORM 200-READ-F716 THRU 200-EXIT                               
+              GO TO 420-EXIT                                                    
+           END-IF.                                                              
+                                                                                
+           MOVE 'Y'                   TO  WS-MATCH-SCHEME-FLAG.                 
+           IF F713-CDE-COHORT = 'WK' OR 'OP'                                    
+              MOVE F716-DTE-REGN  TO WS-DTE-REGN                                
+           END-IF.                                                              
+           IF F716-DTE-MOVING-IN  IS NOT NUMERIC                                
+              MOVE ZEROS TO F716-DTE-MOVING-IN                                  
+           END-IF.                                                              
+           IF F716-DTE-MOVING-OUT IS NOT NUMERIC                                
+              MOVE ZEROS TO F716-DTE-MOVING-OUT                                 
+           END-IF.                                                              
+                                                                                
+           MOVE F716-DTE-MOVING-IN  TO WS-DTE-CMOVEIN.                          
+           MOVE F716-DTE-MOVING-OUT TO WS-DTE-CMOVEOUT.                         
+           MOVE ZEROS               TO  WS-DIFFERENCE.                          
+           IF (WS-DTE-PMOVEOUT NOT = ZEROS OR                                   
+              WS-DTE-PMOVEIN  NOT = ZEROS) AND                                  
+              WS-DTE-CMOVEOUT NOT = ZEROS                                       
+              MOVE WS-DTE-PMOVEIN(1:6)     TO WS-MOVE-IN                        
+              MOVE WS-DTE-CMOVEOUT(1:6)    TO WS-MOVE-OUT                       
+                                                                                
+              COMPUTE WS-DIFFERENCE = ((WS-YY-MOVE-IN * 12) +                   
+                                        WS-MM-MOVE-IN) -                        
+                                      ((WS-YY-MOVE-OUT * 12) +                  
+                                        WS-MM-MOVE-OUT)                         
+                                                                                
+              IF WS-DIFFERENCE < 3                                              
+                 IF NOT WS-LAPSE                                                
+                    MOVE WS-DTE-CMOVEIN  TO  WS-DTE-MOVEIN                      
+                    MOVE WS-DTE-CMOVEOUT TO  WS-DTE-MOVEOUT                     
+                 END-IF                                                         
+              ELSE                                                              
+                 IF NOT WS-LAPSE                                                
+                    MOVE WS-DTE-PMOVEIN  TO  WS-DTE-MOVEIN                      
+                    MOVE WS-DTE-PMOVEOUT TO  WS-DTE-MOVEOUT                     
+                    MOVE 'Y'         TO WS-LAPSE-FLAG                           
+                 END-IF                                                         
+              END-IF                                                            
+           ELSE                                                                 
+              MOVE WS-DTE-CMOVEIN  TO  WS-DTE-MOVEIN                            
+              MOVE WS-DTE-CMOVEOUT TO  WS-DTE-MOVEOUT                           
+           END-IF.                                                              
+                                                                                
+           MOVE WS-DTE-CMOVEIN      TO WS-DTE-PMOVEIN.                          
+           MOVE WS-DTE-CMOVEOUT     TO WS-DTE-PMOVEOUT.                         
+                                                                                
+              ADD 1 TO WS-MULTIPLE-F716                                         
+                                                                                
+           PERFORM 200-READ-F716 THRU 200-EXIT.                                 
+                                                                                
+       420-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       450-CHECK-FILE-STATUS.                                                   
+                                                                                
+           IF F558-NUM-SUBLET-TR  IS NOT NUMERIC                                
+               MOVE ZEROS TO F558-NUM-SUBLET-TR                                 
+           END-IF.                                                              
+                                                                                
+           IF F558-NUM-MTH-RESIDE NOT NUMERIC                                   
+                 MOVE 0 TO F558-NUM-MTH-RESIDE                                  
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-MOVEIN       IS NOT NUMERIC                                
+               MOVE ZEROS TO WS-DTE-MOVEIN                                      
+           END-IF.                                                              
+           IF WS-DTE-MOVEOUT      IS NOT NUMERIC                                
+               MOVE ZEROS TO WS-DTE-MOVEOUT                                     
+           END-IF.                                                              
+                                                                                
+           IF WS-MATCH-SCHEME                                                   
+              IF WS-DTE-MOVEIN       = SPACES OR LOW-VALUES OR ZEROS            
+                 MOVE  SPACES              TO F558-DTE-MOVE-IN-TR               
+              ELSE                                                              
+                 MOVE  WS-DTE-MOVEIN       TO F558-DTE-MOVE-IN-TR               
+              END-IF                                                            
+                                                                                
+              IF WS-DTE-MOVEOUT      = SPACES OR LOW-VALUES OR ZEROS            
+                 MOVE  SPACES              TO F558-DTE-MOVE-OUT-TR              
+              ELSE                                                              
+                 MOVE  WS-DTE-MOVEOUT      TO F558-DTE-MOVE-OUT-TR              
+              END-IF                                                            
+                                                                                
+              IF F558-DTE-MOVE-IN-TR NOT = SPACES AND LOW-VALUES                
+                 MOVE F558-DTE-MOVE-IN-TR(1:6) TO WS-F558-QTR                   
+              ELSE                                                              
+                 MOVE F558-DTE-EFF-SALE-TR(1:6) TO WS-F558-QTR                  
+              END-IF                                                            
+                                                                                
+              IF F713-CDE-COHORT = 'WK' OR 'OP'                                 
+                 IF WS-DTE-REGN IS NUMERIC                                      
+                    MOVE WS-DTE-REGN TO WS-SYS-QTR                              
+                 ELSE                                                           
+                    MOVE ZEROES      TO WS-SYS-QTR                              
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              IF WS-F558-QTR NOT = SPACES AND LOW-VALUES                        
+                 COMPUTE F558-NUM-MTH-RESIDE-TR =                               
+                       ((WS-QTR-YR - WS-F558-YR) * 12) +                        
+                        (WS-QTR-MM - WS-F558-MM)                                
+                      - (F558-NUM-SUBLET-TR)                                    
+              END-IF                                                            
+                                                                                
+              IF F558-NUM-MTH-RESIDE-TR < WS-CHK-MONTH                          
+                 IF F558-NUM-MTH-RESIDE = ZEROS OR SPACES                       
+                    MOVE F558-NUM-MTH-RESIDE-TR TO F558-NUM-MTH-RESIDE          
+                 ELSE                                                           
+                   IF F558-NUM-MTH-RESIDE-TR < F558-NUM-MTH-RESIDE              
+                     MOVE F558-NUM-MTH-RESIDE-TR TO F558-NUM-MTH-RESIDE         
+                   END-IF                                                       
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              PERFORM 500-PRINT-L160 THRU 500-EXIT                              
+      *       MOVE F716-NUM-SCH-ACCNT TO WS-PREV-F716-SCH                       
+                                                                                
+           END-IF.                                                              
+                                                                                
+                                                                                
+       450-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       480-NO-MOVE-IN-DATE.                                                     
+                                                                                
+           IF F558-DTE-APPLN-TR  < '19970901'                                   
+               GO TO 480-EXIT.                                                  
+                                                                                
+           IF F558-NUM-SUBLET-TR  IS NOT NUMERIC                                
+               MOVE ZEROS TO F558-NUM-SUBLET-TR                                 
+           END-IF.                                                              
+                                                                                
+           IF F558-NUM-MTH-RESIDE NOT NUMERIC                                   
+                 MOVE 0 TO F558-NUM-MTH-RESIDE                                  
+           END-IF.                                                              
+                                                                                
+           IF F558-NUM-HDB-REF-TR (1:9) NOT = SPACES                            
+               MOVE F558-DTE-EFF-SALE-TR(1:6) TO WS-F558-QTR                    
+                                                                                
+              IF F713-CDE-COHORT = 'WK' OR 'OP'                                 
+                 IF F716-DTE-REGN NUMERIC                                       
+                    MOVE F716-DTE-REGN TO WS-SYS-QTR                            
+                 ELSE                                                           
+                    MOVE ZEROES TO WS-SYS-QTR                                   
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              IF WS-F558-QTR NOT = SPACES AND LOW-VALUES                        
+                 COMPUTE F558-NUM-MTH-RESIDE-TR =                               
+                       ((WS-QTR-YR - WS-F558-YR) * 12) +                        
+                        (WS-QTR-MM - WS-F558-MM)                                
+                      - (F558-NUM-SUBLET-TR)                                    
+              END-IF                                                            
+                                                                                
+              IF F558-NUM-MTH-RESIDE-TR < WS-CHK-MONTH                          
+                 IF F558-NUM-MTH-RESIDE-TR < F558-NUM-MTH-RESIDE                
+                    MOVE F558-NUM-MTH-RESIDE-TR TO F558-NUM-MTH-RESIDE          
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+           END-IF.                                                              
+                                                                                
+       480-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *----------------*                                                        
+       500-PRINT-L160.                                                          
+      *----------------*                                                        
+                                                                                
+           MOVE SPACES                   TO L160-DTL-1 L160-DTL-2.              
+           INITIALIZE                       L160-DTL-1 L160-DTL-2.              
+           ADD  1                        TO WS-SNO.                             
+           MOVE WS-SNO                   TO L160-SNO.                           
+           MOVE F558-NUM-REGN            TO L160-REGN.                          
+           MOVE F558-NUM-NRIC            TO L160-NRIC.                          
+           MOVE F558-NUM-HDB-REF-SMS     TO L160-NUM-HDB-REF-SMS                
+           MOVE F558-CDE-SALES-TYPE-SMS  TO L160-CDE-SALES-TYPE-SMS             
+           MOVE F558-NUM-MTH-RESIDE-SMS  TO L160-MTH-RESIDE-SMS                 
+                                                                                
+           IF F558-DTE-FLAT-SOLD-SMS = SPACES OR LOW-VALUES OR ZEROES           
+              MOVE SPACES                   TO L160-DTE-FLAT-SOLD-SMS           
+           ELSE                                                                 
+              MOVE F558-DTE-FLAT-SOLD-SMS   TO WS-UNFORMATTED-DTE               
+              MOVE CORR WS-UNFORMATTED-DTE  TO WS-FORMATTED-DTE                 
+              MOVE WS-FORMATTED-DTE         TO L160-DTE-FLAT-SOLD-SMS.          
+                                                                                
+           MOVE F558-NUM-HDB-REF-RSL     TO L160-NUM-HDB-REF-RSL                
+           MOVE F558-CDE-FILE-STATUS-RSL TO L160-CDE-FILE-STATUS-RSL            
+                                                                                
+           IF F558-DTE-RESALE-EFF = SPACES OR LOW-VALUES OR ZEROES              
+              MOVE SPACES                   TO L160-DTE-RESALE-EFF              
+           ELSE                                                                 
+              MOVE F558-DTE-RESALE-EFF      TO WS-UNFORMATTED-DTE               
+              MOVE CORR WS-UNFORMATTED-DTE  TO WS-FORMATTED-DTE                 
+              MOVE WS-FORMATTED-DTE         TO L160-DTE-RESALE-EFF.             
+                                                                                
+           MOVE F558-NUM-MTH-RESIDE-RSL  TO L160-MTH-RESIDE-RSL                 
+                                                                                
+           MOVE F558-NUM-HDB-REF-TR      TO L160-NUM-HDB-REF-TR                 
+           MOVE F558-NUM-SALES-TYPE-TR   TO L160-NUM-SALES-TYPE-TR              
+           MOVE F558-NUM-MTH-RESIDE-TR   TO L160-NUM-MTH-RESIDE-TR              
+           MOVE F558-NUM-SUBLET-TR       TO L160-NUM-SUBLET-TR                  
+                                                                                
+           IF F558-DTE-EFF-SALE-TR = SPACES OR LOW-VALUES OR ZEROES             
+              MOVE SPACES                   TO L160-DTE-EFF-SALE-TR             
+           ELSE                                                                 
+              MOVE F558-DTE-EFF-SALE-TR     TO WS-UNFORMATTED-DTE               
+              MOVE CORR WS-UNFORMATTED-DTE  TO WS-FORMATTED-DTE                 
+              MOVE WS-FORMATTED-DTE         TO L160-DTE-EFF-SALE-TR.            
+                                                                                
+           IF F558-DTE-MOVE-IN-TR = SPACES OR LOW-VALUES OR ZEROES              
+              MOVE SPACES                   TO L160-DTE-MOVE-IN-TR              
+           ELSE                                                                 
+              MOVE F558-DTE-MOVE-IN-TR      TO WS-UNFORMATTED-DTE               
+              MOVE CORR WS-UNFORMATTED-DTE  TO WS-FORMATTED-DTE                 
+              MOVE WS-FORMATTED-DTE         TO L160-DTE-MOVE-IN-TR.             
+                                                                                
+           IF F558-DTE-APPLN-TR = SPACES OR LOW-VALUES OR ZEROES                
+              MOVE SPACES                   TO L160-DTE-APPLN-TR                
+           ELSE                                                                 
+              MOVE F558-DTE-APPLN-TR        TO WS-UNFORMATTED-DTE               
+              MOVE CORR WS-UNFORMATTED-DTE  TO WS-FORMATTED-DTE                 
+              MOVE WS-FORMATTED-DTE         TO L160-DTE-APPLN-TR.               
+                                                                                
+           IF WS-MULTIPLE-F716 > 1                                              
+              MOVE '*DUP '                  TO L160-REMARK.                     
+                                                                                
+                                                                                
+           IF  WS-LINE > 55                                                     
+               ADD   1               TO   WS-PAGE                               
+               MOVE  WS-PAGE         TO   L160-PAGE                             
+               MOVE  SPACES          TO   L160-PRINT-REC                        
+               WRITE L160-PRINT-REC  AFTER PAGE                                 
+               WRITE L160-PRINT-REC  FROM L160-HDR-1                            
+               WRITE L160-PRINT-REC  FROM L160-HDR-2                            
+               WRITE L160-PRINT-REC  FROM L160-HDR-3 AFTER 2                    
+               WRITE L160-PRINT-REC  FROM L160-HDR-4                            
+               WRITE L160-PRINT-REC  FROM L160-HDR-5                            
+               WRITE L160-PRINT-REC  FROM L160-HDR-6                            
+               WRITE L160-PRINT-REC  FROM L160-HDR-7                            
+               MOVE  8               TO   WS-LINE.                              
+                                                                                
+           WRITE L160-PRINT-REC  FROM L160-DTL-1 AFTER 2                        
+           WRITE L160-PRINT-REC  FROM L160-DTL-2.                               
+           ADD   3               TO   WS-LINE.                                  
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *----------------*                                                        
+       900-FINALIZATION.                                                        
+      *----------------*                                                        
+                                                                                
+             COMPUTE WS-F716-NOTMATCH = WS-F716-READ - WS-MATCH.                
+                                                                                
+             DISPLAY '*--------BP13C160  -----------*'.                         
+             DISPLAY '                               '.                         
+             DISPLAY '* MATCH BP13F716 WITH BP13F558,   '.                      
+             DISPLAY '* TO GET RDB MOVE-IN-DATE, COMPUTE MTH-RESIDE'.           
+             DISPLAY '                               '.                         
+             DISPLAY ' BP13F716-READ      ' WS-F716-READ.                       
+             DISPLAY ' BP13F558-READ      ' WS-F558-READ.                       
+             DISPLAY ' NO OF F716 MATCHED ' WS-MATCH.                           
+             DISPLAY ' F716-NOT-MATCH     ' WS-F716-NOTMATCH.                   
+             DISPLAY ' F558-NOT-MATCH     ' WS-F558-NOTMATCH.                   
+             DISPLAY ' RECORDS WRITTEN    ' WS-F558-WRITE.                      
+             DISPLAY ' LAPSE RECORDS      ' WS-LAPSE-CTR.                       
+                                                                                
+           CLOSE      BP13F716                                                  
+                      BP13F713                                                  
+                      BP13F558                                                  
+                      P13F558A                                                  
+                      BP13L160.                                                 
+           STOP RUN.                                                            
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+

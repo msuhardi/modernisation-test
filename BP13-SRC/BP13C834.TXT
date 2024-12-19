@@ -1,0 +1,886 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C834.                                                 
+      *AUTHOR.        GD.                                                       
+      *DATE-WRITTEN.  03/02/95.                                                 
+      * ====================================================== *                
+      *                                                        *                
+      *    SYSTEM NAME : SYSTEM OF COMMITMENT  (SOC)           *                
+      *                                                        *                
+      *    SYSTEM ID   : BP13                                  *                
+      *                                                        *                
+      *    OBJECTIVES :                                        *                
+      *                                                        *                
+      *    1.  TO TAG LESSEE-CHECK BASED ON ALLOCATION SCHEME  *                
+      *           AND RELATIONSHIP OF INDIVIDUAL REQUESTS :    *                
+      *                                                        *                
+      *        (A) PA  - ALL HA'S AND RESPECTIVE SPOUSES       *                
+      *                  IF NO SPOUSES, TAG PARENTS, CHILDREN  *                
+      *                  IF NO PARENTS, TAG CHILDREN           *                
+      *                                                        *                
+      *        (B) MTF - SAME AS (A)                           *                
+      *                                                        *                
+      *    2.  SYSTEM WILL NOT TAG OCCUPIERS UNDER 21 YEARS OF *                
+      *           AGE.                                         *                
+      *                                                        *                
+      *    INPUT  FILE  : BP13F730 - REQUEST DATA ENTRY FILE   *                
+      *                   BP13F825 - REQUEST OCCUPIER FILE     *                
+      *                   BP13K060 - CODE TRANSCRIPTION FILE   *                
+      *                                                        *                
+      *    I/O    FILE  : BP13K825 - REQUEST OCCUPIER FILE     *                
+      *                                                        *                
+      *    OUTPUT FILES : NIL                                  *                
+      *                                                        *                
+      *    LISTINGS     : BP13L834 - REPORT ON OCCUPIERS AFTER *                
+      *                               TAGGING LESSEE CHECK     *                
+      *                                                        *                
+      *--------------------------------------------------------*                
+      * CHG-NO  BY    DATE    DETAILS                          *                
+      * ======  ==   ====== ================================== *                
+      * C950230 GD   030295                                    *                
+      *BP130652 NOR  220299 EXPAND F730 RECL FROM 300 TO 500   *                
+      *BP130972 ED   050201 TO TAG NUM-FREEZE-OCCP             *                
+      *BP130972 ED   030301 CHG FOR TCP FREEZE-OCCP            *                
+      *BP130972 ED   080301 CHG FOR COUPLE WITH NO CHILD IN APP*                
+      *BP130978 ED   240401 CHG TO TAG SMP PARENTS             *                
+      *BP131064 ED   150102 CHG TO TAG LSE FOR PARENT OR       *                
+      *                     SIBLING WHEN ELIG-SCH IS 'NCS'     *                
+      *BP132121 ED   120302 REMOVE AGE CHECK FOR SIBLING       *                
+      *                     IN LSE-CHECK                       *                
+      *BP132200 ED   131102 INCLUDE ADOPTIVE PARENT - '38'     *                
+      *BP133267 YCH2 020108 TAG 'N' FOR LESSEE CHECK IF        *                
+      *                     OCCUPIER AND FLAT TYPE=1A OR 2A    *                
+      *BP135002 YCH2 090713 LESSEE CHECK FOR SINGLE SCHEME     *                
+      *BP139582 YCH2 130923 CHECK SALES MODE TO MOVE           *                
+      *                     DETERMINED LESSEE-CHECK TO         *                
+      *                     NUM-ESNTL-FMLY WHERE THE ORIGINAL  *                
+      *                     IS FROM SALE APPLN BP13K825        *                
+      * ====================================================== *                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-4341.                                               
+       OBJECT-COMPUTER. IBM-4341.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F730 ASSIGN TO BP13F730.                                  
+                                                                                
+           SELECT BP13F825 ASSIGN TO BP13F825.                                  
+                                                                                
+           SELECT BP13K060 ASSIGN TO BP13K060                                   
+                  ORGANIZATION IS INDEXED                                       
+                  ACCESS MODE  IS RANDOM                                        
+                  RECORD KEY   IS K060-KEY-FLD                                  
+                  FILE STATUS  IS WS-K060-STATUS.                               
+                                                                                
+           SELECT BP13K825 ASSIGN TO BP13K825                                   
+                  ORGANIZATION IS INDEXED                                       
+                  ACCESS MODE  IS RANDOM                                        
+                  RECORD KEY   IS K825-KEY-FLD                                  
+                  FILE STATUS  IS WS-K825-STATUS.                               
+                                                                                
+           SELECT BP13L834 ASSIGN TO BP13L834.                                  
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F730                                                            
+            RECORDING MODE    F                                                 
+            BLOCK CONTAINS    0 RECORDS                                         
+            LABEL RECORDS   ARE STANDARD                                        
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BP13F730.                                                           
+                                                                                
+       FD   BP13F825                                                            
+            RECORDING MODE    F                                                 
+            BLOCK CONTAINS    0 RECORDS                                         
+            LABEL RECORDS   ARE STANDARD                                        
+            RECORD CONTAINS 200 CHARACTERS.                                     
+       COPY BP13F825.                                                           
+                                                                                
+       FD   BP13K825                                                            
+            RECORD CONTAINS 200 CHARACTERS.                                     
+       COPY BP13K825.                                                           
+                                                                                
+       FD   BP13K060                                                            
+            RECORD CONTAINS  25 CHARACTERS.                                     
+       COPY BP13K060.                                                           
+                                                                                
+       FD   BP13L834                                                            
+            RECORDING MODE    F                                                 
+            RECORD CONTAINS 132 CHARACTERS.                                     
+       01   BP13L834-REC    PIC X(132).                                         
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-FILE-CONTROLS.                                                    
+           05  WS-F730-EOF-SW                 PIC X(1)  VALUE 'N'.              
+           05  WS-F825-EOF-SW                 PIC X(1)  VALUE 'N'.              
+           05  WS-K060-STATUS                 PIC 9(2)  VALUE ZEROS.            
+           05  WS-K825-STATUS                 PIC 9(2)  VALUE ZEROS.            
+                                                                                
+       01  WS-NUM-ESNTL-FMLY                  PIC X(1)  VALUE SPACES.           
+       01  WS-RECORD-COUNTERS.                                                  
+           05  WS-CNT-READ-F730               PIC 9(5)  VALUE ZEROS.            
+           05  WS-CNT-READ-F825               PIC 9(5)  VALUE ZEROS.            
+           05  WS-CNT-UPD-K825                PIC 9(5)  VALUE ZEROS.            
+                                                                                
+       01  WS-L834-CONTROLS.                                                    
+           05  WS-L834-LINECTR                PIC 9(2)  VALUE 50.               
+           05  WS-L834-PAGECTR                PIC 9(5)  VALUE ZEROS.            
+           05  WS-L834-S-NO                   PIC 9(5)  VALUE ZEROS.            
+                                                                                
+       01  WS-F825-ARRAY-VARS.                                                  
+           05  WS-BP13F825-REC                OCCURS    16 TIMES                
+                                              PIC X(200).                       
+           05  WS-NUM-FAMILY                  PIC 9(2).                         
+           05  WS-OCCUP-TAG                   PIC 9(2).                         
+                                                                                
+       01  WS-NUCLEUS-TAGS.                                                     
+           05  WS-HA-GRAND                    PIC X(1) VALUE 'N'.               
+           05  WS-HA-PARENT                   PIC X(1) VALUE 'N'.               
+           05  WS-HA-SIBLING                  PIC X(1) VALUE 'N'.               
+           05  WS-HA-CHILD                    PIC X(1) VALUE 'N'.               
+           05  WS-HA1-MARRIED                 PIC X(1) VALUE 'N'.               
+           05  WS-SC-SP-CHILD                 PIC X(1) VALUE 'N'.               
+                                                                                
+       01  WS-MISCELLANEOUS-VARS.                                               
+           05  WS-SAVE-BP13F825               PIC X(200) VALUE SPACES.          
+           05  WS-AGE                         PIC S9(3).                        
+           05  WS-BIRTH-YY                    PIC 9(4).                         
+           05  WS-RELATIONSHIP-SW             PIC X(02).                        
+               88 APPLICANT   VALUE '00'.                                       
+               88 PARENT VALUE '02' '12' '19' '22' '32' '38' '97' '98'.         
+               88 SIBLING     VALUE '06' '07' '26' '27'.                        
+               88 SPOUSE      VALUE '20' '10'.                                  
+               88 FIANCEE     VALUE '09'.                                       
+               88 ADP-CHILD   VALUE '39'.                                       
+               88 CHILD       VALUE '41'.                                       
+               88 GRANDPARENT VALUE '01' '21'.                                  
+                                                                                
+           05  WS-MARITAL-STAT-SW             PIC X(01).                        
+               88 SINGLE      VALUE '1' 'S'.                                    
+               88 MARRIED     VALUE '2' 'M'.                                    
+               88 DIV-WID-SEP VALUE '3' '4' '5' 'W' 'D' 'P'.                    
+                                                                                
+       01  WS-TIME-DATES.                                                       
+           05  WS-SYSTEM-DATE.                                                  
+               10  WS-SYS-CCYY.                                                 
+                   15  WS-SYS-CC              PIC 9(2).                         
+                   15  WS-SYS-YY              PIC 9(2).                         
+               10  WS-SYS-MM                  PIC 9(2).                         
+               10  WS-SYS-DD                  PIC 9(2).                         
+           05  WS-EDITED-DATE.                                                  
+               10  WS-EDITED-DD               PIC 9(2).                         
+               10  FILLER                     PIC X(1)  VALUE '/'.              
+               10  WS-EDITED-MM               PIC 9(2).                         
+               10  FILLER                     PIC X(1)  VALUE '/'.              
+               10  WS-EDITED-YY               PIC 9(4).                         
+                                                                                
+      *============================================================*            
+      *         BP13L834  -  R E P O R T    L A Y O U T            *            
+      *============================================================*            
+                                                                                
+       01  L834-HEADER-01.                                                      
+           05  FILLER              PIC X(08)     VALUE 'BP13L834'.              
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  FILLER              PIC X(08)     VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(25)     VALUE SPACES.                  
+           05  FILLER              PIC X(41)     VALUE                          
+               'S Y S T E M    O F    C O M M I T M E N T'.                     
+           05  FILLER              PIC X(12)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE 'DATE :'.                
+           05  L834-RUN-DATE       PIC X(10)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE 'PAGE : '.               
+           05  L834-PAGE-NO        PIC ZZZZ9 .                                  
+                                                                                
+       01  L834-HEADER-02.                                                      
+           05  FILLER              PIC X(43)     VALUE SPACES.                  
+           05  FILLER              PIC X(46)     VALUE                          
+           'REPORT ON OCCUPIERS AFTER TAGGING LESSEE CHECK'.                    
+                                                                                
+       01  L834-HEADER-03.                                                      
+           05  FILLER              PIC X(05)     VALUE ' S/N '.                 
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(08)     VALUE 'REF NO'.                
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE 'ALC SCH'.               
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE 'ELG SCH'.               
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE 'NT'.                    
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE 'FT'.                    
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'CAT'.                   
+           05  FILLER              PIC X(25)     VALUE SPACES.                  
+           05  FILLER              PIC X(05)     VALUE 'APPL/'.                 
+           05  FILLER              PIC X(35)     VALUE SPACES.                  
+           05  FILLER              PIC X(04)     VALUE 'CORE'.                  
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'LSE'.                   
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'FRZ'.                   
+                                                                                
+       01  L834-HEADER-04.                                                      
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(09)     VALUE 'NRIC'.                  
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(56)     VALUE 'NAME'.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(04)     VALUE 'OCC '.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'REL'.                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(20)     VALUE 'RELATIONSHIP'.          
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE 'MS'.                    
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'CIT'.                   
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(04)     VALUE 'FMLY'.                  
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'CHK'.                   
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'OCP'.                   
+                                                                                
+       01  L834-HEADER-05.                                                      
+           05  FILLER              PIC X(130)    VALUE ALL '-'.                 
+                                                                                
+       01  L834-DETAIL-01.                                                      
+           05  L834-S-NO           PIC ZZZZ9.                                   
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  L834-REF-NO         PIC X(08).                                   
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  L834-ALLOC-SCH      PIC X(03).                                   
+           05  FILLER              PIC X(07)     VALUE SPACES.                  
+           05  L834-ELIG-SCH       PIC X(03).                                   
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  L834-NT             PIC X(02).                                   
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  L834-FT             PIC X(02).                                   
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  L834-CAT            PIC X(01).                                   
+                                                                                
+       01  L834-DETAIL-02.                                                      
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  L834-NRIC           PIC X(09).                                   
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  L834-NAME           PIC X(56).                                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  L834-HA-OCCP        PIC X(04).                                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  L834-REL-CODE       PIC X(03).                                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  L834-REL-DESC       PIC X(20).                                   
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  L834-MARITAL-STAT   PIC X(01).                                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  L834-CITIZENSHIP    PIC X(02).                                   
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  L834-ESNTL-FMLY     PIC X(01).                                   
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  L834-LSE-CHK        PIC X(01).                                   
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  L834-FRZ-OCP-CHK    PIC X(01).                                   
+                                                                                
+                                                                                
+      ****************************************************************          
+       PROCEDURE DIVISION.                                                      
+      ****************************************************************          
+       0000-MAIN-ROUTINE.                                                       
+      ****************************************************************          
+                                                                                
+           PERFORM 1000-OPEN-ROUTINE      THRU 1000-EXIT.                       
+           PERFORM 2000-READ-F730         THRU 2000-EXIT.                       
+           PERFORM 2500-READ-F825         THRU 2500-EXIT.                       
+           MOVE BP13F825-REC              TO WS-SAVE-BP13F825.                  
+                                                                                
+           PERFORM 3000-PROCESS-F730                                            
+              THRU 3000-EXIT                                                    
+             UNTIL (WS-F730-EOF-SW = 'Y')  OR                                   
+                   (WS-F825-EOF-SW = 'Y').                                      
+                                                                                
+           PERFORM 9999-CLOSE-ROUTINE.                                          
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       1000-OPEN-ROUTINE.                                                       
+      ****************************************************************          
+                                                                                
+           OPEN INPUT  BP13F730                                                 
+                       BP13K060                                                 
+                I-O    BP13F825                                                 
+                       BP13K825                                                 
+                OUTPUT BP13L834.                                                
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8)  TO  WS-SYSTEM-DATE.                 
+                                                                                
+           MOVE   WS-SYS-DD           TO WS-EDITED-DD.                          
+           MOVE   WS-SYS-MM           TO WS-EDITED-MM.                          
+           MOVE   WS-SYS-CCYY         TO WS-EDITED-YY.                          
+                                                                                
+           IF WS-K060-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'BP13K060 OPEN ERROR, STATUS IS ' WS-K060-STATUS          
+              GO TO   9999-CLOSE-ROUTINE                                        
+           END-IF.                                                              
+                                                                                
+           IF WS-K825-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'BP13K825 OPEN ERROR, STATUS IS ' WS-K825-STATUS          
+              GO TO   9999-CLOSE-ROUTINE                                        
+           END-IF.                                                              
+                                                                                
+           MOVE   WS-EDITED-DATE      TO L834-RUN-DATE.                         
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       2000-READ-F730.                                                          
+      ****************************************************************          
+                                                                                
+           READ BP13F730                                                        
+              AT END MOVE 'Y'   TO WS-F730-EOF-SW.                              
+                                                                                
+           ADD  +1                 TO WS-CNT-READ-F730.                         
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       2500-READ-F825.                                                          
+      ****************************************************************          
+                                                                                
+           READ BP13F825                                                        
+              AT END     MOVE 'Y'  TO WS-F825-EOF-SW.                           
+                                                                                
+           ADD +1                  TO WS-CNT-READ-F825.                         
+                                                                                
+       2500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       3000-PROCESS-F730.                                                       
+      ****************************************************************          
+                                                                                
+           MOVE ZEROS               TO WS-NUM-FAMILY.                           
+           MOVE SPACES              TO WS-NUCLEUS-TAGS.                         
+           INITIALIZE                  WS-F825-ARRAY-VARS.                      
+           MOVE WS-SAVE-BP13F825    TO BP13F825-REC.                            
+                                                                                
+           IF F730-NUM-REGN = F825-NUM-REGN                                     
+              PERFORM 4000-PROCESS-NUCLEUS                                      
+                 THRU 4000-EXIT                                                 
+                UNTIL (F825-NUM-REGN  > F730-NUM-REGN) OR                       
+                      (WS-NUM-FAMILY  > 15           ) OR                       
+                      (WS-F825-EOF-SW = 'Y'          )                          
+                                                                                
+              MOVE BP13F825-REC     TO WS-SAVE-BP13F825                         
+                                                                                
+              PERFORM 5000-TAG-AND-PRINT                                        
+                 THRU 5000-EXIT                                                 
+              VARYING WS-OCCUP-TAG    FROM 1 BY 1                               
+                UNTIL (WS-OCCUP-TAG  > WS-NUM-FAMILY)                           
+                                                                                
+              PERFORM 2000-READ-F730      THRU 2000-EXIT                        
+                                                                                
+           ELSE                                                                 
+           IF F730-NUM-REGN > F825-NUM-REGN                                     
+              PERFORM 2500-READ-F825                                            
+                 THRU 2500-EXIT                                                 
+                UNTIL (F825-NUM-REGN  = F730-NUM-REGN) OR                       
+                      (F825-NUM-REGN  > F730-NUM-REGN) OR                       
+                      (WS-F825-EOF-SW = 'Y'          )                          
+                                                                                
+              MOVE BP13F825-REC     TO WS-SAVE-BP13F825                         
+                                                                                
+           ELSE                                                                 
+              PERFORM 2000-READ-F730      THRU 2000-EXIT.                       
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       4000-PROCESS-NUCLEUS.                                                    
+      ****************************************************************          
+                                                                                
+           ADD 1                   TO WS-NUM-FAMILY.                            
+      *    MOVE 'N'                TO F825-NUM-LESSEE-CHECK.                    
+           MOVE 'N'                TO WS-NUM-ESNTL-FMLY.                        
+           MOVE BP13F825-REC       TO WS-BP13F825-REC (WS-NUM-FAMILY).          
+                                                                                
+      *------------>  DETERMINE IF SC/SP CHILD                                  
+           IF (F825-NUM-RELATIONSHIP = '41') AND                                
+              (F825-NUM-CITIZENSHIP = '10' OR '20')                             
+                 MOVE 'Y'          TO WS-SC-SP-CHILD.                           
+                                                                                
+      *------------>  DETERMINE MARRIED HA1                                     
+           IF F825-NUM-RELATIONSHIP = '20' OR '09' OR '10'                      
+              MOVE 'Y'             TO WS-HA1-MARRIED.                           
+                                                                                
+      *------------>  PROCESS OCCUPIER RECORD IF HA                             
+           IF F825-NUM-NRIC = F730-NUM-NRIC1 OR F730-NUM-NRIC2 OR               
+                              F730-NUM-NRIC3 OR F730-NUM-NRIC4                  
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              GO TO 4000-READNEXT.                                              
+                                                                                
+      *------------>  DETERMINE APPLN BY HA RELATIONSHIP                        
+           IF F825-NUM-RELATIONSHIP = '01' OR '11' OR '21' OR '31'              
+              MOVE 'Y'             TO WS-HA-GRAND                               
+           ELSE                                                                 
+           IF F825-NUM-RELATIONSHIP = '02' OR '12' OR '19' OR '22' OR           
+                                      '32' OR '38' OR '97' OR '98'              
+              MOVE 'Y'             TO WS-HA-PARENT                              
+           ELSE                                                                 
+           IF F825-NUM-RELATIONSHIP = '06' OR '07' OR '26' OR '27'              
+              MOVE 'Y'             TO WS-HA-SIBLING                             
+           ELSE                                                                 
+           IF F825-NUM-RELATIONSHIP = '41' OR '42'                              
+              MOVE 'Y'             TO WS-HA-CHILD                               
+           END-IF.                                                              
+                                                                                
+       4000-READNEXT.                                                           
+           PERFORM 2500-READ-F825         THRU 2500-EXIT.                       
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *************************************************************             
+       5000-TAG-AND-PRINT.                                                      
+      *************************************************************             
+                                                                                
+           PERFORM 5100-TAG-LESSEE-CHECK   THRU 5100-EXIT.                      
+                                                                                
+           IF F730-CDE-FLAT-TYPE = '1A' OR '2A' OR                              
+              F730-CDE-IDP-SCH = 'SA'                                           
+              IF F825-NUM-NRIC = F730-NUM-NRIC1 OR F730-NUM-NRIC2 OR            
+                                 F730-NUM-NRIC3 OR F730-NUM-NRIC4               
+                 CONTINUE                                                       
+              ELSE                                                              
+      *          MOVE 'N'             TO F825-NUM-LESSEE-CHECK                  
+                 MOVE 'N'             TO WS-NUM-ESNTL-FMLY                      
+              END-IF                                                            
+           END-IF.                                                              
+      *                                                                         
+      * CHANGES TO CATER FOR SINGLE SCHEME 15/07/2013                           
+      *                                                                         
+           IF (F730-CDE-ALLOC-SCH = 'FTS')                                      
+              IF F825-NUM-NRIC = F730-NUM-NRIC1 OR F730-NUM-NRIC2 OR            
+                                 F730-NUM-NRIC3 OR F730-NUM-NRIC4               
+                 CONTINUE                                                       
+              ELSE                                                              
+                 MOVE 'N'             TO WS-NUM-ESNTL-FMLY                      
+      *          MOVE 'N'             TO F825-NUM-LESSEE-CHECK                  
+              END-IF                                                            
+           END-IF.                                                              
+      *                                                                         
+           PERFORM 5200-UPDATE-K825        THRU 5200-EXIT.                      
+                                                                                
+           PERFORM 5300-PRINT-L834         THRU 5300-EXIT.                      
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *************************************************************             
+       5100-TAG-LESSEE-CHECK.                                                   
+      *************************************************************             
+                                                                                
+           MOVE WS-BP13F825-REC (WS-OCCUP-TAG) TO BP13F825-REC.                 
+                                                                                
+      *------------>  FREEZE-OCCUPIER TAG                                       
+           MOVE 'N'                     TO F825-NUM-FREEZE-OCCP.                
+           MOVE F825-NUM-RELATIONSHIP   TO WS-RELATIONSHIP-SW.                  
+           MOVE F825-NUM-MARITAL-STATUS TO WS-MARITAL-STAT-SW.                  
+           PERFORM 5150-TAG-FREEZE-OCCP THRU 5150-EXIT.                         
+                                                                                
+      *------------>  COMPULSORY  TAG                                           
+                                                                                
+           IF (F825-NUM-RELATIONSHIP = '00' OR '20' OR '09' OR '10') OR         
+              (F825-NUM-NRIC         = F730-NUM-NRIC1 OR F730-NUM-NRIC2         
+                                    OR F730-NUM-NRIC3 OR F730-NUM-NRIC4)        
+              MOVE 'Y'             TO WS-NUM-ESNTL-FMLY                         
+              GO  TO  5100-EXIT                                                 
+           END-IF.                                                              
+                                                                                
+      *------------>  CONDITIONAL TAG                                           
+                                                                                
+      *------------>  GRANDPARENT AS HA                                         
+           IF WS-HA-GRAND = 'Y'                                                 
+              IF F825-NUM-RELATIONSHIP = '01' OR '11' OR '21' OR '31'           
+                 MOVE 'Y'          TO WS-NUM-ESNTL-FMLY                         
+                 GO TO 5100-EXIT                                                
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *------------>  ELIG-SCH = NCS                                            
+           IF (F730-CDE-ELIG-SCH = 'NCS') AND (PARENT OR SIBLING)               
+               MOVE 'Y'          TO WS-NUM-ESNTL-FMLY                           
+               GO TO 5100-EXIT                                                  
+           END-IF.                                                              
+                                                                                
+      *------------>  CHECK FOR AGE AND NRIC PREFIX                             
+                                                                                
+           PERFORM 5110-COMPUTE-AGE   THRU 5110-EXIT.                           
+                                                                                
+      *------------>  (PARENT AS HA) OR (HA1 SINGLE)                            
+           IF (WS-HA-PARENT        = 'Y') OR                                    
+              (WS-HA1-MARRIED  NOT = 'Y') AND                                   
+              (WS-SC-SP-CHILD  NOT = 'Y')                                       
+              IF (F825-NUM-RELATIONSHIP = '02' OR '12' OR '19' OR               
+                                          '22' OR '32' OR '38' OR               
+                                          '97' OR '98'           ) OR           
+                 (F825-NUM-RELATIONSHIP = '06' OR '07' OR                       
+                                          '26' OR '27'   )                      
+                 MOVE 'Y'          TO WS-NUM-ESNTL-FMLY                         
+                 GO TO 5100-EXIT                                                
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *------------>  SON/DAUGHTER, DAU/SON-IN-LAW, G-CHILD AS HA               
+           IF WS-HA-CHILD = 'Y'                                                 
+              IF ((F825-NUM-RELATIONSHIP = '41' OR '42') OR                     
+                  (F825-NUM-RELATIONSHIP = '43' OR '39')   ) AND                
+                  (WS-AGE                > +20             )                    
+                 MOVE 'Y'          TO WS-NUM-ESNTL-FMLY                         
+                 GO TO 5100-EXIT                                                
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *------------>  BRO/SIS, NEPHEW/NIECE AS HA                               
+           IF WS-HA-SIBLING = 'Y'                                               
+              IF ((F825-NUM-RELATIONSHIP = '06' OR '07' OR                      
+                                           '26' OR '27'   ) OR                  
+                  (F825-NUM-RELATIONSHIP = '08')              )                 
+                 MOVE 'Y'          TO WS-NUM-ESNTL-FMLY                         
+                 GO TO 5100-EXIT                                                
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *------------>  CHILD ABOVE 21                                            
+           IF (F825-NUM-RELATIONSHIP = '41' OR '39')                            
+              MOVE 'Y'             TO WS-NUM-ESNTL-FMLY                         
+           END-IF.                                                              
+                                                                                
+       5100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *************************************************************             
+       5150-TAG-FREEZE-OCCP.                                                    
+      *************************************************************             
+                                                                                
+      *--->FOR FS SCHEME                                                        
+           IF (F730-CDE-ELIG-SCH = 'FS ') AND (APPLICANT OR FIANCEE)            
+              AND WS-NUM-FAMILY > 2                                             
+                 MOVE 'Y'             TO F825-NUM-FREEZE-OCCP                   
+                 GO  TO  5150-EXIT                                              
+           END-IF.                                                              
+                                                                                
+      *--->FOR SMP SCHEME                                                       
+           IF (F730-CDE-ELIG-SCH = 'SMP') AND (MARRIED OR PARENT)               
+                 MOVE 'Y'             TO F825-NUM-FREEZE-OCCP                   
+                 GO  TO  5150-EXIT                                              
+           END-IF.                                                              
+                                                                                
+      *--->FOR NCS SCHEME                                                       
+           IF (F730-CDE-ELIG-SCH = 'NCS') AND (PARENT OR SIBLING)               
+                 MOVE 'Y'             TO F825-NUM-FREEZE-OCCP                   
+                 GO  TO  5150-EXIT                                              
+           END-IF.                                                              
+                                                                                
+      *--->FOR NCP SCHEME                                                       
+           IF (F730-CDE-ELIG-SCH = 'NCP')                                       
+              AND (APPLICANT OR SIBLING)                                        
+                 MOVE 'Y'             TO F825-NUM-FREEZE-OCCP                   
+                 GO  TO  5150-EXIT                                              
+           END-IF.                                                              
+                                                                                
+      *--->FOR PAA SCHEME                                                       
+           IF (F730-CDE-ELIG-SCH = 'PAA') AND (APPLICANT OR ADP-CHILD)          
+                 MOVE 'Y'             TO F825-NUM-FREEZE-OCCP                   
+                 GO  TO  5150-EXIT                                              
+           END-IF.                                                              
+                                                                                
+      *--->FOR PAS SCHEME                                                       
+           PERFORM 5110-COMPUTE-AGE   THRU 5110-EXIT.                           
+           IF (F730-CDE-ELIG-SCH = 'PAS') AND (SINGLE) AND                      
+              (APPLICANT OR (CHILD AND WS-AGE > +20))                           
+                 MOVE 'Y'             TO F825-NUM-FREEZE-OCCP                   
+                 GO  TO  5150-EXIT                                              
+           END-IF.                                                              
+                                                                                
+      *--->DIVORCED/WIDOW/SEPARATED WITH SC/SP CHILD                            
+           IF (F730-CDE-ELIG-SCH = 'PA ' OR 'TCP') AND                          
+           (APPLICANT) AND (DIV-WID-SEP) AND (WS-SC-SP-CHILD = 'Y')             
+                 MOVE 'Y'             TO F825-NUM-FREEZE-OCCP                   
+                 GO  TO  5150-EXIT                                              
+           END-IF.                                                              
+                                                                                
+      *--->TAG MARRIED APPLICANT AND SPOUSE FOR PA SCHEME                       
+           IF (F730-CDE-ELIG-SCH = 'PA ' OR 'TCP') AND                          
+              (MARRIED) AND (APPLICANT OR SPOUSE) AND                           
+              (WS-NUM-FAMILY > 2)                                               
+                 MOVE 'Y'             TO F825-NUM-FREEZE-OCCP                   
+                 GO  TO  5150-EXIT                                              
+           END-IF.                                                              
+                                                                                
+      *--->APPLICANT IS S/D/W/P AND WITH NO SC/SP CHILD                         
+           IF (F730-CDE-ELIG-SCH = 'PA ' OR 'TCP')                              
+              AND (WS-HA1-MARRIED NOT = 'Y')                                    
+              AND NOT(APPLICANT OR GRANDPARENT)                                 
+              AND (PARENT OR MARRIED)                                           
+              AND (WS-SC-SP-CHILD NOT = 'Y')                                    
+                 MOVE 'Y'             TO F825-NUM-FREEZE-OCCP                   
+                 GO  TO  5150-EXIT                                              
+           END-IF.                                                              
+                                                                                
+      *--->FOR OR SCHEME                                                        
+           IF (F730-CDE-ELIG-SCH = 'OR ')                                       
+                 MOVE 'Y'             TO F825-NUM-FREEZE-OCCP                   
+           END-IF.                                                              
+                                                                                
+                                                                                
+       5150-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *************************************************************             
+       5110-COMPUTE-AGE.                                                        
+      *************************************************************             
+                                                                                
+           MOVE ZEROS                  TO WS-AGE.                               
+                                                                                
+      *--------------> USE +999 AS AGE FOR SPECIAL CASES                        
+                                                                                
+           IF F825-NUM-NRIC (1:1) = 'F' OR 'X'                                  
+              MOVE +999                TO WS-AGE                                
+              GO TO 5110-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           IF F825-NUM-NRIC (2:2) < '68'                                        
+              MOVE +999                TO WS-AGE                                
+              GO TO 5110-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           MOVE F825-NUM-NRIC (2:2)    TO WS-BIRTH-YY.                          
+                                                                                
+           COMPUTE WS-AGE = WS-SYS-YY - WS-BIRTH-YY.                            
+                                                                                
+      *--------------> FOR WS-SYS-YY IN 21ST CENTURY                            
+           IF WS-AGE IS NEGATIVE                                                
+              ADD +100   TO WS-AGE                                              
+           END-IF.                                                              
+                                                                                
+       5110-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *************************************************************             
+       5200-UPDATE-K825.                                                        
+      *************************************************************             
+                                                                                
+           IF F730-NUM-ALLO-CAT = 'SBF' OR 'BTO' OR 'OBF'                       
+              MOVE WS-NUM-ESNTL-FMLY   TO F825-NUM-ESNTL-FMLY                   
+           ELSE                                                                 
+              MOVE WS-NUM-ESNTL-FMLY   TO F825-NUM-LESSEE-CHECK                 
+           END-IF.                                                              
+                                                                                
+           MOVE BP13F825-REC           TO BP13K825-REC.                         
+                                                                                
+           REWRITE BP13K825-REC.                                                
+                                                                                
+           IF WS-K825-STATUS = ZEROS                                            
+              ADD +1  TO WS-CNT-UPD-K825                                        
+           ELSE                                                                 
+              DISPLAY 'BP13K825 UPDATE ERROR, STATUS IS ' WS-K825-STATUS        
+              DISPLAY 'BP13K825 RECORD KEY IS ' F825-NUM-REGN                   
+           END-IF.                                                              
+                                                                                
+       5200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *************************************************************             
+       5300-PRINT-L834.                                                         
+      *************************************************************             
+                                                                                
+           IF WS-L834-LINECTR > 49                                              
+              PERFORM 5310-PRINT-HEADING   THRU 5310-EXIT                       
+           END-IF.                                                              
+                                                                                
+           ADD +1        TO WS-L834-LINECTR.                                    
+                                                                                
+           IF WS-OCCUP-TAG = 1                                                  
+              ADD +1                       TO WS-L834-S-NO                      
+              MOVE WS-L834-S-NO            TO L834-S-NO                         
+              MOVE F730-NUM-REGN           TO L834-REF-NO                       
+              MOVE F730-CDE-ALLOC-SCH      TO L834-ALLOC-SCH                    
+              MOVE F730-CDE-ELIG-SCH       TO L834-ELIG-SCH                     
+              MOVE F730-CDE-NT1            TO L834-NT                           
+              MOVE F730-CDE-FLAT-TYPE      TO L834-FT                           
+              MOVE F730-CDE-CATEGORY       TO L834-CAT                          
+                                                                                
+              WRITE BP13L834-REC         FROM L834-DETAIL-01                    
+                                        AFTER ADVANCING 2 LINES                 
+              ADD   +2                     TO WS-L834-LINECTR                   
+           END-IF.                                                              
+                                                                                
+           PERFORM 5320-GET-REL-DESC     THRU 5320-EXIT.                        
+           PERFORM 5325-GET-CITIZENSHIP  THRU 5325-EXIT.                        
+           PERFORM 5330-GET-MARITAL-STAT THRU 5330-EXIT.                        
+                                                                                
+           EVALUATE TRUE                                                        
+           WHEN F825-NUM-NRIC = F730-NUM-NRIC1                                  
+              MOVE 'HA1'                   TO L834-HA-OCCP                      
+           WHEN F825-NUM-NRIC = F730-NUM-NRIC2                                  
+              MOVE 'HA2'                   TO L834-HA-OCCP                      
+           WHEN F825-NUM-NRIC = F730-NUM-NRIC3                                  
+              MOVE 'HA3'                   TO L834-HA-OCCP                      
+           WHEN F825-NUM-NRIC = F730-NUM-NRIC4                                  
+              MOVE 'HA4'                   TO L834-HA-OCCP                      
+           WHEN OTHER                                                           
+              MOVE 'OCCP'                  TO L834-HA-OCCP                      
+           END-EVALUATE.                                                        
+                                                                                
+           MOVE F825-NUM-NRIC              TO L834-NRIC.                        
+           MOVE F825-NME-OCCP              TO L834-NAME.                        
+           MOVE F825-NUM-RELATIONSHIP      TO L834-REL-CODE.                    
+           MOVE F825-NUM-ESNTL-FMLY        TO L834-ESNTL-FMLY.                  
+           MOVE F825-NUM-LESSEE-CHECK      TO L834-LSE-CHK.                     
+           MOVE F825-NUM-FREEZE-OCCP       TO L834-FRZ-OCP-CHK.                 
+                                                                                
+           WRITE BP13L834-REC            FROM L834-DETAIL-02                    
+                                        AFTER ADVANCING 1 LINE.                 
+                                                                                
+       5300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *************************************************************             
+       5310-PRINT-HEADING.                                                      
+      *************************************************************             
+                                                                                
+           ADD +1                  TO WS-L834-PAGECTR.                          
+           MOVE ZERO               TO WS-L834-LINECTR.                          
+                                                                                
+           MOVE WS-L834-PAGECTR    TO L834-PAGE-NO.                             
+           MOVE WS-EDITED-DATE     TO L834-RUN-DATE.                            
+                                                                                
+           WRITE BP13L834-REC    FROM L834-HEADER-01                            
+                                AFTER ADVANCING PAGE.                           
+                                                                                
+           WRITE BP13L834-REC    FROM L834-HEADER-02                            
+                                AFTER ADVANCING 1 LINE.                         
+                                                                                
+           WRITE BP13L834-REC    FROM L834-HEADER-03                            
+                                AFTER ADVANCING 2 LINES.                        
+                                                                                
+           WRITE BP13L834-REC    FROM L834-HEADER-04                            
+                                AFTER ADVANCING 1 LINE.                         
+                                                                                
+           WRITE BP13L834-REC    FROM L834-HEADER-05                            
+                                AFTER ADVANCING 1 LINE.                         
+                                                                                
+       5310-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       5320-GET-REL-DESC.                                                       
+      ****************************************************************          
+                                                                                
+           MOVE SPACES                TO BP13K060-REC.                          
+           MOVE '35'                  TO K060-SERIAL-NO.                        
+           MOVE F825-NUM-RELATIONSHIP TO K060-CODE.                             
+           PERFORM 5400-READ-K060     THRU 5400-EXIT.                           
+           MOVE K060-DESC             TO L834-REL-DESC.                         
+                                                                                
+       5320-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ****************************************************************          
+       5325-GET-CITIZENSHIP.                                                    
+      ****************************************************************          
+                                                                                
+           MOVE SPACES                TO BP13K060-REC.                          
+           MOVE '41'                  TO K060-SERIAL-NO.                        
+           MOVE F825-NUM-CITIZENSHIP  TO K060-CODE.                             
+           PERFORM 5400-READ-K060     THRU 5400-EXIT.                           
+           MOVE K060-DESC             TO L834-CITIZENSHIP.                      
+                                                                                
+       5325-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ****************************************************************          
+       5330-GET-MARITAL-STAT.                                                   
+      ****************************************************************          
+                                                                                
+           IF F825-NUM-MARITAL-STATUS = 'P' OR '5'                              
+              MOVE 'P'                  TO L834-MARITAL-STAT                    
+              GO TO 5330-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           MOVE SPACES                  TO BP13K060-REC.                        
+           MOVE '21'                    TO K060-SERIAL-NO.                      
+           MOVE F825-NUM-MARITAL-STATUS TO K060-CODE.                           
+           PERFORM 5400-READ-K060       THRU 5400-EXIT.                         
+           MOVE K060-DESC               TO L834-MARITAL-STAT.                   
+                                                                                
+       5330-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ****************************************************************          
+       5400-READ-K060.                                                          
+      ****************************************************************          
+           READ BP13K060 KEY IS K060-KEY-FLD.                                   
+                                                                                
+           IF WS-K060-STATUS = 0                                                
+              CONTINUE                                                          
+           ELSE                                                                 
+           IF WS-K060-STATUS = 23                                               
+              DISPLAY 'BP13K060 RECORD NOT FOUND, KEY IS ' K060-KEY-FLD         
+              DISPLAY 'F730-KEY-FLD-' F730-KEY-FLD                              
+           ELSE                                                                 
+              DISPLAY 'BP13K060 READ ERROR, STATUS IS ' WS-K060-STATUS          
+              DISPLAY 'K060-KEY-FLD-' K060-KEY-FLD                              
+                    '& F730-KEY-FLD-' F730-KEY-FLD                              
+           END-IF.                                                              
+       5400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+       9999-CLOSE-ROUTINE.                                                      
+      ****************************************************************          
+                                                                                
+           CLOSE BP13F730                                                       
+                 BP13F825                                                       
+                 BP13K825                                                       
+                 BP13K060                                                       
+                 BP13L834.                                                      
+                                                                                
+           DISPLAY SPACES.                                                      
+           DISPLAY 'RUN DATE : ' WS-EDITED-DATE.                                
+           DISPLAY SPACES.                                                      
+           DISPLAY '*===========BP13C834 CONTROL TOTALS============*'.          
+           DISPLAY SPACES.                                                      
+           DISPLAY 'BP13F730 RECORDS READ        = ' WS-CNT-READ-F730.          
+           DISPLAY 'BP13F825 RECORDS READ        = ' WS-CNT-READ-F825.          
+           DISPLAY 'BP13K825 RECORDS UPDATED     = ' WS-CNT-UPD-K825.           
+           DISPLAY SPACES.                                                      
+           DISPLAY '*==============================================*'.          
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+

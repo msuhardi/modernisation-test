@@ -1,0 +1,214 @@
+//BP13D112  JOB (BP13P),'BP13D112',MSGCLASS=N,CLASS=I,                          
+//       MSGLEVEL=(1,1),NOTIFY=CSD0071                                          
+//JOBLIB   DD  DSN=BP13.BATCH.LOADCOB,DISP=SHR                                  
+//*==================================================================           
+//* DAILY JOB DBSS FLAT                                                         
+//* 1) THIS JOB RUN AFTER AG07D636 FOR AG07F640, JCL MOVE OVER FROM             
+//*    BP13D102, ADD BP13CC76                                                   
+//* 2) GET IBG-NO, IBG DATE FOR PRINTING REPORT                                 
+//*==================================================================           
+//* BP134153 190411 NEW JOB TO GET IBG-NO FROM AG07F640                         
+//* BP134153 240411 BP13.FD10.VOUCHOIC.ACCUMIBG FOR MA&B PRINTING REPORT        
+//* BP135171 100214 TO CATER FOR DB2 UPGRADE                                    
+//*-----------------------------------------------------------------            
+//*--------------------------------------------------------------------         
+//*      VERIFY FILES BEFORE DAILY PRODUCTION RUN                               
+//*--------------------------------------------------------------------         
+//STEP0A  EXEC PGM=IDCAMS,COND=(0,NE)                                           
+//INPUT1   DD DSN=BP13.KD30.PPDUEDTE,DISP=OLD                                   
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN   DD *                                                                  
+          VFY FILE(INPUT1)                                                      
+//*=================================================================            
+//* TO SEND DYNAMIC JDE AHEAD OF THE PRINT DATASETS                             
+//* PRT01 : 1 COPY                           (MA&B TEAM)                        
+//*-----------------------------------------------------------------            
+//PRT01    EXEC PGM=IEBGENER                                                    
+//SYSUT1   DD *                                                                 
+1$DJDE$ BTEXT='DPT=GRPID-EAAARS1A CP-1',END;                                    
+1$DJDE$ JDE=BP13S,JDL=BP13,END;                                                 
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EAAARS1A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID),DEST=IOM2                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*                                                                             
+//*=================================================================            
+//*-----------------------------------------------------------------            
+//* INCLUDE PAYMENT TO DEVELOPER ON PP FROM VOUCHER SYSTEM                      
+//* AG07.F630.SOC = BACKUP IN BP13D100                                          
+//*-----------------------------------------------------------------            
+//STEP01   EXEC SORT,COND=(0,NE)                                                
+//*SORTIN   DD DSN=AG07.F630.SOC,DISP=SHR                                       
+//SORTIN   DD DSN=BP13.AG07.F630.VOUCHER,DISP=SHR                               
+//         DD DSN=BP13.AG07.F630.VOUCHER.MTHBKUP,DISP=SHR                       
+//SORTOUT  DD DSN=&&AG07F630,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(8,5),RLSE),                                
+//            DCB=(BLKSIZE=27950,LRECL=130,RECFM=FB)                            
+//SYSIN    DD *                                                                 
+    SORT FIELDS=(35,11,A),FORMAT=CH                                             
+    INCLUDE COND=(20,4,CH,EQ,C'SCD1',OR,                                        
+                  20,4,CH,EQ,C'SCD2',OR,                                        
+                  20,4,CH,EQ,C'SCD3')                                           
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* DROP DUPLICATE VOUCHER-NO                                                   
+//* SORT VOUCHER RECORD BY BATCH-NO/VR-NO                                       
+//*---------------------------------------------------------------------        
+//STEP02   EXEC  SORT,COND=(0,NE)                                               
+//SORTIN   DD DSN=&&AG07F630,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F630VOUR,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(8,5),RLSE),                                
+//            DCB=(BLKSIZE=27950,LRECL=130,RECFM=FB)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(27,19,A,1,8,A),FORMAT=CH                                         
+  SUM FIELDS=NONE                                                               
+//*-----------------------------------------------------------------            
+//* SORT VOUCHER RECORD BY BATCH-NO/VR-NO WITH IBG DATA                         
+//* AG07.F640.SOC = BACKUP IN BP13D408                                          
+//* INCLUDE REJECT-CODE = SPACES                                                
+//*-----------------------------------------------------------------            
+//STEP03   EXEC SORT,COND=(0,NE)                                                
+//*SORTIN   DD DSN=AG07.F640.SOC,DISP=SHR                                       
+//SORTIN   DD DSN=BP13.AG07.F640.MTHBKUP,DISP=SHR                               
+//         DD DSN=BP13.AG07.F640.PREVMTH,DISP=SHR                               
+//SORTOUT  DD DSN=&&AG07F640,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(8,5),RLSE),                                
+//            DCB=(BLKSIZE=27900,LRECL=100,RECFM=FB)                            
+//SYSIN    DD *                                                                 
+    SORT FIELDS=(1,19,A),FORMAT=CH                                              
+    SUM FIELDS=NONE                                                             
+    INCLUDE COND=(46,2,CH,EQ,C'  ')                                             
+//*-----------------------------------------------------------------            
+//* MATCH AG07F630 & AG07F640 TO GET IBG DATA OR CHEQUE-NO                      
+//*-----------------------------------------------------------------            
+//STEP04   EXEC PGM=BP13CC37,COND=(0,NE)                                        
+//AG07F630 DD DSN=&&F630VOUR,DISP=(OLD,PASS)                                    
+//AG07F640 DD DSN=&&AG07F640,DISP=(OLD,PASS)                                    
+//AG07F63A DD DSN=&&F630IBG,DISP=(,PASS),                                       
+//         UNIT=SYSDA,SPACE=(CYL,(8,5),RLSE),                                   
+//         DCB=(BLKSIZE=27950,LRECL=130,RECFM=FB)                               
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-----------------------------------------------------------------            
+//* SORT VOUCHER OIC FILE BY VOUCHER NO                                         
+//*-----------------------------------------------------------------            
+//STEP05   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.FD10.VOUCHOIC.PROCESS,DISP=SHR                           
+//         DD DSN=BP13.FD10.VOUCHOIC.JV,DISP=SHR                                
+//SORTOUT  DD DSN=&&BP13FD10,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            SPACE=(CYL,(10,5),RLSE),                                          
+//            DCB=(RECFM=FB,LRECL=1400,BLKSIZE=0)                               
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(24,11,A),FORMAT=CH                                               
+//*-----------------------------------------------------------------            
+//* SORT BY VR-NO, DROP DUPLICATE VOUCHER-NO                                    
+//*-----------------------------------------------------------------            
+//STEP06   EXEC  SORT,COND=(0,NE)                                               
+//SORTIN   DD DSN=&&F630IBG,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&F630DEVP,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(8,5),RLSE),                                
+//            DCB=(BLKSIZE=27950,LRECL=130,RECFM=FB)                            
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(35,11,A),FORMAT=CH                                              
+//*-----------------------------------------------------------------            
+//* UPDATE PAYMENT TO DEVELOPER WHEN CHEQUE/IBG IS READY                        
+//*-----------------------------------------------------------------            
+//STEP07   EXEC PGM=BP13CC76,COND=(0,NE)                                        
+//BP13FD10 DD DSN=&&BP13FD10,DISP=(OLD,DELETE)                                  
+//AG07F630 DD DSN=&&F630DEVP,DISP=(OLD,PASS)                                    
+//BP13KD30 DD DSN=BP13.KD30.PPDUEDTE,DISP=SHR                                   
+//P13FD10A DD DSN=BP13.FD10.VOUCHOIC.IBG,DISP=OLD                               
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-----------------------------------------------------------------            
+//* SORT REGN-NO ORDER, DTE-VALUE=SPACES                                        
+//* VR/CHEQUE TO DEVELPER                                                       
+//*-----------------------------------------------------------------            
+//STEP08 EXEC  SORT,COND=(0,NE)                                                 
+//SORTIN   DD DSN=BP13.FD10.VOUCHOIC.IBG,DISP=SHR                               
+//SORTOUT  DD  DSN=&&FD10CHQ,DISP=(NEW,PASS),                                   
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(20,10),RLSE),                                        
+//             DCB=(RECFM=FB,LRECL=1400,BLKSIZE=0)                              
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(4,8,A),FORMAT=CH                                                
+   INCLUDE COND=((1,3,CH,EQ,C'DEV',OR,1,3,CH,EQ,C'SAL'),AND,                    
+               370,2,CH,EQ,C'D1')                                               
+//*-----------------------------------------------------------------            
+//* PRINT CHECKLIST FOR PROGRESS PAYMENT DUE                                    
+//*-----------------------------------------------------------------            
+//STEP09   EXEC  SAS,COND=(0,NE)                                                
+//BP13FD10 DD DSN=&&FD10CHQ,DISP=(OLD,PASS)                                     
+//BP13LC04 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13SC04),DISP=SHR                             
+//*=================================================================            
+//* SORT REGN-NO ORDER, DUE-DATE, PROJECT CODE, IBG-VALUE-DATE                  
+//* DTE-VALUE NOT=SPACES (IBG)                                                  
+//*-----------------------------------------------------------------            
+//STEP10   EXEC  SORT,COND=(0,NE)                                               
+//SORTIN   DD DSN=BP13.FD10.VOUCHOIC.IBG,DISP=SHR                               
+//SORTOUT  DD DSN=&&FD10IBG,DISP=(NEW,PASS),                                    
+//            UNIT=SYSDA,                                                       
+//            SPACE=(CYL,(20,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=1400,BLKSIZE=0)                               
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(4,8,A,178,8,A,215,3,A,348,8,A),FORMAT=CH                        
+   INCLUDE COND=((1,3,CH,EQ,C'DEV',OR,1,3,CH,EQ,C'SAL'),AND,                    
+                 370,2,CH,NE,C'D1')                                             
+//*-----------------------------------------------------------------            
+//* PRINT ACKNOWLEDGEMENT ON PROGRESS PAYMENT DUE (IBG CASES)                   
+//*-----------------------------------------------------------------            
+//STEP11   EXEC PGM=IKJEFT01,DYNAMNBR=20,COND=(0,NE),REGION=4096K               
+//BP13KA10 DD DSN=BP13.KA10.PRJCT,DISP=SHR                                      
+//BP13FD10 DD DSN=&&FD10IBG,DISP=(OLD,PASS)                                     
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13LC38 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSTSIN  DD *                                                                 
+  DSN SYSTEM(DSN)                                                               
+  RUN PROGRAM(BP13CC38) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+  END                                                                           
+//*-----------------------------------------------------------------            
+//* ACCUM DELETE BP13KD10 TO BP13FD10                                           
+//*-----------------------------------------------------------------            
+//STEP12   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//INPUT1   DD DSN=BP13.FD10.VOUCHOIC.IBG,DISP=SHR                               
+//OUTPUT1  DD DSN=BP13.FD10.VOUCHOIC.MONTH,DISP=MOD                             
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+     REPRO IFILE(INPUT1) OFILE(OUTPUT1)                                         
+//*-----------------------------------------------------------------            
+//* SORT VOUCHER OIC FILE BY VOUCHER NO                                         
+//*-----------------------------------------------------------------            
+//STEP13   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.FD10.VOUCHOIC.MONTH,DISP=SHR                             
+//         DD DSN=BP13.FD10.VOUCHOIC.PREVMTH,DISP=SHR                           
+//SORTOUT  DD DSN=&&FD10CURR,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            SPACE=(CYL,(10,5),RLSE),                                          
+//            DCB=(RECFM=FB,LRECL=1400,BLKSIZE=0)                               
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(24,11,A),FORMAT=CH                                               
+//*-----------------------------------------------------------------            
+//* UPDATE PAYMENT TO DEVELOPER WHEN CHEQUE/IBG IS READY                        
+//* UPDATE 2 MONTHS BP13FD10 FILE WITH IBG-NO FOR MA&B END USER REPORT          
+//*-----------------------------------------------------------------            
+//STEP14   EXEC PGM=BP13CC76,COND=(0,NE)                                        
+//BP13FD10 DD DSN=&&FD10CURR,DISP=(OLD,DELETE)                                  
+//AG07F630 DD DSN=&&F630DEVP,DISP=(OLD,PASS)                                    
+//BP13KD30 DD DSN=BP13.KD30.PPDUEDTE,DISP=SHR                                   
+//P13FD10A DD DSN=BP13.FD10.VOUCHOIC.ACCUMIBG,DISP=OLD                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+

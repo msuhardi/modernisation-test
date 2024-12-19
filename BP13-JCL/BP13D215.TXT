@@ -1,0 +1,181 @@
+//BP13D215 JOB (BP13P),'SOC',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),                 
+//         NOTIFY=CSD0071                                                       
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//*--------------------------------------------------------------------         
+//* CHG NO   BY  ON     - DESCRIPTION                                           
+//* ---------------------------------                                           
+//* BP133724 DW5 091118 - NEW JCL TO CATER FOR EQMS                             
+//* BP13     CCC 270421 - EXPAND TEMP DATASET SIZE                              
+//* BP13     EL  170122 - STOP SENDING TO XCBR                                  
+//*                      >XCBR 14 JAN 2020 AA11                                 
+//*                      >XCBQ 14 JAN 2020 BP13                                 
+//* BP13     MRR 050424 - FILTER ACCEPT DATE BY LAST 3 DAYS                     
+//*                       AND MATCH WITH BP13K240                               
+//*--------------------------------------------------------------------         
+//* JOB TO PASS ACCUMMULATIVE UPDATE TO INTV. THIS JOB IS SCHEDULED             
+//* BY OPC TO RUN AT 9PM FROM MON TO FRI, 2PM ON SAT. SUN AND                   
+//* PUBLIC HOLIDAYS UPON REQUEST BY USER.                                       
+//*                                                                             
+//* THIS JOB IS THE SAME AS BP13A214, WHICH IS RUN AS AN ETT JOB (USER          
+//* SUBMITS THE JOB THRU CICSP ONLINE PANEL) EXCEPT THAT IT PASS TO             
+//* EQMS ONLY.                                                                  
+//*--------------------------------------------------------------------         
+//*--------------------------------------------------------------------         
+//*   RUN PROGRAM URE BP13A993                                                  
+//*--------------------------------------------------------------------         
+//STEP00  EXEC PGM=BP13C21H                                                     
+//BP13K240  DD DSN=BP13.K240.HEADFLAT,DISP=SHR                                  
+//BP13K241  DD DSN=BP13.K240.HEADFLAT.PATH4,DISP=SHR                            
+//BP13K249  DD DSN=BP13.K249.NT.FT,DISP=SHR                                     
+//BP13L21H  DD SYSOUT=*                                                         
+//SYSPRINT  DD SYSOUT=*                                                         
+//SYSOUT    DD SYSOUT=*                                                         
+//SYSDBOUT  DD SYSOUT=*                                                         
+//*                                                                             
+//*********************************************************************         
+//* STEP01  TO BACKUP BP13.F230.ACCUM                                           
+//*********************************************************************         
+//STEP01   EXEC  PGM=IDCAMS,COND=(0,NE)                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//INPUT1   DD  DSN=BP13.F230.ACCUM,DISP=SHR                                     
+//OUTPUT1  DD  DSN=BP13.F230.ACCUM.BKUP(+1),                                    
+//             DISP=(NEW,CATLG),                                                
+//             UNIT=DISK,                                                       
+//             SPACE=(TRK,(10,5),RLSE),                                         
+//             DCB=(BP13.GDG,BLKSIZE=0,LRECL=130,RECFM=FB)                      
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                       
+/*                                                                              
+//*------------------------------------------------------------------           
+//* STEP02  TO SORT DETAIL REC BY DTE ACCEPTANCE (LAST 3 DAYS)                  
+//*------------------------------------------------------------------           
+//STEP02   EXEC  SORT,COND=(0,NE)                                               
+//SYSOUT   DD  SYSOUT=*                                                         
+//SORTIN   DD  DSN=BP13.K230.FLATLIST,                                          
+//             DISP=SHR,                                                        
+//             AMP=('BUFND=8','BUFNI=4')                                        
+//SORTOUT  DD  DSN=&&P13F230A,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=(SYSDA,20),                                                 
+//             SPACE=(TRK,(20,10),RLSE),                                        
+//             DCB=(LRECL=450,RECFM=FB),                                        
+//             DSORG=PS                                                         
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(64,11,A),FORMAT=CH                                              
+   OUTFIL INCLUDE=((15,8,CH,EQ,DATE1,OR,                                        
+                    15,8,CH,EQ,DATE1-1,OR,                                      
+                    15,8,CH,EQ,DATE1-2),AND,                                    
+                    214,1,CH,NE,C'Y')                                           
+//*---------------------------------------------------------------------        
+//* STEP03 MATCH BP13F230 WITH BP13F240                                         
+//* BY DTE-ALLOC, NUM-NEW-TOWN, FLAT-TYPE&NUM-BLK, DTE-BALLOT                   
+//*    NEIGH&CNTRCT                                                             
+//*---------------------------------------------------------------------        
+//STEP03   EXEC SORT,COND=(0,NE)                                                
+//SORTJNF1 DD DSN=&&P13F230A,DISP=(SHR,PASS)                                    
+//SORTJNF2 DD DSN=BP13.K240.HEADFLAT,DISP=SHR                                   
+//MATCH    DD  DSN=&&P13F240A,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=(SYSDA,20),                                                 
+//             SPACE=(TRK,(10,5),RLSE),                                         
+//             DCB=(LRECL=450,RECFM=FB),                                        
+//             DSORG=PS                                                         
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(5,52,CH,A)                                                      
+   JOINKEYS FILE=F1,FIELDS=(7,8,A,30,20,A,50,7,A,117,6,A,229,8,A)               
+   JOINKEYS FILE=F2,FIELDS=(7,8,A,30,20,A,50,7,A,117,6,A,15,8,A),               
+      INCLUDE=(82,8,CH,NE,C'        ',AND,229,1,CH,NE,C'Y')                     
+   REFORMAT FIELDS=(F2:1,450)                                                   
+   OUTFILE FNAMES=MATCH                                                         
+   SUM FIELDS=NONE                                                              
+//*********************************************************************         
+//* STEP04  TO SORT OUT ACCUM UPDATE FOR THE DAY                                
+//* REMOVED DATE CHECKING (05/04/2024)                                          
+//*********************************************************************         
+//STEP04   EXEC  PGM=BP13C251,COND=(0,NE)                                       
+//BP13F230 DD  DSN=&&P13F230A,                                                  
+//             DISP=(SHR,DELETE)                                                
+//BP13F240 DD  DSN=&&P13F240A,                                                  
+//             DISP=(SHR,DELETE)                                                
+//P13F230A DD  DSN=&&P13F230B,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=(SYSDA,20),                                                 
+//             SPACE=(TRK,(30,15),RLSE),                                        
+//             DCB=(LRECL=450,RECFM=FB),                                        
+//             DSORG=PS                                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+/*                                                                              
+//*********************************************************************         
+//* STEP05  TO SORT OUT ACCUM UPDATE FOR THE DAY                                
+//* BY K230-DTE-ALLOC, K230-NUM-ZONE, K230-NUM-NEW-TOWN, K230-CDE-DETAIL        
+//*********************************************************************         
+//STEP05   EXEC  SORT,COND=(0,NE)                                               
+//SORTIN   DD  DSN=&&P13F230B,                                                  
+//             DISP=(SHR,DELETE)                                                
+//SORTOUT  DD  DSN=&&P13F230C,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=(SYSDA,20),                                                 
+//             SPACE=(TRK,(30,15),RLSE),                                        
+//             DCB=(LRECL=450,RECFM=FB),                                        
+//             DSORG=PS                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSIN    DD  *                                                                
+  SORT  FIELDS=(7,8,A,97,10,A,30,27,A,5,2,A),FORMAT=CH                          
+/*                                                                              
+//*********************************************************************         
+//* STEP06  TO CALCULATE THE TOTAL NUMBER OF DETAIL REC SENT                    
+//*********************************************************************         
+//STEP06   EXEC  PGM=BP13C252,COND=(0,NE)                                       
+//P13F230A DD  DSN=&&P13F230C,                                                  
+//             DISP=(SHR,DELETE)                                                
+//P13F230B DD  DSN=&&P13F230D,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=(SYSDA,20),                                                 
+//             SPACE=(TRK,(30,15),RLSE),                                        
+//             DCB=(LRECL=450,RECFM=FB),                                        
+//             DSORG=PS                                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT EST/N/C/BLK, FLAT-TYPE ORDER                                           
+//*---------------------------------------------------------------------        
+//STEP07 EXEC    SORT,COND=(0,NE)                                               
+//SORTIN   DD  DSN=&&P13F230D,                                                  
+//             DISP=(SHR,DELETE)                                                
+//SORTOUT  DD  DSN=&&P13F230E,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=(SYSDA,20),                                                 
+//             SPACE=(CYL,(5,3),RLSE),                                          
+//             DCB=(BLKSIZE=0,LRECL=450,RECFM=FB)                               
+//SYSIN    DD  *                                                                
+     SORT FIELDS=(7,8,A,97,10,A,30,27,A,5,2,A,59,5,A,57,2,A),FORMAT=CH          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* EDIT RECORDS WITH NUM-SELECTION = '3R ' (FOR RECID = '05')                  
+//*---------------------------------------------------------------------        
+//STEP08 EXEC    PGM=BP13C279,COND=(0,NE)                                       
+//BP13F230 DD  DSN=&&P13F230E,                                                  
+//             DISP=(SHR,PASS)                                                  
+//P13F230O DD  DSN=BP13.F230.ACCUM,                                             
+//             DISP=SHR                                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+/*                                                                              
+//*--------------------------------------------------------------------         
+//*   SEND INTV FILE TO PRINTER PORT HQMS                                       
+//*--------------------------------------------------------------------         
+//STEP09 EXEC    PGM=IEBGENER                                                   
+//SYSUT1   DD  DSN=BP13.F230.ACCUM,                                             
+//             DISP=SHR                                                         
+//SYSUT2   DD SYSOUT=A,DEST=XCBQ                                                
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  DUMMY                                                            
+//*********************************************************************         
+//* END OF JOB BP13D201                                                         
+//*********************************************************************         
+

@@ -1,0 +1,122 @@
+//BP13D53E JOB (BP13P),'BP13D53E',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//         NOTIFY=CSD0071                                                       
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//*==================================================================           
+//* JCL SIMILAR BP13D533 (DBSS JCL)                                             
+//*==================================================================           
+//* EXTRACT THE CASES FROM BP13KD20 ON AN HOURLY BASIS ON NEW AND               
+//* UPDATE DBSS BOOKED CASES, FTP TO DEVELOPER SERVER                           
+//*==================================================================           
+//* CHG REF  BY   ON       DESCRIPTION                                          
+//* -------- ---- -------- -----------                                          
+//* BP134015 ZDD1 010910   NEW JCL - PATTERN TO BP13D533                        
+//* BP134015 IL5  091010   INCLUDE FA80.ACCUM AND MONTH BACKUP                  
+//* BP134060 ZDD1 060111   INCREASE FB66 LENGTH TO 3000                         
+//*=================================================================            
+//*********************************************************************         
+//*NOTE --- BP13.KR20 FOR PRE PRODUCTION TEST                         *         
+//*         BP13.KR80 FOR PRE PRODUCTION TEST                         *         
+//*         BP13.KA80 FOR PRODUCTION                                  *         
+//*********************************************************************         
+//*  BACKUP FTP FILE TO DEVELOPER                                               
+//*-----------------------------------------------------------------            
+//STEP01   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.FB66.FTPUNIT.LOG,DISP=SHR                                
+//OUTPUT1  DD DSN=BP13.FB66.FTPUNIT.BACKUP(+1),DISP=(NEW,CATLG),                
+//            SPACE=(CYL,(50,25)),                                              
+//            DCB=(BP13.GDG,BLKSIZE=0,LRECL=3000,RECFM=FB)                      
+//SYSIN    DD  *                                                                
+      REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                    
+//*-----------------------------------------------------------------            
+//* SORT OUT EC CASES BY SYSTEM-DATE/TIME                                       
+//*-----------------------------------------------------------------            
+//STEP02   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.KA80.UPDLOG,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//SORTOUT  DD DSN=&&BP13FA80,DISP=(NEW,PASS),                                   
+//         UNIT=SYSDA,                                                          
+//         DCB=(BLKSIZE=0,LRECL=4000,RECFM=FB),                                 
+//         SPACE=(CYL,(50,10),RLSE)                                             
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,16,A),FORMAT=CH                                               
+   INCLUDE COND=(506,1,CH,EQ,C'6',AND,493,8,CH,EQ,C'BP13KB20')                  
+//*-----------------------------------------------------------------            
+//* SORT OUT EC CASES BY SYSTEM-DATE/TIME                                       
+//* INCLUDE TEST CASES                                                          
+//*-----------------------------------------------------------------            
+//STEP02A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.KR80.UPDLOG,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//SORTOUT  DD DSN=&&BP13FA80,DISP=(MOD,PASS)                                    
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,16,A),FORMAT=CH                                               
+   INCLUDE COND=(506,1,CH,EQ,C'6',AND,493,8,CH,EQ,C'BP13KB20')                  
+//*-----------------------------------------------------------------            
+//* SORT OUT EC CASES BY SYSTEM-DATE/TIME                                       
+//* INCLUDE BOOKING TXNS FROM 10 PM - 2 AM                                      
+//* (RECORDS HAVE BEEN CLEARED IN BP13KA80 VIABP13D90B)                         
+//*-----------------------------------------------------------------            
+//STEP02B  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.FA80.UPDLOG.ACCUM,DISP=SHR                               
+//SORTOUT  DD DSN=&&BP13FA80,DISP=(MOD,PASS)                                    
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,16,A),FORMAT=CH                                               
+   INCLUDE COND=(506,1,CH,EQ,C'6',AND,493,8,CH,EQ,C'BP13KB20')                  
+//*-----------------------------------------------------------------            
+//* SORT OUT EC CASES BY SYSTEM-DATE/TIME                                       
+//* INCLUDE BOOKING TXNS FROM 10 PM - 2 AM RECEIVED ON LAST DAY OF MTH          
+//* (RECORDS HAVE BEEN CLEARED IN BP13FA80 ACCUM IN BP13MBK1)                   
+//*-----------------------------------------------------------------            
+//STEP02C  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.FA80.UPDLOG.MONTH(0),DISP=SHR                            
+//SORTOUT  DD DSN=&&BP13FA80,DISP=(MOD,PASS)                                    
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,16,A),FORMAT=CH                                               
+   INCLUDE COND=(506,1,CH,EQ,C'6',AND,493,8,CH,EQ,C'BP13KB20')                  
+//*------------------------------------------------------------------           
+//* SORT BP13KB20 BY SYSTEM DATE/TIME                                           
+//* BP13IR9M- BOOK PROGRAM                                                      
+//* BP13IR96- REEJCTION PROGRAM                                                 
+//*-----------------------------------------------------------------            
+//STEP03   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&BP13FA80,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&FA80BOOK,DISP=(NEW,PASS),                                   
+//         UNIT=SYSDA,                                                          
+//         DCB=(BLKSIZE=0,LRECL=4000,RECFM=FB),                                 
+//         SPACE=(CYL,(50,10),RLSE)                                             
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,16,A),FORMAT=CH                                               
+   INCLUDE COND=(26,9,CH,EQ,C'BP13IR9MO',OR,                                    
+                 26,9,CH,EQ,C'BP13IR96I')                                       
+//*------------------------------------------------------------------           
+//* FORMAT RECORD FOR DEVELOPER FORMAT (BP13FB66)                               
+//*------------------------------------------------------------------           
+//STEP06   EXEC PGM=BP13C02Y,COND=(0,NE)                                        
+//BP13FA80 DD DSN=&&FA80BOOK,DISP=(OLD,DELETE)                                  
+//BP13KA30 DD DSN=BP13.KA30.UNIT,DISP=SHR                                       
+//BP13KA31 DD DSN=BP13.KA30.UNIT.PATH1,DISP=SHR                                 
+//BP13FB66 DD DSN=BP13.FB66.FTPUNIT,DISP=OLD                                    
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBUG  DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//*--------------------------------------------------------------------         
+//* BACKUP FILE                                                                 
+//*--------------------------------------------------------------------         
+//STEP07   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.FB66.FTPUNIT,DISP=SHR                                    
+//OUTPUT1  DD DSN=BP13.FB66.FTPUNIT.LOG,DISP=MOD                                
+//*                                                                             
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+//*--------------------------------------------------------------------         
+//* ACCUM TO DAILY FILE                                                         
+//*--------------------------------------------------------------------         
+//STEP08   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.FB66.FTPUNIT,DISP=SHR                                    
+//OUTPUT1  DD DSN=BP13.FB66.FTPUNIT.DAILY,DISP=OLD                              
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+

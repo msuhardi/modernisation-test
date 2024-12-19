@@ -1,0 +1,405 @@
+//BP13A811 JOB (BP13P),'BP13RP04',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//         NOTIFY=CSD0071                                                       
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//*===================================================================*         
+//* SIMILAR TO BP13DPRE & BP13DFT2                                              
+//*===================================================================*         
+//* DETERMINE FT-2T                                                             
+//*-------------------------                                                    
+//* FOR CDE-HOUSEHOLD = G, SYSTEM FURTHER CHECK                                 
+//* DETERMINE FT-2T FOR MARRIED COUPLE WHERE HA1=2T, SPOUSE=FT                  
+//*                                          HA1=FT, SPOUSE=2T                  
+//* SYSTEM TO BYPASS :                                                          
+//* NON-CITIZEN SPOUSE,                                                         
+//* USE SMS SCH-ACC-NO TO READ RDB TO EXTRACT FAMILY MEMBERS, IF SOC            
+//* SPOUSE IS ALSO FOUND IN RDB AS SPOUSE                                       
+//* SYSTEM TO TAG NUM-FT2T=Y, DEFAULT=N                                         
+//*                                                                             
+//* DETERMINE SINGLE SCHEME                                                     
+//*-------------------------                                                    
+//*===================================================================*         
+//* CHG REF  BY    DATE     DESCRIPTION                                         
+//* -------- ---  ------   -----------                                          
+//* BP135168 YCH2 04122013 DETERMINE FT/2T FOR SERS CASE SIMILAR TO DPRE        
+//* BP136090 YCH2 06012016 PRINT FT/2T REPORT                                   
+//* BP137208 YCH2 12022018 INCLUDE DETERMINE ELDERLY AND 3 GEN FLAT             
+//*                        AFTER DETERMINE FT2T                                 
+//* BP137724 AM25 19062019 INCLUDE DETERMINE HALF-IDP                           
+//*          YCH2 27092019 CHANGE IOM2                                          
+//*===================================================================*         
+//* SEND DYNAMIC JDE AHEAD OF THE PRINT DATASET                                 
+//* PRT01 : COPIES = 1                                                          
+//*-------------------------------------------------------------------*         
+//PRT01   EXEC PGM=IEBGENER                                                     
+//SYSUT1   DD *                                                                 
+1$DJDE$ BTEXT='DPT=GRPID-EASSRS1A CP-1',END;                                    
+1$DJDE$ JDE=BP13D,JDL=BP13,END;                                                 
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EASSRS1A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID),DEST=IOM2                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*                                                                             
+//*--------------------------------------------------------------------         
+//*      VERIFY FILES BEFORE PRODUCTION RUN COWN                                
+//*--------------------------------------------------------------------         
+//STEP00  EXEC PGM=IDCAMS,COND=(0,NE)                                           
+//INPUT1   DD DSN=BP13.K730.MATURERQ,DISP=OLD                                   
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN   DD *                                                                  
+          VFY FILE(INPUT1)                                                      
+          IF LASTCC=12 THEN                                                     
+             DO                                                                 
+                SET MAXCC=0                                                     
+                VFY FILE(INPUT1)                                                
+             END                                                                
+//*---------------------------------------------------------------------        
+//*  BACKUP BP13K740 BEFORE UPDATE HHTYPE AND FT2T                              
+//*---------------------------------------------------------------------        
+//STEP01   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.K740.MATUREBA.SERS,DISP=SHR                              
+//OUTPUT1  DD DSN=BP13.F740.MATUREBA.SERSA811,DISP=OLD                          
+//*                                                                             
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                       
+//*=====================================================================        
+//*  TO EXTRACT HOUSEHOLD TYPE FROM K730 ONLINE DETERMINED                      
+//*---------------------------------------------------------------------        
+//STEP02   EXEC PGM=SORT,COND=(0,NE)                                            
+//SORTJNF1 DD DSN=BP13.F730.SERSREQ,DISP=SHR                                    
+//SORTJNF2 DD DSN=BP13.K730.MATURERQ,DISP=SHR                                   
+//MATCH    DD DSN=BP13.F730.SERSREQ.HHTYPE,DISP=OLD                             
+//SYSIN DD *                                                                    
+   SORT FIELDS=COPY                                                             
+   JOINKEYS FILE=F1,FIELDS=(123,8,A)                                            
+   JOINKEYS FILE=F2,FIELDS=(123,8,A)                                            
+   REFORMAT FIELDS=(F2:1,500)                                                   
+   INCLUDE COND=(376,3,CH,EQ,C'SER')                                            
+   OUTFILE FNAMES=MATCH                                                         
+/*                                                                              
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//*  BACKUP BP13K730 AFTER HHTYPE AND BEFORE FT2T, ELDERLY & 3GEN UPDATE        
+//*---------------------------------------------------------------------        
+//STEP02A  EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.F730.SERSREQ.HHTYPE,DISP=SHR                             
+//OUTPUT1  DD DSN=BP13.F730.SERSREQ.HHTYPE.SERSA811,DISP=OLD                    
+//*                                                                             
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                       
+//*=====================================================================        
+//*---------------------------------------------------------------------        
+//* SORT ONLY 'G' HOUSEHOLD TYPE FOR FT2T                                       
+//*---------------------------------------------------------------------        
+//STEP03   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F730.SERSREQ.HHTYPE,DISP=SHR                             
+//SORTOUT  DD DSN=&&BP13F713,DISP=(,PASS),                                      
+//        UNIT=SYSDA,DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                    
+//        SPACE=(CYL,(80,30),RLSE)                                              
+//SYSIN   DD *                                                                  
+    SORT FIELDS=(123,8,A),FORMAT=CH                                             
+    INCLUDE COND=(116,1,CH,EQ,C'G',AND,                                         
+                  211,2,CH,NE,C'1A')                                            
+//*---------------------------------------------------------------------        
+//* CHECK FOR CASES WITH FT/2T                                                  
+//* TAG COL 475 TAG 'Y' FOR FT-2T CASES                                         
+//*---------------------------------------------------------------------        
+//STEP04   EXEC PGM=BP13CD82,COND=(0,NE)                                        
+//BP13F595 DD DSN=&&BP13F713,DISP=(OLD,PASS)                                    
+//BP13K558 DD DSN=BP13.K558.BP13DPRE.SERS,DISP=SHR,                             
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K716 DD DSN=BP13.K716.DPREQ750.SERS,DISP=SHR,                             
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K595 DD DSN=BP13.K595.BALLOT.LOG,DISP=SHR,                                
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K591 DD DSN=BP13.K595.BALLOT.LOG.PATH1,DISP=SHR,                          
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//P13F595A DD DSN=&&F730CD82,DISP=(,PASS),                                      
+//        UNIT=SYSDA,DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                    
+//        SPACE=(CYL,(80,30),RLSE)                                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*-------------------------------------------------------------------*         
+//* COL 475 = 'Y' FOR FT-2T CASES, COL 116 = G UPGRADER                         
+//*-------------------------------------------------------------------*         
+//STEP05   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F730CD82,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=BP13.F730.FT2T.SERS,DISP=OLD,                                 
+//            SPACE=(CYL,(20,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+  INCLUDE COND=(116,1,CH,EQ,C'G',AND,                                           
+                475,1,CH,EQ,C'Y')                                               
+//*--------------------------------------------------------------------*        
+//* BYPASS NON-CITIZEN SPOUSE                                                   
+//*--------------------------------------------------------------------*        
+//STEP06   EXEC PGM=BP13CY83,COND=(0,NE)                                        
+//BP13F595 DD DSN=BP13.F730.FT2T.SERS,DISP=SHR                                  
+//BP13K828 DD DSN=BP13.K825.REQOCCP,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13LY83 DD DSN=&&BP13LY83,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(20,10),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=133)                                          
+//P13F595A DD DSN=&&F595NONC,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(50,30),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSTSIN  DD *                                                                 
+//*--------------------------------------------------------------------*        
+//* BYPASS SPOUSE FOUND AS OCCUPIER IN THE DP FLAT                              
+//* RDB ROLE 023(LESSEE), 024(CO-LESSEE) 025(OCCUPIER)                          
+//*--------------------------------------------------------------------*        
+//STEP07   EXEC PGM=BP13CY84,COND=(0,NE)                                        
+//BP13F595 DD DSN=&&F595NONC,DISP=(OLD,PASS)                                    
+//BP13K828 DD DSN=BP13.K825.REQOCCP,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K716 DD DSN=BP13.K716.DPREQ750.SERS,DISP=SHR,                             
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13LY84 DD DSN=&&BP13LY83,DISP=(MOD,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(20,10),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=133)                                          
+//P13F595A DD DSN=BP13.F730.FT2T.SERS,DISP=OLD                                  
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSTSIN  DD *                                                                 
+//*-----------------------------------------------------------------            
+//* PRINT REPORT 0N FT2T CASES                                                  
+//*-----------------------------------------------------------------            
+//STEP08   EXEC PGM=IEBGENER,COND=(0,NE)                                        
+//SYSUT1   DD DSN=&&BP13LY83,DISP=(OLD,PASS)                                    
+//SYSUT2   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* SORT FT2T TO REPLACE BP13K730                                               
+//*-------------------------------------------------------------------*         
+//STEP09   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F730.FT2T.SERS,DISP=SHR                                  
+//SORTOUT  DD DSN=&&F730S2T,DISP=(NEW,PASS),                                    
+//            SPACE=(CYL,(20,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(123,8,A),FORMAT=CH                                               
+//*---------------------------------------------------------------------        
+//*  UPDATE FT2T TAG                                                            
+//*---------------------------------------------------------------------        
+//STEP10   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=&&F730S2T,DISP=(OLD,PASS)                                     
+//OUTPUT1  DD DSN=BP13.K730.MATURERQ,DISP=OLD                                   
+//*                                                                             
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1) REPLACE                               
+//*=====================================================================        
+//*  TO EXTRACT SERS TRANSFERRED CASES AFTER DETERMINE FT2T                     
+//*     BEFORE ELDERLY AND 3 GEN                                                
+//*---------------------------------------------------------------------        
+//STEP11A  EXEC PGM=BP13C161,COND=(0,NE)                                        
+//BP13F500 DD DSN=BP13.F730.SERSREQ.HHTYPE,DISP=SHR                             
+//BP13K730 DD DSN=BP13.K730.MATURERQ,DISP=SHR                                   
+//BP13F730 DD DSN=&&F730HIDP,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            SPACE=(CYL,(60,20),RLSE)                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*--------------------------------------------------------------------         
+//* DETERMINE HALF-IDP (S/R/D)                                                  
+//*--------------------------------------------------------------------         
+//STEP11B  EXEC PGM=BP13CZ29,COND=(0,NE)                                        
+//BP13F730 DD DSN=&&F730HIDP,DISP=(OLD,DELETE)                                  
+//BP13K80A DD DSN=BP13.K80A.FLATINFO,DISP=SHR,                                  
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//BP13K730 DD DSN=BP13.K730.MATURERQ,DISP=SHR,                                  
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//BP13K825 DD DSN=BP13.K825.REQOCCP,DISP=SHR,                                   
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//BP13K813 DD DSN=BP13.K813.BTOBE,DISP=SHR,                                     
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//AB03K030 DD DSN=AB03.K030.SALEMAST,DISP=SHR,                                  
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//AB03K080 DD DSN=AB03.K080.UINACC,DISP=SHR,                                    
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//AB03K081 DD DSN=AB03.K080.PATH1,DISP=SHR,                                     
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//AB03K700 DD DSN=AB03.K700.CUSTFILE,DISP=SHR,                                  
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//BP13LZ19 DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*=====================================================================00130010
+//*<<<<-- NEW REQUIREMENT FOR ELDERLY >>>>>>>>>>>>>>>>>>>                       
+//*-----------------------------------------------------------------    00130010
+//* INCLUDE 2-ROOM FLEXI TO COMPUTE ELDERLY                             00130010
+//*-----------------------------------------------------------------    00130010
+//STEP20   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F730.SERSREQ.HHTYPE,DISP=SHR                     00005003
+//SORTOUT  DD DSN=&&F730RM2,DISP=(,PASS),                                       
+//            UNIT=SYSDA,DCB=(RECFM=FB,LRECL=500,BLKSIZE=0),                    
+//            SPACE=(CYL,(80,30),RLSE)                                          
+//SYSIN    DD *                                                                 
+    SORT FIELDS=(376,3,A,123,8,A),FORMAT=CH                                     
+    INCLUDE COND=(211,2,CH,EQ,C'2F')                                            
+//*------------------------------------------------------------------           
+//* VALIDATE ELDERLY SCHEME                                                     
+//* UPDATE K730-ELDERLY-TAG( COL 210) = F (FAMILY), S (SINGLE), N (NO)  00130010
+//* OUTPUT BP13F740 IS FROM BP13K730                                    00130010
+//* - REFERENCE TO BP137208 ON THE FOLLOWING DEFAULT                    00130010
+//* - UPDATED WITH PPO='N', NTIMER=N AND ELDERLY-TAG                    00130010
+//*------------------------------------------------------------------           
+//STEP21   EXEC PGM=BP13CZ2G,COND=(0,NE)                                        
+//BP13F730 DD DSN=&&F730RM2,DISP=(OLD,PASS)                                     
+//*===>    FOR SERS TO TAKE IN ANNOUNCEMENT DATE                                
+//BP17F100 DD DSN=BP17.F100.SERSPROJ.SERSITE,DISP=SHR                           
+//BP13K825 DD DSN=BP13.K825.REQOCCP,DISP=SHR,                                   
+//            AMP=('BUFNI=8','BUFND=4')                                         
+//BP13K730 DD DSN=BP13.K730.MATURERQ,DISP=SHR,                                  
+//            AMP=('BUFNI=8','BUFND=4')                                         
+//BP13F740 DD DSN=&&F740ELD,DISP=(,PASS),                                       
+//            UNIT=SYSDA,DCB=(RECFM=FB,LRECL=500),                              
+//            SPACE=(CYL,(80,30),RLSE)                                          
+//P13LZ2GA DD DSN=BP13.LZ2G.SINGLE.SERS,DISP=OLD                                
+//P13LZ2GB DD DSN=BP13.LZ2G.FAMILY.SERS,DISP=OLD                                
+//P13LZ2GC DD DSN=BP13.LZ2G.EXCPTN.SERS,DISP=OLD                                
+//P13LZ2GD DD DUMMY                                                             
+//P13LZ2GE DD DUMMY                                                             
+//P13LZ2GF DD DUMMY                                                             
+//P13LZ2GG DD DUMMY                                                             
+//P13LZ2GH DD DUMMY                                                             
+//P13LZ2GI DD DUMMY                                                             
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*=====================================================================        
+//*  TO EXTRACT SERS TRANSFERRED CASES AFTER DETERMINE FT2T & ELDERLY           
+//*     BEFORE 3 GEN                                                            
+//*---------------------------------------------------------------------        
+//STEP22   EXEC PGM=SORT,COND=(0,NE)                                            
+//SORTJNF1 DD DSN=BP13.F730.SERSREQ.HHTYPE,DISP=SHR                             
+//SORTJNF2 DD DSN=BP13.K730.MATURERQ,DISP=SHR                                   
+//MATCH    DD DSN=&&P13AFELD,DISP=(,PASS),                                      
+//         UNIT=(SYSDA,3),SPACE=(CYL,(80,10),RLSE),                             
+//         DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                               
+//SYSIN DD *                                                                    
+   SORT FIELDS=COPY                                                             
+   JOINKEYS FILE=F1,FIELDS=(123,8,A)                                            
+   JOINKEYS FILE=F2,FIELDS=(123,8,A)                                            
+   REFORMAT FIELDS=(F2:1,500)                                                   
+   INCLUDE COND=(376,3,CH,EQ,C'SER',&,211,1,CH,EQ,C'5')                         
+   OUTFILE FNAMES=MATCH                                                         
+/*                                                                              
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*------------------------------------------------------------------           
+//* DETERMINE GEN3                                                              
+//*------------------------------------------------------------------           
+//STEP23   EXEC PGM=BP13CF72,COND=(0,NE)                                        
+//BP17F100 DD DSN=BP17.F100.SERSPROJ.SERSITE,DISP=SHR                           
+//BP13F730 DD DSN=&&P13AFELD,DISP=(OLD,PASS)                                    
+//BP13K825 DD DSN=BP13.K825.REQOCCP,DISP=SHR,                                   
+//            AMP=('BUFNI=8','BUFND=4')                                         
+//BP13K813 DD DUMMY                                                             
+//P13F730A DD DSN=BP13.F730.CF72.SERS3GEN,DISP=OLD                              
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* UPDATE 3GEN FOR SERS                                                        
+//* UPDATE YOUNGEST-SC-CHILD AND PPS-ELIG-TAG WHERE FOR SERS ARE BLANK          
+//*---------------------------------------------------------------------        
+//STEP24   EXEC PGM=BP13CF74,COND=(0,NE)                                        
+//BP13F730 DD DSN=BP13.F730.CF72.SERS3GEN,DISP=SHR                              
+//BP13K730 DD DSN=BP13.K730.MATURERQ,DISP=SHR,                                  
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*------------------------------------------------------------------*  00003002
+//* COLLECTS RECORDS FROM SORTJNF1 IF SORTJNF1 NOT FOUND IN SORTJNF2 *  00003002
+//*------------------------------------------------------------------*  00003002
+//STEP25   EXEC PGM=SORT,COND=(0,NE)                                            
+//SORTJNF1 DD DSN=BP13.F730.SERSREQ,DISP=SHR                                    
+//SORTJNF2 DD DSN=BP13.K730.MATURERQ,DISP=SHR                                   
+//MATCH    DD DSN=&&BP13SER,DISP=(NEW,PASS),                            00007003
+//         UNIT=(SYSDA,3),SPACE=(CYL,(80,10),RLSE),                             
+//         DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                               
+//SYSIN DD *                                                            00009202
+   SORT FIELDS=COPY                                                             
+   JOINKEYS FILE=F1,FIELDS=(123,8,A)                                            
+   JOINKEYS FILE=F2,FIELDS=(123,8,A)                                            
+   REFORMAT FIELDS=(F2:1,500)                                                   
+   OUTFILE FNAMES=MATCH                                                         
+/*                                                                      00009902
+//SYSUDUMP DD SYSOUT=*                                                  00010002
+//SYSPRINT DD SYSOUT=*                                                  00010102
+//SYSABOUT DD SYSOUT=*                                                  00010202
+//SYSOUT   DD SYSOUT=*                                                  00010302
+//*---------------------------------------------------------------------        
+//* UPDATE HOUSEHOLD TYPE , FT2T, ELDERLY, 3GEN, PPO AND NTIMER TO K740         
+//*---------------------------------------------------------------------        
+//STEP26   EXEC PGM=BP13C894,COND=(0,NE)                                        
+//BP13F500 DD DSN=&&BP13SER,DISP=(OLD,PASS)                                     
+//BP13K740 DD DSN=BP13.K740.MATUREBA.SERS,DISP=OLD,                             
+//            AMP=('BUFND=23')                                                  
+//BP13K741 DD DSN=BP13.K740.MATUREBA.SERS.PATH1,DISP=OLD,                       
+//            AMP=('BUFND=23')                                                  
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//*  BACKUP RECORDS WITH UPDATED HOUSEHOLD TYPE AND FT2T TAG                    
+//*---------------------------------------------------------------------        
+//STEP30   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.K740.MATUREBA.SERS,DISP=SHR                              
+//OUTPUT1  DD DSN=BP13.F730.SERSREQ.A811,DISP=OLD                               
+//*                                                                             
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                       
+//*-------------------------------------------------------------------*         
+//* PRINT REPORT FOR FT2T                                                       
+//*-------------------------------------------------------------------*         
+//STEP31   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F730.FT2T.SERS,DISP=SHR                                  
+//SORTOUT  DD DSN=&&F730FT2T,DISP=(NEW,PASS),                                   
+//            SPACE=(CYL,(20,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=500)                                          
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(123,8,A),FORMAT=CH                                               
+//*---------------------------------------------------------------------        
+//* GENERATE FT2T REPORT SHOW SMS, RSL, TRF, MAM & SLS INFOR                    
+//*---------------------------------------------------------------------        
+//STEP32   EXEC PGM=BP13CK24,COND=(0,NE)                                        
+//BP13F205 DD DSN=BP13.F205.FT2T,DISP=SHR                                       
+//BP13F730 DD DSN=&&F730FT2T,DISP=(OLD,PASS)                                    
+//BP13K558 DD DSN=BP13.K558.BP13DPRE.SERS,DISP=SHR,                             
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BP13LK24 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+

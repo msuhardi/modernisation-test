@@ -1,0 +1,279 @@
+//BP13ASUB  JOB (BP13P),'BP13ASUB',CLASS=I,MSGCLASS=N,                          
+//    MSGLEVEL=(1,1),NOTIFY=CSD0071                                             
+//JOBLIB  DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                    
+//**************************************************************                
+//* BP131064 LSB 010918 - NEW JCL                                               
+//* BP132376 MJ16030108 - CHANNGED OUTREC SEQUENCE IN STEP07                    
+//* BP132538 SK  040527 - INCLUDE BP13K767                                      
+//* BP133610 ESA1090601 - REPLACE BP13K767 WITH BP13K816                        
+//* BP135171 RJE 140210 - TO CATER FOR DB2 UPGRADE                              
+//* BP135254 SMR 140417 - REPLACE BP13K816 WITH BP13K813                        
+//* BP138285 AM2 050520 - HARDCOPY REPORTS CONVERSION                           
+//*              050620 - REMOVE DJDE STEPS                                     
+//**************************************************************                
+//*--------------------------------------------------------------------         
+//* USE PARENT/CHILD NRIC TO DETERMINE MARRIED CHILD PRIORITY SCHEME            
+//* OUTREC RES-NRIC FOR IDENTIFY SUB-TENANT RIORITY                             
+//*--------------------------------------------------------------------         
+//STEP01  EXEC SORT,COND=(0,NE)                                                 
+//SYSOUT  DD SYSOUT=*                                                           
+//SORTIN  DD DSN=BP13.F730.MATURERQ.DAILY,DISP=SHR                              
+//SORTOUT DD DSN=&&BP13F825,DISP=(,PASS),                                       
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=200,BLKSIZE=23400),                           
+//            SPACE=(CYL,(100,10),RLSE)                                         
+//SYSIN   DD  *                                                                 
+  SORT FIELDS=(325,9,A),FORMAT=CH                                               
+  OUTREC FIELDS=(123,8,325,9,183X)                                              
+  INCLUDE COND=((325,9,CH,NE,C'         '),AND,                                 
+                (118,1,CH,EQ,C'P',OR,                                           
+                118,1,CH,EQ,C'C'))                                              
+//*---------------------------------------------------------------------        
+//*  SORT IN NRIC SEQUENCE AND DROP DUMMY RECORDS                               
+//*---------------------------------------------------------------------        
+//STEP02   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F725.MHADATA.ACCUM,DISP=SHR                              
+//SORTOUT  DD DSN=&&F725REC,DISP=(,PASS),                                       
+//            UNIT=(SYSDA),                                                     
+//            DCB=(BLKSIZE=21100,LRECL=211,RECFM=FB),                           
+//            SPACE=(CYL,(100,10),RLSE)                                         
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(9,9,A),FORMAT=CH,FILSZ=E50000                                   
+   OMIT COND=(9,9,CH,EQ,C'         ')                                           
+//*---------------------------------------------------------------------        
+//* TO UPDATE REFERENCE NUMBER FOR CASES WHERE REF NO. HAS BEEN                 
+//* CHANGED SINCE DATA WAS SENT TO MHA BASED ON NRIC                            
+//*---------------------------------------------------------------------        
+//STEP04   EXEC PGM=BP13C778,COND=(0,NE)                                        
+//BP13F825 DD DSN=&&BP13F825,DISP=(OLD,PASS)                                    
+//BP13F725 DD DSN=&&F725REC,DISP=(OLD,DELETE)                                   
+//BP13OUT  DD DSN=&&F725NRIC,DISP=(NEW,PASS),                                   
+//            UNIT=(SYSDA),                                                     
+//            DCB=(BLKSIZE=21100,LRECL=211,RECFM=FB),                           
+//            SPACE=(CYL,(100,10),RLSE)                                         
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*                                                                             
+//*---------------------------------------------------------------------        
+//*  DROP DUPLICATE RECORDS                                                     
+//*---------------------------------------------------------------------        
+//STEP05   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F725NRIC,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F725DUP,DISP=(,PASS),                                       
+//            UNIT=(SYSDA),                                                     
+//            DCB=(BLKSIZE=21100,LRECL=211,RECFM=FB),                           
+//            SPACE=(CYL,(100,10),RLSE)                                         
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,205,A),FORMAT=CH,FILSZ=E50000                                 
+   SUM FIELDS=NONE                                                              
+//*---------------------------------------------------------------------        
+//*  SORT IN REFNO/NRIC ORDER                                                   
+//*---------------------------------------------------------------------        
+//STEP06   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F725DUP,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&F725REF,DISP=(,PASS),                                       
+//            UNIT=(SYSDA),                                                     
+//            DCB=(BLKSIZE=21100,LRECL=211,RECFM=FB),                           
+//            SPACE=(CYL,(100,10),RLSE)                                         
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,8,A,9,9,A),FORMAT=CH,FILSZ=E50000                             
+//*---------------------------------------------------------------------        
+//* COMPARE THE DAILY FILE WITH THE ACCUMULATED VSAM FILE.                      
+//* SORT OUT ONLY CASES IN THE DAILY FILE                                       
+//*---------------------------------------------------------------------        
+//STEP6A   EXEC PGM=BP13C161,COND=(0,NE)                                        
+//BP13F500 DD DSN=BP13.F730.MATURERQ.DAILY,DISP=SHR                             
+//BP13K730 DD DSN=BP13.K730.MATURERQ,DISP=SHR                                   
+//BP13F730 DD DSN=&&BP13F730,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            SPACE=(CYL,(60,20),RLSE)                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*--------------------------------------------------------------------         
+//* INCLUDE RESIDENT TAG FOR HA1 = SPACES                                       
+//* DON'T CHECK FOR RESIDENTS TAGGED IN BP13ACMS                                
+//*---------------------------------------------------------------------        
+//STEP6B   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&BP13F730,DISP=(OLD,DELETE)                                  
+//SORTOUT  DD DSN=&&BP13F500,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            SPACE=(CYL,(60,20),RLSE)                                          
+//SYSIN    DD  *                                                                
+    SORT FIELDS=(123,8,A),FORMAT=CH,FILSZ=E50000                                
+    INCLUDE COND=(253,1,CH,EQ,C' ',AND,                                         
+                  325,9,CH,NE,C'         ')                                     
+//*---------------------------------------------------------------------        
+//*  OUT-REC REF NO AND RES-NRIC FOR MHA CHECKING                               
+//*--------------------------------------------------------------------         
+//STEP07  EXEC SORT,COND=(0,NE)                                                 
+//SYSOUT  DD SYSOUT=*                                                           
+//SORTIN  DD DSN=&&BP13F500,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&F730OUTR,DISP=(NEW,PASS),                                   
+//            UNIT=(SYSDA),                                                     
+//            DCB=(BLKSIZE=24600,LRECL=20,RECFM=FB),                            
+//            SPACE=(CYL,(100,10),RLSE)                                         
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+   OUTREC FIELDS=(123,8,325,9,3X)                                               
+//*---------------------------------------------------------------------        
+//*  SORT FILE IN REF AND NRIC SEQUENCE                                         
+//*--------------------------------------------------------------------         
+//STEP08  EXEC SORT,COND=(0,NE)                                                 
+//SYSOUT  DD SYSOUT=*                                                           
+//SORTIN  DD DSN=&&F730OUTR,DISP=(OLD,PASS)                                     
+//SORTOUT DD DSN=&&F730SORT,DISP=(NEW,PASS),                                    
+//            UNIT=(SYSDA),                                                     
+//            DCB=(BLKSIZE=24600,LRECL=20,RECFM=FB),                            
+//            SPACE=(CYL,(100,10),RLSE)                                         
+   SORT FIELDS=(1,17,A),FORMAT=CH,FILSZ=E50000                                  
+//*---------------------------------------------------------------------        
+//* MATCH REFERENCE NUMBER AND NRIC TO EXTRACT ONLY HA'S RECORDS                
+//*---------------------------------------------------------------------        
+//STEP09   EXEC PGM=BP13C829,COND=(0,NE)                                        
+//BP13INP  DD DSN=&&F730SORT,DISP=(OLD,PASS)                                    
+//BP13F725 DD DSN=&&F725REF,DISP=(OLD,DELETE)                                   
+//BP13OUT  DD DSN=&&F725MHA,DISP=(NEW,PASS),                                    
+//            DCB=(BLKSIZE=21100,LRECL=211,RECFM=FB),                           
+//            SPACE=(CYL,(100,10),RLSE)                                         
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*                                                                             
+//*---------------------------------------------------------------------        
+//*  SORT ACCORDING TO STREET NAME ORDER                                        
+//*---------------------------------------------------------------------        
+//STEP10   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F725MHA,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&F725SORT,DISP=(NEW,PASS),                                   
+//            UNIT=(SYSDA),                                                     
+//            DCB=(BLKSIZE=21100,LRECL=211,RECFM=FB),                           
+//            SPACE=(CYL,(100,10),RLSE)                                         
+//SYSIN     DD  *                                                               
+     SORT FIELDS=(60,32,A),FORMAT=CH                                            
+//*---------------------------------------------------------------------        
+//* USE SCH-ACC-NO TO GET ESTATE-CODE IN PBF                                    
+//* USE ESTATE-CODE TO GET NEW TOWN CODE FOR RDB RECORDS                        
+//*---------------------------------------------------------------------        
+//STEP11   EXEC PGM=IKJEFT01,DYNAMNBR=20,COND=(0,NE),REGION=4096K               
+//BP13F725 DD DSN=&&F725SORT,DISP=(OLD,PASS)                                    
+//BP13K730 DD DSN=BP13.K730.MATURERQ,DISP=SHR,                                  
+//            AMP=('BUFND=23')                                                  
+//BP13K825 DD DSN=BP13.K825.REQOCCP,DISP=SHR,                                   
+//            AMP=('BUFND=23')                                                  
+//BM06K510 DD DSN=BM06.K510.ESTCDE,DISP=SHR,                                    
+//            AMP=('BUFND=23')                                                  
+//BP13K813 DD DSN=BP13.K813.BTOBE,DISP=SHR,                                     
+//            AMP=('BUFND=23')                                                  
+//BP13F716 DD DSN=BP13.F716.MHAINFO,DISP=OLD                                    
+//P13F716A DD DSN=BP13.F716.MHARES,DISP=OLD                                     
+//P13F716B DD DSN=BP13.F716.MHANONR,DISP=OLD                                    
+//BP13OUT  DD DSN=BP13.F725.UNMATCH,DISP=OLD                                    
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSTSIN  DD *                                                                 
+  DSN SYSTEM(DSN)                                                               
+  RUN PROGRAM(BP13C774) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+  END                                                                           
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* SORT SUB-TENANT FILE BY REF-NO/NRIC ORDER                                   
+//*---------------------------------------------------------------------        
+//STEP14   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F716.MHARES,DISP=SHR                                     
+//SORTOUT  DD DSN=&&F716SORT,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(30,9),RLSE),                               
+//            DCB=(RECFM=FB,LRECL=350,BLKSIZE=0)                                
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,17,A),FORMAT=CH                                               
+//*---------------------------------------------------------------------        
+//* SORT RDBINFOR FILE BY REF-NO/NRIC ORDER                                     
+//* INCLUDE ONLY LESSEE/TENANT CASES                                            
+//*---------------------------------------------------------------------        
+//STEP15   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F716.RDBINFO,DISP=SHR                                    
+//SORTOUT  DD DSN=&&F716TENT,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(30,9),RLSE),                               
+//            DCB=(RECFM=FB,LRECL=350,BLKSIZE=0)                                
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,17,A),FORMAT=CH                                               
+   INCLUDE COND=(89,1,CH,LE,C'1')                                               
+//*---------------------------------------------------------------------        
+//* IF SAME NRIC FOUND IN RDB WITH NT-RESIDE NOT = NT-REQUEST                   
+//* THEN DO NOT UPDATE THE CASES AS SUB-TENANT SCHEME                           
+//*--------------------------------------------------------------------         
+//STEP16   EXEC PGM=BP13C869,COND=(0,NE)                                        
+//BP13F716 DD DSN=&&F716SORT,DISP=(OLD,PASS)                                    
+//P13F716A DD DSN=&&F716TENT,DISP=(OLD,PASS)                                    
+//P13F716B DD DSN=&&F716SUBT,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(30,9),RLSE),                               
+//            DCB=(RECFM=FB,LRECL=350,BLKSIZE=0)                                
+//BP13K813 DD DSN=BP13.K813.BTOBE,DISP=SHR,                                     
+//            AMP=('BUFND=23')                                                  
+//BP13L869 DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* AFTER MATCHING WITH RDB REC, SORT RDBINFO FILE IN REF-NO ORDER              
+//*---------------------------------------------------------------------        
+//STEP17   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F716SUBT,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F716TAG,DISP=(NEW,PASS),                                    
+//            UNIT=(SYSDA,3),                                                   
+//            DCB=(BLKSIZE=27650,LRECL=350,RECFM=FB),                           
+//            SPACE=(CYL,(100,10),RLSE)                                         
+//SYSIN     DD  *                                                               
+     SORT FIELDS=(1,8,A),FORMAT=CH                                              
+//*--------------------------------------------------------------------         
+//* UPDATE RESIDENT-HA1 - HA4 TAG TO REQUEST FILE                               
+//*--------------------------------------------------------------------         
+//STEP18   EXEC PGM=BP13U757,COND=(0,NE)                                        
+//STEPLIB  DD DSN=BP13.BATCH.LOADCOB.BALLOT,DISP=SHR                            
+//BP13F716 DD DSN=&&F716TAG,DISP=(OLD,PASS)                                     
+//BP13K500 DD DSN=BP13.K730.MATURERQ,DISP=SHR,                                  
+//            AMP=('BUFND=23')                                                  
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//*  REPRO FROM VSAM TO SEQUENTIAL FILES                                        
+//*  BP13.F500.NT - WITH WEIGHTAGE SCHEME + RESIDENT SCHEME INFO                
+//*--------------------------------------------------------------------         
+//STEP19   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.K730.MATURERQ,DISP=SHR                                   
+//OUTPUT1  DD DSN=BP13.F500.HDBRES,DISP=OLD                                     
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                       
+//*---------------------------------------------------------------------        
+//* PRINT REPORT ON NRIC DETERMINE AS RESIDENT                                  
+//*---------------------------------------------------------------------        
+//STEP23   EXEC  SAS,COND=(0,NE)                                                
+//BP13F716 DD DSN=BP13.F716.MHARES,DISP=SHR                                     
+//BP13L742 DD SYSOUT=*                                                          
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13S742),DISP=SHR                             
+//*---------------------------------------------------------------------        
+//* PRINT REPORT ON THE MCPS INFORMATION                                        
+//*---------------------------------------------------------------------        
+//*STEP25   EXEC SAS,OPTIONS='MACRO DQUOTE,TEXT82',COND=(0,NE)                  
+//*WORK     DD  UNIT=SYSDA,SPACE=(CYL,(60,20))                                  
+//*BP13F716 DD DSN=BP13.F716.MHAINFO,DISP=SHR                                   
+//*BP13F725 DD DSN=BP13.F725.MHADATA.ACCUM,DISP=SHR                             
+//*BP13F730 DD DSN=BP13.F500.HDBRES,DISP=SHR                                    
+//*P13L764A DD SYSOUT=*                                                         
+//*P13L764B DD SYSOUT=*                                                         
+//*SYSOUT   DD SYSOUT=*                                                         
+//*SYSIN    DD DSN=BP13.BATCH.SRC(BP13S764),DISP=SHR                            
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* END BP13ASUB                                                                
+//*---------------------------------------------------------------------        
+

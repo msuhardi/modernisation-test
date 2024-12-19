@@ -1,0 +1,2305 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CH03.                                                 
+      *AUTHOR.        MICHAEL S ARRIOLA.                                        
+      *DATE-WRITTEN.  19/06/2008.                                               
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (BP13)                                *            
+      * ========================================================== *            
+      *                                                            *            
+      * OBJECTIVES:                                                *            
+      * 1. READ TRANSACTION ON BOOKED CASES.                       *            
+      * 2. READ CASES SCHEDULE FOR BOOKING                         *            
+      * 3. PROCESS NON-SELECTION ONLY FOR HOUSEHOLD = H OR T       *            
+      * 4. MATCH TO DETERMINE CASES BOOKED ( IN BP13F268)          *            
+      *                             NOT BOOK WITHIN FLAT SUPPLY    *            
+      *                             LIMIT, COUNT AS NON-SELECTION  *            
+      *                             (KEEP IN BP13KH10)             *            
+      *                             NOT BOOK OUTSIDE FLAT SUPPLY   *            
+      *                             LIMIT, DO NOT COUNT NON-SELECTN*            
+      *                             (KEEP IN BP13KH15, SIMILAR     *            
+      *                              FORMAT AS BP13F268)           *            
+      * ---------------------------------------------------------- *            
+      * CHG REF   BY    DATE      DETAILS                          *            
+      * -------   ====  ========= ================================ *            
+      * BP133367  MSD1  20080619  NEW PGM                          *            
+      * BP133367  LMS1  20090107  TO CATER FOR BE                  *            
+      * BP133505  LSB1  20090115  BYPASS NON-SELCN FOR SA FLAT     *            
+      * BP133367  LMS1  20090219  TO CATER FOR SA FLAT             *            
+      * BP133555  PCL3  20090311  ADD CHECK FOR F800-NUM-ALLOC-TAG *            
+      *                           WHEN WRITING TO BP13KH15         *            
+      * BP133545  JB8   20090229  TO CATER FOR RETURN-CODE '02'    *            
+      * BP133367  JB8   20090401  TO USE DATE OF SY02F001          *            
+      * BP133555  PCL3  20090417  ADD CHECK FOR F800-NUM-ALLOC-TAG *            
+      *                           WHEN WRITING TO BP13KH15         *            
+      * BP134174  LSB1  20110329  MATCH BY QUEUE-NO, NOT CAT       *            
+      * BP134353  LSB1  20110914  GET QUOTA K268 NEXT QUEUE-NO     *            
+      * BP134388  ZDD1  20111012  CATER FOR HH = G,BOOK-STAT=LS/WS *            
+      * BP135039  IMC1  20130821  NON-SELECTION FOR FT2T, 2T, FTS  *            
+      * BP135111  IMC1  20131029  CATER FOR GEN3 LIMIT             *            
+      * BP135111  IMC1  20131107  CATER FOR BP13K249 CHANGES       *            
+      * BP135039  IMC1  20131112  TAKE NEW TOWN FROM BP13F800      *            
+      * BP135039  IMC1  20131120  FIX  NEW TOWN FROM BP13F800      *            
+      * BP135039  IMC1  20131118  CATER FOR GEN 3 CASES            *            
+      * BP135039  IMC1  20140103  ADD DEBARMENT FILE TO 2T OR FTS  *            
+      *                           AT NON-SELECTION =02             *            
+      * BP135190  SMR2  20131204  EXPAND BP13K813 TO 1000          *            
+      * BP135239  IMC1  20140114  ADD DEBAR EXTEND FIELD           *            
+      * BP135239  IMC1  20140213  FIX DEBAR PERIOD                 *            
+      * BP135252  IMC1  20140423  ADD 'NS' CODE                    *            
+      * BP135415  ESA1  20140813  EXTEND BP13K249 TO 450           *            
+      * BP135474  IMC1  20140827  CATER FOR GEN3 CASES             *            
+      * BP136160  FNP1  20160311  ADD PPO, INCOME AND ELDERLY-EXEMPT*           
+      * BP136160  FNP1  20160315  CATER BALLOT HOUSEHOLD = N       *            
+      * BP136160  FNP1  20160315  CATER FOR STS CASES              *            
+      * BP136160  FNP1  20160414  COMMENTED OUT ADDING OF P TO FT  *            
+      *                           FOR PREMIUM CASES (FIX WRONG TAG)*            
+      * BP136160  FNP1  20160415  FIX WRONG LIMIT FOR BTO ELDERLY  *            
+      *                           CASES                                         
+      * BP136467  FNP1  20160923  CHECK IF ELDERLY CASES AND PASS  *            
+      *                           CORRECT FLAT TYPE WHEN READING   *            
+      *                           K268/K249                        *            
+      * BP136467  FNP1  20161020  REMOVE ETHNIC AS PART OF KEY TO  *            
+      *                           READ BP13K268                                 
+      * BP136467  FNP1  20161027  REMOVE ETHNIC AND DTE-ACCEPT WHEN*            
+      *                           START BROWSING BP13K268          *            
+      * BP136467  FNP1  20161124  GET AVAIL AND QUOTA FROM -F2 IN  *            
+      *                           F268 WHEN ELDERLY SBF            *            
+      * BP136656  FNP1  20170222  CATER FOR SAP CASES              *            
+      * BP138220  FP6   20200707  FOR 2R FLAT, USE SA IF NOT FOUND *            
+      *                           IN K249                          *            
+      * BP138148  KR13  06102020  CATER FOR ELIG-SCH 'PAC'.        *            
+      * BP138611  KR13  14042021  FOR 1F FLAT MOVE DESC AS 1-ROOM. *            
+      * BP138903  FP6   10112021  CATER FOR NON-SELECTION COUNT OF *            
+      *                           3-ROOM HG FLATS                  *            
+      * BP139545  FKH2  22112023 POLICY CHANGE STARTING FROM 202310*            
+      * BP139545  SC54  20240229 CHANGE IN FIRST TIME AND          *            
+      *                          RELEGATED FIRST TIMER             *            
+      *                          NON SELECTION START AND EXPIRY    *            
+      *                          DATES COMPUTATION.                *            
+      *                          REFER TO PACKAGE #BP13015512      *            
+      * ========================================================== *            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+           SELECT SY02F001  ASSIGN        TO SY02F001.                          
+           SELECT BP13F800  ASSIGN        TO BP13F800.                          
+           SELECT BP13F268  ASSIGN        TO BP13F268.                          
+                                                                                
+           SELECT BP13K820  ASSIGN        TO BP13K820                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K820-KEY-FLD                       
+                            FILE STATUS   IS BP13K820-STATUS.                   
+                                                                                
+           SELECT BP13K249  ASSIGN        TO BP13K249                           
+                            ACCESS MODE   IS RANDOM                             
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K249-KEY-FLD                       
+                            FILE STATUS   IS BP13K249-STATUS.                   
+                                                                                
+           SELECT BP13K813  ASSIGN        TO BP13K813                           
+                            ACCESS MODE   IS RANDOM                             
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K813-KEY-FLD                       
+                            FILE STATUS   IS BP13K813-STATUS.                   
+                                                                                
+           SELECT BP13K060  ASSIGN        TO BP13K060                           
+                            ACCESS MODE   IS RANDOM                             
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K060-KEY-FLD                       
+                            FILE STATUS   IS BP13K060-STATUS.                   
+                                                                                
+           SELECT BP13KH10  ASSIGN        TO BP13KH10                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS KH10-KEY-FLD                       
+                            FILE STATUS   IS BP13KH10-STATUS.                   
+                                                                                
+           SELECT BP13KH15  ASSIGN        TO BP13KH15                           
+                            ACCESS MODE   IS RANDOM                             
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS KH15-KEY-FLD                       
+                            FILE STATUS   IS BP13KH15-STATUS.                   
+                                                                                
+           SELECT BP13K268  ASSIGN        TO BP13K268                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K268-KEY-FLD                       
+                            FILE STATUS   IS BP13K268-STATUS.                   
+                                                                                
+           SELECT BP04F010  ASSIGN        TO BP04F010.                          
+                                                                                
+           SELECT BP13FH15  ASSIGN        TO BP13FH15.                          
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       COPY SY02F001.                                                           
+                                                                                
+       FD   BP13F800                                                            
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            BLOCK CONTAINS 0 RECORDS                                            
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13F800.                                                           
+                                                                                
+       FD   BP13F268                                                            
+            RECORD CONTAINS 200 CHARACTERS                                      
+            BLOCK CONTAINS 0 RECORDS                                            
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13F268.                                                           
+                                                                                
+       FD   BP13K820                                                            
+            RECORD CONTAINS 400 CHARACTERS.                                     
+       COPY BP13K820.                                                           
+                                                                                
+       FD   BP13K249                                                            
+            RECORD CONTAINS  450  CHARACTERS.                                   
+       COPY BP13K249.                                                           
+                                                                                
+       FD   BP13K268                                                            
+            RECORD CONTAINS  200  CHARACTERS.                                   
+       COPY BP13K268.                                                           
+                                                                                
+       FD   BP13K813                                                            
+            RECORD CONTAINS  1000 CHARACTERS.                                   
+       COPY BP13K813.                                                           
+                                                                                
+       FD   BP13K060                                                            
+            RECORD CONTAINS 25  CHARACTERS.                                     
+       COPY BP13K060.                                                           
+                                                                                
+       FD   BP13KH10                                                            
+            RECORD CONTAINS  2000 CHARACTERS.                                   
+       COPY BP13KH10.                                                           
+                                                                                
+       FD   BP13KH15                                                            
+            RECORD CONTAINS  200 CHARACTERS.                                    
+       COPY BP13KH15.                                                           
+                                                                                
+       FD   BP04F010                                                            
+            RECORD CONTAINS 300 CHARACTERS                                      
+            LABEL RECORDS ARE STANDARD.                                         
+       COPY P04F010.                                                            
+                                                                                
+       FD   BP13FH15                                                            
+            RECORDING MODE IS F.                                                
+       01   BP13FH15-REC          PIC X(200).                                   
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+       01 WS-FILE-STATUS.                                                       
+          05 BP13K820-STATUS      PIC 9(02) VALUE ZEROES.                       
+          05 BP13K249-STATUS      PIC 9(02) VALUE ZEROES.                       
+          05 BP13K268-STATUS      PIC 9(02) VALUE ZEROES.                       
+          05 BP13K813-STATUS      PIC 9(02) VALUE ZEROES.                       
+          05 BP13K060-STATUS      PIC 9(02) VALUE ZEROES.                       
+          05 BP13KH10-STATUS      PIC 9(02) VALUE ZEROES.                       
+          05 BP13KH15-STATUS      PIC 9(02) VALUE ZEROES.                       
+                                                                                
+       01 WS-COUNTERS.                                                          
+          05 WS-SUB               PIC 9(02) VALUE 01.                           
+          05 WS-SUB2              PIC 9(03) VALUE 01.                           
+          05 WS-F800-READ         PIC 9(08) VALUE ZEROES.                       
+          05 WS-F268-READ         PIC 9(08) VALUE ZEROES.                       
+          05 WS-K268-READ         PIC 9(08) VALUE ZEROES.                       
+          05 WS-MATCHED           PIC 9(08) VALUE ZEROES.                       
+          05 WS-F268-NOTFD        PIC 9(08) VALUE ZEROES.                       
+          05 WS-F800-NOTFD        PIC 9(08) VALUE ZEROES.                       
+          05 WS-NOT-PROCESS       PIC 9(08) VALUE ZEROES.                       
+          05 WS-PROCESS           PIC 9(08) VALUE ZEROES.                       
+          05 WS-KH10-UPD          PIC 9(08) VALUE ZEROES.                       
+          05 WS-KH10-WRITE        PIC 9(08) VALUE ZEROES.                       
+          05 WS-KH15-WRITE        PIC 9(08) VALUE ZEROES.                       
+          05 WS-F010-WRITE        PIC 9(08) VALUE ZEROES.                       
+          05 WS-KH15-DUPL         PIC 9(08) VALUE ZEROES.                       
+          05 WS-K268-FOUND        PIC X(01) VALUE SPACES.                       
+          05 WS-K268-BYPASS       PIC X(01) VALUE SPACES.                       
+          05 WS-NUM-BONUS         PIC X(01) VALUE SPACES.                       
+          05 WS-EXTEND-DEBAR      PIC X(01) VALUE SPACES.                       
+          05 WS-BYPASS            PIC 9(08) VALUE ZEROES.                       
+          05 WS-NUM-NON-SELN-FT   PIC 9(08) VALUE ZEROES.                       
+      *BP139545 START                                                           
+          05 WS-NUM-NON-SELN-FTPMC       PIC 9(08) VALUE ZEROES.                
+      *BP139545 END                                                             
+                                                                                
+       01 WS-VARIABLES.                                                         
+          05 WS-NUM-WITHIN-LIMIT         PIC X(01).                             
+          05 WS-NUM-UIN                  PIC X(09).                             
+          05 WS-SPS-UIN1                 PIC X(09).                             
+          05 WS-SPS-UIN2                 PIC X(09).                             
+          05 WS-SPS-UIN3                 PIC X(09).                             
+          05 WS-SPS-UIN4                 PIC X(09).                             
+          05 WS-NUM-NRIC-FIANCE          PIC X(09).                             
+          05 WS-TEMP-2-DIGIT-NO-FT       PIC X(02).                             
+          05 WS-TEMP-2-DIGIT-FMT-NO-FT REDEFINES WS-TEMP-2-DIGIT-NO-FT.         
+             10 WS-NUM-2-DIGIT-NO-FT     PIC 9(02).                             
+                                                                                
+          05 WS-TEMP-2-DIGIT-NO-ST       PIC X(02).                             
+          05 WS-TEMP-2-DIGIT-FMT-NO-ST REDEFINES WS-TEMP-2-DIGIT-NO-ST.         
+             10 WS-NUM-2-DIGIT-NO-ST     PIC 9(02).                             
+                                                                                
+          05 WS-TEMP-2-DIGIT-NO-FTS      PIC X(02).                             
+          05 WS-TEMP-2-DIGIT-FMT-NO-FTS REDEFINES                               
+             WS-TEMP-2-DIGIT-NO-FTS.                                            
+             10 WS-NUM-2-DIGIT-NO-FTS    PIC 9(02).                             
+                                                                                
+          05 WS-TEMP-2-DIGIT-YES-FT      PIC X(02).                             
+          05 WS-TEMP-2-DIGIT-FMT-YES-FT REDEFINES                               
+             WS-TEMP-2-DIGIT-YES-FT.                                            
+             10 WS-NUM-2-DIGIT-YES-FT       PIC 9(02).                          
+                                                                                
+          05 WS-TEMP-2-DIGIT-YES-ST      PIC X(02).                             
+          05 WS-TEMP-2-DIGIT-FMT-YES-ST REDEFINES                               
+             WS-TEMP-2-DIGIT-YES-ST.                                            
+             10 WS-NUM-2-DIGIT-YES-ST    PIC 9(02).                             
+                                                                                
+          05 WS-TEMP-2-DIGIT-YES-FTS     PIC X(02).                             
+          05 WS-TEMP-2-DIGIT-FMT-YES-FTS REDEFINES                              
+             WS-TEMP-2-DIGIT-YES-FTS.                                           
+             10 WS-NUM-2-DIGIT-YES-FTS   PIC 9(02).                             
+                                                                                
+      *BP139545 START                                                           
+          05 WS-TEMP-2-DIGIT-NO-FTPMC    PIC X(02).                             
+          05 WS-TEMP-2-DIGIT-FMT-NO-FTPMC REDEFINES                             
+             WS-TEMP-2-DIGIT-NO-FTPMC.                                          
+             10 WS-NUM-2-DIGIT-NO-FTPMC  PIC 9(02).                             
+                                                                                
+          05 WS-TEMP-2-DIGIT-YES-FTPMC   PIC X(02).                             
+          05 WS-TEMP-2-DIGIT-FMT-YES-FTPMC REDEFINES                            
+             WS-TEMP-2-DIGIT-YES-FTPMC.                                         
+             10 WS-NUM-2-DIGIT-YES-FTPMC PIC 9(02).                             
+      *BP139545 END                                                             
+                                                                                
+          05 WS-CURRENT-DATE             PIC X(8).                              
+          05 WS-CURRENT-TIME             PIC 9(08) VALUE ZEROES.                
+          05 WS-CURRENT-DATE1            PIC X(8).                              
+          05 FILLER REDEFINES WS-CURRENT-DATE1.                                 
+             10 WS-DTE-DEB-EXP-YR        PIC 9(4).                              
+             10 WS-DTE-DEB-EXP-MM        PIC 9(2).                              
+             10 WS-DTE-DEB-EXP-DD        PIC 9(2).                              
+          05 WS-QUOTIENT                 PIC 9(4)  VALUE ZEROES.                
+          05 WS-REMAINDER                PIC 9(4)  VALUE ZEROES.                
+                                                                                
+          05 WS-TME-APPMT-CHR            PIC X(7).                              
+          05 FILLER REDEFINES WS-TME-APPMT-CHR.                                 
+             10 WS-TME-APPMT-HHMM        PIC X(4).                              
+             10 WS-TME-APPMT-SEC.                                               
+                15 WS-TME-APPMT-MS       PIC 9(1).                              
+                15 WS-TME-APPMT-MMS      PIC 9(2).                              
+                                                                                
+          05 WS-NME-NEW-TOWN             PIC X(20).                             
+          05 WS-NUM-UNIT-AVAIL           PIC 9(04).                             
+          05 WS-NUM-QUOTA-AVAIL          PIC 9(04).                             
+          05 WS-ALLOCSCH-TYPE            PIC X(03).                             
+          05 WS-CDE-HH                   PIC X(01) VALUE SPACE.                 
+          05 WS-CDE-B-HH                 PIC X(01) VALUE SPACE.                 
+          05 WS-ADD-DEBAR                PIC X(01) VALUE SPACE.                 
+          05 WS-NUM-DEBAR                PIC X(02) VALUE SPACE.                 
+                                                                                
+       01 WS-SWITCHES.                                                          
+          05 WS-K820-EOF                 PIC X(1) VALUE 'N'.                    
+          05 WS-K268-EOF                 PIC X(1) VALUE 'N'.                    
+          05 WS-KH15-FND                 PIC X(1) VALUE 'N'.                    
+          05 WS-KH10-FND                 PIC X(1) VALUE 'N'.                    
+          05 WS-END-OF-TABLE             PIC X(1) VALUE 'N'.                    
+             88 END-OF-TABLE                      VALUE 'Y'.                    
+          05 WS-WRITE-SUCCESFUL          PIC X(1) VALUE 'N'.                    
+             88 WRITE-SUCCESFUL                   VALUE 'Y'.                    
+          05 WS-NON-SEL-3R-HG            PIC X(1) VALUE 'N'.                    
+                                                                                
+       COPY PRIOSCH.                                                            
+                                                                                
+       01 WS-F800-KEY.                                                          
+          10 WS-F800-MAIN-KEY.                                                  
+             15 WS-NUM-ALLO-CAT          PIC X(3).                              
+             15 WS-DTE-BALLOT            PIC X(6).                              
+             15 WS-NUM-NEW-TOWN          PIC X(3).                              
+             15 WS-NUM-FLAT-TYPE         PIC X(2).                              
+             15 WS-DTE-BK-APPT           PIC X(8).                              
+          10 WS-NUM-NT-FT-QUEUE       PIC X(5).                                 
+                                                                                
+       01 WS-F268-KEY.                                                          
+          10 WS-F268-MAIN-KEY.                                                  
+             15 WS-NUM-SELECTION         PIC X(3).                              
+             15 WS-DTE-BALLOT            PIC X(6).                              
+             15 WS-NUM-NT                PIC X(3).                              
+             15 WS-NUM-FT                PIC X(2).                              
+             15 WS-DTE-ACCEPT            PIC X(8).                              
+          10 WS-NUM-QUEUE             PIC X(5).                                 
+                                                                                
+       01 WS-F268-DATA.                                                         
+          10 WS-K268-NUM-REGN         PIC X(8).                                 
+          10 WS-K268-NUM-UNIT-AVAIL1  PIC 9(4).                                 
+          10 WS-K268-NUM-QUOTA-AVAIL1 PIC 9(4).                                 
+          10 WS-K268-NUM-UNIT-AVAIL2  PIC 9(4).                                 
+          10 WS-K268-NUM-QUOTA-AVAIL2 PIC 9(4).                                 
+          10 WS-K268-NUM-UNIT-AVAIL3  PIC 9(4).                                 
+          10 WS-K268-NUM-QUOTA-AVAIL3 PIC 9(4).                                 
+          10 WS-K268-NUM-WITHIN-LIMIT PIC X(1).                                 
+                                                                                
+      *-------------------------------------------------------------            
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN.                                                               
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM 1000-OPEN-FILES     THRU 1000-EXIT.                          
+           PERFORM 2000-READ-BP13F800  THRU 2000-EXIT.                          
+           PERFORM 3000-READ-BP13F268  THRU 3000-EXIT.                          
+           PERFORM 4000-PROCESS-DATA   THRU 4000-EXIT                           
+              UNTIL WS-F800-KEY = HIGH-VALUES                                   
+                AND WS-F268-KEY = HIGH-VALUES.                                  
+           PERFORM 9000-CLOSE-ROUTINE  THRU 9000-EXIT.                          
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       1000-OPEN-FILES.                                                         
+      *-------------------------------------------------------------            
+                                                                                
+           OPEN INPUT  SY02F001                                                 
+                       BP13F800                                                 
+                       BP13F268                                                 
+                       BP13K820                                                 
+                       BP13K249                                                 
+                       BP13K268                                                 
+                       BP13K813                                                 
+                       BP13K060                                                 
+              I-O      BP13KH10                                                 
+                       BP13KH15                                                 
+              OUTPUT   BP13FH15                                                 
+                       BP04F010.                                                
+                                                                                
+           IF BP13K820-STATUS  NOT = 00 AND 97                                  
+              DISPLAY 'ERROR OPENING - BP13K820 : ' BP13K820-STATUS             
+              MOVE     BP13K820-STATUS      TO RETURN-CODE                      
+              PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           IF BP13K249-STATUS  NOT =  00 AND 97                                 
+              DISPLAY 'ERROR OPENING - BP13K249 : ' BP13K249-STATUS             
+              MOVE     BP13K249-STATUS      TO RETURN-CODE                      
+              PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           IF BP13K268-STATUS  NOT =  00 AND 97                                 
+              DISPLAY 'ERROR OPENING - BP13K268 : ' BP13K268-STATUS             
+              MOVE     BP13K268-STATUS      TO RETURN-CODE                      
+              PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           IF BP13K813-STATUS  NOT =  00 AND 97                                 
+              DISPLAY 'ERROR OPENING - BP13K813 : ' BP13K813-STATUS             
+              MOVE     BP13K813-STATUS      TO RETURN-CODE                      
+              PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           IF BP13K060-STATUS  NOT =  00 AND 97                                 
+              DISPLAY 'ERROR OPENING - BP13K060 : ' BP13K060-STATUS             
+              MOVE     BP13K060-STATUS      TO RETURN-CODE                      
+              PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           IF BP13KH10-STATUS  NOT =  00 AND 97                                 
+              DISPLAY 'ERROR OPENING - BP13KH10 : ' BP13KH10-STATUS             
+              MOVE     BP13KH10-STATUS      TO RETURN-CODE                      
+              PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           IF BP13KH15-STATUS  NOT =  00 AND 97                                 
+              DISPLAY 'ERROR OPENING - BP13KH15 : ' BP13KH15-STATUS             
+              MOVE     BP13KH15-STATUS      TO RETURN-CODE                      
+              PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           READ SY02F001.                                                       
+           MOVE F001-DTE-CURRENT            TO WS-CURRENT-DATE.                 
+           ACCEPT WS-CURRENT-TIME         FROM TIME.                            
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2000-READ-BP13F800.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13F800 AT END                                                 
+             MOVE HIGH-VALUES TO WS-F800-KEY                                    
+             GO TO 2000-EXIT.                                                   
+                                                                                
+           ADD 1                     TO WS-F800-READ                            
+                                                                                
+           MOVE SPACES               TO WS-NON-SEL-3R-HG                        
+                                                                                
+           MOVE F800-NUM-ALLO-CAT    TO WS-NUM-ALLO-CAT                         
+           MOVE F800-DTE-BALLOT      TO WS-DTE-BALLOT                           
+                                     OF WS-F800-KEY                             
+           IF (F800-NUM-NEW-TOWN = SPACES OR LOW-VALUES) OR                     
+              (F800-DTE-BALLOT   >= '201309' AND                                
+               F800-NUM-ALLO-CAT = 'BTO')                                       
+              PERFORM 2100-DECODE-NT THRU 2100-EXIT                             
+           ELSE                                                                 
+              MOVE F800-NUM-NEW-TOWN TO WS-NUM-NEW-TOWN                         
+              MOVE SPACES            TO WS-NME-NEW-TOWN                         
+              MOVE 'N'               TO WS-NUM-BONUS                            
+           END-IF.                                                              
+           MOVE F800-NUM-FLAT-TYPE   TO WS-NUM-FLAT-TYPE                        
+      ***  MOVE F800-NUM-CAT         TO WS-NUM-CAT                              
+           MOVE F800-DTE-BK-APPT     TO WS-DTE-BK-APPT                          
+           MOVE F800-NUM-NT-FT-QUEUE TO WS-NUM-NT-FT-QUEUE.                     
+                                                                                
+           IF F800-NUM-ALLO-CAT = 'BTO'  AND                                    
+              F800-DTE-BALLOT = '202108' AND                                    
+              F800-NUM-FLAT-TYPE = '3 '  AND                                    
+              WS-NUM-NEW-TOWN = 'HG'     AND                                    
+              F800-AMT-HSE-INCOME > 7000                                        
+              MOVE 'Y'               TO WS-NON-SEL-3R-HG                        
+           END-IF.                                                              
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       2100-DECODE-NT.                                                          
+           MOVE F800-NUM-BTO-ZONE     TO K813-NUM-ZONE.                         
+           MOVE F800-NUM-FLAT-TYPE    TO K813-NUM-FLAT-TYPE                     
+           MOVE F800-DTE-BALLOT       TO K813-DTE-BALLOT.                       
+                                                                                
+           READ BP13K813.                                                       
+           IF BP13K813-STATUS = 00                                              
+              MOVE K813-CDE-NT               TO WS-NUM-NEW-TOWN                 
+              MOVE K813-NME-SITE             TO WS-NME-NEW-TOWN                 
+              MOVE K813-NUM-ADDITIONAL-FLAT  TO WS-NUM-BONUS                    
+      *       IF K813-NUM-FLAT-CATEGORY = 'PREMIUM'                             
+      *          MOVE 'P'       TO F800-NUM-FLAT-TYPE(2:1)                      
+      *       END-IF                                                            
+           ELSE                                                                 
+              IF BP13K813-STATUS = 23                                           
+                 MOVE F800-NUM-BTO-ZONE TO WS-NUM-NEW-TOWN                      
+                 MOVE SPACES        TO WS-NME-NEW-TOWN                          
+                 MOVE 'N'           TO WS-NUM-BONUS                             
+              ELSE                                                              
+                 MOVE BP13K813-STATUS TO RETURN-CODE                            
+                 DISPLAY 'READ ERROR, STATUS : ' BP13K813-STATUS                
+                         ' KEY : ' K813-NUM-ZONE                                
+                 PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                     
+              END-IF                                                            
+           END-IF.                                                              
+       2100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3000-READ-BP13F268.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13F268 AT END                                                 
+             MOVE HIGH-VALUES TO WS-F268-KEY                                    
+             GO TO 3000-EXIT.                                                   
+                                                                                
+           ADD 1                   TO WS-F268-READ                              
+                                                                                
+           MOVE F268-NUM-SELECTION TO WS-NUM-SELECTION                          
+           MOVE F268-DTE-BALLOT    TO WS-DTE-BALLOT                             
+                                   OF WS-F268-KEY                               
+           MOVE F268-NUM-NT        TO WS-NUM-NT                                 
+           MOVE F268-NUM-FT        TO WS-NUM-FT                                 
+      **   MOVE F268-NUM-ETHNIC    TO WS-NUM-ETHNIC                             
+           MOVE F268-DTE-ACCEPT    TO WS-DTE-ACCEPT                             
+           MOVE F268-NUM-QUEUE     TO WS-NUM-QUEUE.                             
+                                                                                
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4000-PROCESS-DATA.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES TO WS-SPS-UIN1.                                          
+           MOVE SPACES TO WS-SPS-UIN2.                                          
+           MOVE SPACES TO WS-SPS-UIN3.                                          
+           MOVE SPACES TO WS-SPS-UIN4.                                          
+           MOVE SPACES TO WS-NUM-NRIC-FIANCE.                                   
+           MOVE 'N'    TO WS-NUM-WITHIN-LIMIT.                                  
+                                                                                
+           MOVE ZEROES TO WS-TEMP-2-DIGIT-NO-FT                                 
+                          WS-TEMP-2-DIGIT-NO-ST                                 
+                          WS-TEMP-2-DIGIT-NO-FTS                                
+                          WS-TEMP-2-DIGIT-YES-FT                                
+                          WS-TEMP-2-DIGIT-YES-ST                                
+                          WS-TEMP-2-DIGIT-YES-FTS                               
+      *BP139545 START                                                           
+                          WS-TEMP-2-DIGIT-NO-FTPMC                              
+                          WS-TEMP-2-DIGIT-YES-FTPMC                             
+                          WS-NUM-NON-SELN-FTPMC                                 
+      *BP139545 END                                                             
+                          WS-NUM-NON-SELN-FT.                                   
+                                                                                
+           IF  WS-F800-KEY    =  WS-F268-KEY                                    
+              ADD 1                         TO  WS-MATCHED                      
+              PERFORM 2000-READ-BP13F800    THRU 2000-EXIT                      
+              PERFORM 3000-READ-BP13F268    THRU 3000-EXIT                      
+                                                                                
+           ELSE                                                                 
+           IF WS-F800-KEY  <  WS-F268-KEY                                       
+              ADD 1    TO WS-F268-NOTFD                                         
+              IF F800-NUM-SCH-ACC = SPACES OR LOW-VALUES                        
+                 IF F800-NUM-HOUSEHOLD = 'H' OR 'T'                             
+                    MOVE 'H'                        TO WS-CDE-HH                
+                 ELSE                                                           
+                    MOVE F800-NUM-HOUSEHOLD         TO WS-CDE-HH                
+                 END-IF                                                         
+                                                                                
+      *          IF F800-CDE-BALLOT-HOUSEHOLD = 'H' OR 'T' OR 'F'               
+                 IF F800-CDE-BALLOT-HOUSEHOLD = 'H' OR 'T'                      
+                    MOVE 'H'                        TO WS-CDE-B-HH              
+                 ELSE                                                           
+                    IF F800-CDE-BALLOT-HOUSEHOLD = 'N'                          
+                       MOVE 'G'                     TO WS-CDE-B-HH              
+                    ELSE                                                        
+                       MOVE F800-CDE-BALLOT-HOUSEHOLD  TO WS-CDE-B-HH           
+                    END-IF                                                      
+                 END-IF                                                         
+                                                                                
+                 PERFORM 4500-GET-ALLO-SCH          THRU 4500-EXIT              
+                 PERFORM 4600-POPULATE-BP13KH15     THRU 4600-EXIT              
+                 PERFORM 5000-PROCESS-NON-SELECT    THRU 5000-EXIT              
+                                                                                
+                 IF WS-F800-MAIN-KEY  = WS-F268-MAIN-KEY                        
+                    PERFORM 6000-CREATE-BP13KH15    THRU 6000-EXIT              
+                 ELSE                                                           
+                    PERFORM 7000-CREATE-BP13KH15    THRU 7000-EXIT              
+                 END-IF                                                         
+                 ADD                                1 TO WS-PROCESS             
+              END-IF                                                            
+              PERFORM 2000-READ-BP13F800    THRU 2000-EXIT                      
+                                                                                
+           ELSE                                                                 
+              ADD                    1 TO WS-F800-NOTFD                         
+              PERFORM 3000-READ-BP13F268    THRU 3000-EXIT.                     
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4500-GET-ALLO-SCH.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           SET WS-ALLOC-PTR TO 1.                                               
+                                                                                
+           SEARCH WS-ALLOC-SCH                                                  
+              AT END MOVE 'XXX' TO WS-ALLOCSCH-TYPE                             
+              WHEN F800-NUM-ALLO-SCHEME =                                       
+                                WS-ALLOC-SCH-DESP(WS-ALLOC-PTR)                 
+              MOVE WS-MAIN-SCH-CD(WS-ALLOC-PTR) TO                              
+                                      WS-ALLOCSCH-TYPE.                         
+                                                                                
+       4500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4600-POPULATE-BP13KH15.                                                  
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE 'N'                      TO WS-WRITE-SUCCESFUL.                 
+                                                                                
+           MOVE SPACES                   TO BP13KH15-REC.                       
+           INITIALIZE                       BP13KH15-REC.                       
+                                                                                
+      *** KEY                                                                   
+           MOVE F800-NUM-ALLO-CAT        TO KH15-NUM-SELECTION.                 
+           MOVE F800-DTE-BALLOT          TO KH15-DTE-BALLOT.                    
+           IF   WS-NME-NEW-TOWN = SPACES OR LOW-VALUES                          
+              MOVE SPACES                TO K060-KEY-FLD                        
+              MOVE 02                    TO K060-SERIAL-NO                      
+              MOVE WS-NUM-NEW-TOWN       TO K060-CODE                           
+              PERFORM 7100-READ-BP13K060 THRU 7100-EXIT                         
+              IF BP13K060-STATUS = 00                                           
+                 MOVE K060-DESC(1:20)    TO KH15-NUM-NEW-TOWN                   
+              ELSE                                                              
+                 MOVE WS-NUM-NEW-TOWN    TO KH15-NUM-NEW-TOWN                   
+              END-IF                                                            
+                                                                                
+           ELSE                                                                 
+              MOVE WS-NME-NEW-TOWN       TO KH15-NUM-NEW-TOWN                   
+           END-IF.                                                              
+                                                                                
+           MOVE SPACES                    TO K060-KEY-FLD.                      
+           MOVE 34                        TO K060-SERIAL-NO.                    
+           MOVE F800-NUM-FLAT-TYPE        TO K060-CODE.                         
+           PERFORM 7100-READ-BP13K060   THRU 7100-EXIT.                         
+           IF BP13K060-STATUS = 00                                              
+               IF F800-NUM-FLAT-TYPE(2:1) = 'P'                                 
+                  MOVE K060-DESC(1:7)         TO KH15-NUM-FLAT-TYPE             
+               ELSE                                                             
+                  MOVE K060-DESC(1:6)         TO KH15-NUM-FLAT-TYPE             
+               END-IF                                                           
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-FLAT-TYPE = '1F'                                         
+              MOVE '1-ROOM'                   TO KH15-NUM-FLAT-TYPE             
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-NEW-TOWN = 'CT' AND                                      
+              F800-DTE-BALLOT   = '200809'                                      
+              IF F800-NUM-FLAT-TYPE = '4 '                                      
+                 MOVE 'S1' TO KH15-NUM-FLAT-TYPE                                
+              ELSE                                                              
+                 IF F800-NUM-FLAT-TYPE = '5 '                                   
+                    MOVE 'S2' TO KH15-NUM-FLAT-TYPE                             
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF (F800-NUM-FLAT-TYPE = '1A' OR '2A')                               
+              MOVE 'SA' TO KH15-NUM-FLAT-TYPE                                   
+           END-IF.                                                              
+                                                                                
+           MOVE F800-NUM-CAT             TO KH15-NUM-ETHNIC.                    
+           MOVE F800-DTE-BK-APPT         TO KH15-DTE-BK-APPMT.                  
+           MOVE F268-TME-ACCEPT          TO WS-TME-APPMT-CHR                    
+      ***  KEY                                                                  
+                                                                                
+           MOVE F800-NUM-NT-FT-QUEUE     TO KH15-NUM-QUEUE.                     
+           MOVE F800-NUM-REGN            TO KH15-NUM-REGN                       
+           MOVE F800-DTE-BK-APPT         TO KH15-DTE-APPMT                      
+           MOVE F800-TME-BK-APPT         TO KH15-TME-APPMT                      
+           MOVE WS-NUM-NEW-TOWN          TO KH15-NUM-NT                         
+                                                                                
+           IF WS-F800-MAIN-KEY  = WS-F268-MAIN-KEY                              
+              PERFORM 4650-GET-LIMIT-MAT   THRU 4650-EXIT                       
+           ELSE                                                                 
+              PERFORM 4670-GET-LIMIT-NMAT  THRU 4670-EXIT                       
+           END-IF.                                                              
+                                                                                
+       4600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4650-GET-LIMIT-MAT.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE F268-NUM-FT              TO KH15-NUM-FT                         
+           MOVE F268-NUM-REJECT          TO KH15-NUM-REJECT                     
+           MOVE 'N'                      TO KH15-NUM-BOOK                       
+                                                                                
+           IF F800-NUM-ALLO-CAT = 'SBF' AND                                     
+              (F800-NUM-ELDERLY = 'F' OR 'S')                                   
+              MOVE F268-NUM-UNIT-AVAIL1-F2     TO KH15-NUM-UNIT-AVAIL1          
+              MOVE F268-NUM-QUOTA-AVAIL1-F2    TO KH15-NUM-QUOTA-AVAIL1         
+              MOVE F268-NUM-UNIT-AVAIL2-F2     TO KH15-NUM-UNIT-AVAIL2          
+              MOVE F268-NUM-QUOTA-AVAIL2-F2    TO KH15-NUM-QUOTA-AVAIL2         
+              MOVE F268-NUM-UNIT-AVAIL3-F2     TO KH15-NUM-UNIT-AVAIL3          
+              MOVE F268-NUM-QUOTA-AVAIL3-F2    TO KH15-NUM-QUOTA-AVAIL3         
+           ELSE                                                                 
+              MOVE F268-NUM-UNIT-AVAIL1     TO KH15-NUM-UNIT-AVAIL1             
+              MOVE F268-NUM-QUOTA-AVAIL1    TO KH15-NUM-QUOTA-AVAIL1            
+              MOVE F268-NUM-UNIT-AVAIL2     TO KH15-NUM-UNIT-AVAIL2             
+              MOVE F268-NUM-QUOTA-AVAIL2    TO KH15-NUM-QUOTA-AVAIL2            
+              MOVE F268-NUM-UNIT-AVAIL3     TO KH15-NUM-UNIT-AVAIL3             
+              MOVE F268-NUM-QUOTA-AVAIL3    TO KH15-NUM-QUOTA-AVAIL3            
+           END-IF.                                                              
+                                                                                
+           EVALUATE KH15-NUM-ETHNIC                                             
+           WHEN '1'                                                             
+              IF WS-NON-SEL-3R-HG = 'Y'                                         
+                 MOVE F268-NUM-UNIT-AVAIL1-F2  TO WS-NUM-UNIT-AVAIL             
+                 MOVE F268-NUM-QUOTA-AVAIL1-F2 TO WS-NUM-QUOTA-AVAIL            
+              ELSE                                                              
+                 MOVE F268-NUM-UNIT-AVAIL1     TO WS-NUM-UNIT-AVAIL             
+                 MOVE F268-NUM-QUOTA-AVAIL1    TO WS-NUM-QUOTA-AVAIL            
+              END-IF                                                            
+           WHEN '2'                                                             
+              IF WS-NON-SEL-3R-HG = 'Y'                                         
+                 MOVE F268-NUM-UNIT-AVAIL2-F2  TO WS-NUM-UNIT-AVAIL             
+                 MOVE F268-NUM-QUOTA-AVAIL2-F2 TO WS-NUM-QUOTA-AVAIL            
+              ELSE                                                              
+                 MOVE F268-NUM-UNIT-AVAIL2     TO WS-NUM-UNIT-AVAIL             
+                 MOVE F268-NUM-QUOTA-AVAIL2    TO WS-NUM-QUOTA-AVAIL            
+              END-IF                                                            
+           WHEN '3'                                                             
+              IF WS-NON-SEL-3R-HG = 'Y'                                         
+                 MOVE F268-NUM-UNIT-AVAIL3-F2  TO WS-NUM-UNIT-AVAIL             
+                 MOVE F268-NUM-QUOTA-AVAIL3-F2 TO WS-NUM-QUOTA-AVAIL            
+              ELSE                                                              
+                 MOVE F268-NUM-UNIT-AVAIL3     TO WS-NUM-UNIT-AVAIL             
+                 MOVE F268-NUM-QUOTA-AVAIL3    TO WS-NUM-QUOTA-AVAIL            
+              END-IF                                                            
+           END-EVALUATE                                                         
+                                                                                
+           MOVE KH15-NUM-NEW-TOWN         TO K249-NUM-NEW-TOWN                  
+           IF F800-NUM-ALLO-CAT = 'SBF' AND                                     
+              (F800-NUM-ELDERLY = 'F' OR 'S')                                   
+              MOVE 'SA      '             TO K249-NUM-FLAT-TYPE                 
+           ELSE                                                                 
+              MOVE KH15-NUM-FLAT-TYPE        TO K249-NUM-FLAT-TYPE              
+           END-IF                                                               
+           MOVE KH15-NUM-SELECTION        TO K249-NUM-SELECTION                 
+           MOVE KH15-DTE-BALLOT           TO K249-DTE-BALLOT                    
+           MOVE WS-NUM-BONUS              TO K249-NUM-BONUS                     
+           PERFORM 7200-READ-BP13K249   THRU 7200-EXIT                          
+           IF BP13K249-STATUS = 00                                              
+              IF WS-NUM-UNIT-AVAIL >= K249-NUM-LIMIT                            
+                 MOVE 'Y'                 TO WS-NUM-WITHIN-LIMIT                
+              ELSE                                                              
+                 MOVE 'N'                 TO WS-NUM-WITHIN-LIMIT                
+              END-IF                                                            
+           ELSE                                                                 
+              MOVE F268-NUM-WITHIN-LIMIT  TO WS-NUM-WITHIN-LIMIT                
+           END-IF.                                                              
+                                                                                
+           MOVE WS-NUM-WITHIN-LIMIT      TO KH15-NUM-WITHIN-LIMIT.              
+       4650-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4670-GET-LIMIT-NMAT.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE F800-NUM-FLAT-TYPE        TO KH15-NUM-FT.                       
+                                                                                
+           MOVE SPACES                    TO K268-KEY-FLD.                      
+           MOVE KH15-NUM-NEW-TOWN         TO K268-NUM-NEW-TOWN.                 
+           IF F800-NUM-ALLO-CAT = 'SBF' AND                                     
+              (F800-NUM-ELDERLY = 'F' OR 'S')                                   
+              MOVE '2-ROOM   '            TO K268-NUM-FLAT-TYPE                 
+           ELSE                                                                 
+              MOVE KH15-NUM-FLAT-TYPE     TO K268-NUM-FLAT-TYPE                 
+           END-IF.                                                              
+           MOVE KH15-NUM-SELECTION        TO K268-NUM-SELECTION.                
+           MOVE KH15-DTE-BALLOT           TO K268-DTE-BALLOT.                   
+      *    MOVE KH15-NUM-ETHNIC           TO K268-NUM-ETHNIC.                   
+      *    MOVE F800-DTE-BK-APPT          TO K268-DTE-ACCEPT.                   
+           PERFORM 7300-START-BP13K268   THRU 7300-EXIT.                        
+           IF WS-K268-FOUND = 'Y'                                               
+              MOVE WS-K268-NUM-UNIT-AVAIL1   TO KH15-NUM-UNIT-AVAIL1            
+              MOVE WS-K268-NUM-QUOTA-AVAIL1  TO KH15-NUM-QUOTA-AVAIL1           
+              MOVE WS-K268-NUM-UNIT-AVAIL2   TO KH15-NUM-UNIT-AVAIL2            
+              MOVE WS-K268-NUM-QUOTA-AVAIL2  TO KH15-NUM-QUOTA-AVAIL2           
+              MOVE WS-K268-NUM-UNIT-AVAIL3   TO KH15-NUM-UNIT-AVAIL3            
+              MOVE WS-K268-NUM-QUOTA-AVAIL3  TO KH15-NUM-QUOTA-AVAIL3           
+              MOVE WS-K268-NUM-WITHIN-LIMIT  TO KH15-NUM-WITHIN-LIMIT           
+                                                WS-NUM-WITHIN-LIMIT             
+                                                                                
+              EVALUATE KH15-NUM-ETHNIC                                          
+              WHEN '1'                                                          
+                 MOVE WS-K268-NUM-UNIT-AVAIL1  TO WS-NUM-UNIT-AVAIL             
+                 MOVE WS-K268-NUM-QUOTA-AVAIL1 TO WS-NUM-QUOTA-AVAIL            
+              WHEN '2'                                                          
+                 MOVE WS-K268-NUM-UNIT-AVAIL2  TO WS-NUM-UNIT-AVAIL             
+                 MOVE WS-K268-NUM-QUOTA-AVAIL2 TO WS-NUM-QUOTA-AVAIL            
+              WHEN '3'                                                          
+                 MOVE WS-K268-NUM-UNIT-AVAIL3  TO WS-NUM-UNIT-AVAIL             
+                 MOVE WS-K268-NUM-QUOTA-AVAIL3 TO WS-NUM-QUOTA-AVAIL            
+              END-EVALUATE                                                      
+           ELSE                                                                 
+                                                                                
+              MOVE KH15-NUM-NEW-TOWN         TO K249-NUM-NEW-TOWN               
+              IF F800-NUM-ALLO-CAT = 'SBF' AND                                  
+                (F800-NUM-ELDERLY = 'F' OR 'S')                                 
+                MOVE 'SA       '             TO K249-NUM-FLAT-TYPE              
+              ELSE                                                              
+                MOVE KH15-NUM-FLAT-TYPE      TO K249-NUM-FLAT-TYPE              
+              END-IF                                                            
+              MOVE KH15-NUM-SELECTION        TO K249-NUM-SELECTION              
+              MOVE KH15-DTE-BALLOT           TO K249-DTE-BALLOT                 
+              MOVE WS-NUM-BONUS              TO K249-NUM-BONUS                  
+                                                                                
+              PERFORM 7200-READ-BP13K249   THRU 7200-EXIT                       
+                                                                                
+              IF BP13K249-STATUS = 00                                           
+                 IF K249-NUM-TOTAL-GEN3 NOT NUMERIC                             
+                    MOVE ZEROES TO K249-NUM-TOTAL-GEN3                          
+                 END-IF                                                         
+                 IF K249-NUM-UNIT-CAT1-NOGEN3 NOT NUMERIC                       
+                    MOVE ZEROES TO K249-NUM-UNIT-CAT1-NOGEN3                    
+                 END-IF                                                         
+                 IF K249-NUM-UNIT-CAT2-NOGEN3 NOT NUMERIC                       
+                    MOVE ZEROES TO K249-NUM-UNIT-CAT2-NOGEN3                    
+                 END-IF                                                         
+                 IF K249-NUM-UNIT-CAT3-NOGEN3 NOT NUMERIC                       
+                    MOVE ZEROES TO K249-NUM-UNIT-CAT3-NOGEN3                    
+                 END-IF                                                         
+                 IF K249-NUM-TOTAL-GEN3 > 0                                     
+                    MOVE K249-NUM-UNIT-CAT1-NOGEN3                              
+                      TO KH15-NUM-UNIT-AVAIL1                                   
+                    MOVE K249-NUM-UNIT-CAT2-NOGEN3                              
+                      TO KH15-NUM-UNIT-AVAIL2                                   
+                    MOVE K249-NUM-UNIT-CAT3-NOGEN3                              
+                      TO KH15-NUM-UNIT-AVAIL3                                   
+                 ELSE                                                           
+                    MOVE K249-NUM-UNIT-CAT1     TO KH15-NUM-UNIT-AVAIL1         
+                    MOVE K249-NUM-UNIT-CAT2     TO KH15-NUM-UNIT-AVAIL2         
+                    MOVE K249-NUM-UNIT-CAT3     TO KH15-NUM-UNIT-AVAIL3         
+                 END-IF                                                         
+                                                                                
+                 MOVE K249-NUM-AVAIL-CAT1 TO KH15-NUM-QUOTA-AVAIL1              
+                 MOVE K249-NUM-AVAIL-CAT3 TO KH15-NUM-QUOTA-AVAIL3              
+                 MOVE K249-NUM-AVAIL-CAT2 TO KH15-NUM-QUOTA-AVAIL2              
+                 EVALUATE KH15-NUM-ETHNIC                                       
+                 WHEN '1'                                                       
+                    IF WS-NON-SEL-3R-HG = 'Y'                                   
+                       MOVE K249-NUM-AVAIL-CAT1-NS TO WS-NUM-QUOTA-AVAIL        
+                    ELSE                                                        
+                       MOVE K249-NUM-AVAIL-CAT1 TO WS-NUM-QUOTA-AVAIL           
+                    END-IF                                                      
+                    IF K249-NUM-TOTAL-GEN3 > 0                                  
+                       MOVE K249-NUM-UNIT-CAT1-NOGEN3                           
+                         TO WS-NUM-UNIT-AVAIL                                   
+                    ELSE                                                        
+                       IF WS-NON-SEL-3R-HG = 'Y'                                
+                          MOVE K249-NUM-UNIT-CAT1-NS TO                         
+                                                   WS-NUM-UNIT-AVAIL            
+                       ELSE                                                     
+                          MOVE K249-NUM-UNIT-CAT1 TO WS-NUM-UNIT-AVAIL          
+                       END-IF                                                   
+                    END-IF                                                      
+                 WHEN '2'                                                       
+                    IF WS-NON-SEL-3R-HG = 'Y'                                   
+                       MOVE K249-NUM-AVAIL-CAT2-NS TO WS-NUM-QUOTA-AVAIL        
+                    ELSE                                                        
+                       MOVE K249-NUM-AVAIL-CAT2 TO WS-NUM-QUOTA-AVAIL           
+                    END-IF                                                      
+                    IF K249-NUM-TOTAL-GEN3 > 0                                  
+                       MOVE K249-NUM-UNIT-CAT2-NOGEN3                           
+                         TO WS-NUM-UNIT-AVAIL                                   
+                    ELSE                                                        
+                       IF WS-NON-SEL-3R-HG = 'Y'                                
+                          MOVE K249-NUM-UNIT-CAT2-NS TO                         
+                                                   WS-NUM-UNIT-AVAIL            
+                       ELSE                                                     
+                          MOVE K249-NUM-UNIT-CAT2 TO WS-NUM-UNIT-AVAIL          
+                       END-IF                                                   
+                    END-IF                                                      
+                 WHEN '3'                                                       
+                    IF WS-NON-SEL-3R-HG = 'Y'                                   
+                       MOVE K249-NUM-AVAIL-CAT3-NS TO WS-NUM-QUOTA-AVAIL        
+                    ELSE                                                        
+                       MOVE K249-NUM-AVAIL-CAT3 TO WS-NUM-QUOTA-AVAIL           
+                    END-IF                                                      
+                    IF K249-NUM-TOTAL-GEN3 > 0                                  
+                       MOVE K249-NUM-UNIT-CAT3-NOGEN3                           
+                         TO WS-NUM-UNIT-AVAIL                                   
+                    ELSE                                                        
+                       IF WS-NON-SEL-3R-HG = 'Y'                                
+                          MOVE K249-NUM-UNIT-CAT3-NS TO                         
+                                                   WS-NUM-UNIT-AVAIL            
+                       ELSE                                                     
+                          MOVE K249-NUM-UNIT-CAT3 TO WS-NUM-UNIT-AVAIL          
+                       END-IF                                                   
+                    END-IF                                                      
+                 END-EVALUATE                                                   
+                 IF WS-NUM-UNIT-AVAIL >= K249-NUM-LIMIT                         
+                    MOVE 'Y'                 TO WS-NUM-WITHIN-LIMIT             
+                 ELSE                                                           
+                    MOVE 'N'                 TO WS-NUM-WITHIN-LIMIT             
+                 END-IF                                                         
+                 MOVE WS-NUM-WITHIN-LIMIT    TO KH15-NUM-WITHIN-LIMIT           
+              END-IF.                                                           
+                                                                                
+       4670-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4700-BROWSE-BP13K820.                                                    
+      *-------------------------------------------------------------            
+           MOVE 'N'               TO  WS-K820-EOF.                              
+           MOVE SPACES            TO  WS-NUM-NRIC-FIANCE.                       
+                                                                                
+           MOVE SPACES            TO  K820-KEY-FLD                              
+           MOVE F800-NUM-REGN     TO  K820-NUM-REGN.                            
+                                                                                
+           START BP13K820 KEY >= K820-KEY-FLD.                                  
+           EVALUATE BP13K820-STATUS                                             
+           WHEN 00                                                              
+                PERFORM 4800-READNEXT-BP13K820 THRU 4800-EXIT                   
+                  UNTIL K820-NUM-REGN NOT = F800-NUM-REGN                       
+                     OR WS-K820-EOF = 'Y'                                       
+           WHEN 10                                                              
+           WHEN 23                                                              
+                DISPLAY 'BP13K820 RECORD NOT FOUND  = ' K820-KEY-FLD            
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR START BP13K820, STATUS  '                        
+                        BP13K820-STATUS                                         
+                        ',  REGN ' K820-NUM-REGN                                
+                MOVE BP13K820-STATUS TO RETURN-CODE                             
+                PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT                    
+           END-EVALUATE.                                                        
+       4700-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4800-READNEXT-BP13K820.                                                  
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13K820 NEXT RECORD.                                           
+                                                                                
+           EVALUATE BP13K820-STATUS                                             
+           WHEN 00                                                              
+           WHEN 02                                                              
+                IF K820-NUM-REGN = F800-NUM-REGN AND                            
+                   K820-NUM-RELATIONSHIP = '09'                                 
+                   MOVE K820-NUM-NRIC TO WS-NUM-NRIC-FIANCE                     
+                END-IF                                                          
+           WHEN 10                                                              
+           WHEN 23                                                              
+                MOVE 'Y'        TO WS-K820-EOF                                  
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR READING BP13K820, STATUS '                       
+                        BP13K820-STATUS ',  REGN ' K820-NUM-REGN                
+                MOVE BP13K820-STATUS          TO RETURN-CODE                    
+                PERFORM 9000-CLOSE-ROUTINE  THRU 9000-EXIT                      
+           END-EVALUATE.                                                        
+       4800-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       5000-PROCESS-NON-SELECT.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE ZEROES    TO  WS-NUM-NON-SELN-FT                                
+      *BP139545 START                                                           
+                              WS-NUM-NON-SELN-FTPMC.                            
+      *BP139545 END                                                             
+                                                                                
+           IF F800-DTE-BALLOT <  '201109'                                       
+              ADD 1 TO WS-BYPASS                                                
+              GO TO 5000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           IF (WS-ALLOCSCH-TYPE  = 'CCC')   OR                                  
+              (F800-NUM-ALLOC-TAG = 'NE')   OR                                  
+              (F800-NUM-FLAT-TYPE  = '1A' OR '2A')                              
+              GO TO 5000-EXIT.                                                  
+                                                                                
+      * BYPASS CREATE BP13KH10 FOR GEN3 CASES OUTSIDE 300%                      
+           IF F800-NUM-GEN3          = 'Y' AND                                  
+              F800-NUM-BALLOT-STATUS = 'K'                                      
+              GO TO 5000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-NRIC1 NOT = SPACES AND LOW-VALUES                        
+              MOVE F800-NUM-NRIC1          TO WS-NUM-UIN                        
+              PERFORM 5100-POPULATE-HEADER THRU 5100-EXIT                       
+              MOVE K820-NUM-NRIC-SPOUSE    TO WS-SPS-UIN1                       
+              PERFORM 5500-POPULATE-DETAIL THRU 5500-EXIT                       
+              IF KH10-NUM-NON-SELN-FT > WS-NUM-NON-SELN-FT                      
+                 MOVE KH10-NUM-NON-SELN-FT TO WS-NUM-NON-SELN-FT                
+              END-IF                                                            
+      *BP139545 START                                                           
+              IF KH10-NUM-NON-SELN-FTPMC > WS-NUM-NON-SELN-FTPMC                
+                 MOVE KH10-NUM-NON-SELN-FTPMC TO WS-NUM-NON-SELN-FTPMC          
+              END-IF                                                            
+      *BP139545 END                                                             
+              PERFORM 5700-UPDATE-BP13KH10 THRU 5700-EXIT                       
+              IF WS-ADD-DEBAR = 'Y'                                             
+                 PERFORM 7600-WRITE-BP04F010       THRU 7600-EXIT               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-NRIC2 NOT = SPACES AND LOW-VALUES                        
+              MOVE F800-NUM-NRIC2          TO WS-NUM-UIN                        
+              PERFORM 5100-POPULATE-HEADER THRU 5100-EXIT                       
+              MOVE K820-NUM-NRIC-SPOUSE    TO WS-SPS-UIN2                       
+              PERFORM 5500-POPULATE-DETAIL THRU 5500-EXIT                       
+              IF KH10-NUM-NON-SELN-FT > WS-NUM-NON-SELN-FT                      
+                 MOVE KH10-NUM-NON-SELN-FT TO WS-NUM-NON-SELN-FT                
+              END-IF                                                            
+      *BP139545 START                                                           
+              IF KH10-NUM-NON-SELN-FTPMC > WS-NUM-NON-SELN-FTPMC                
+                 MOVE KH10-NUM-NON-SELN-FTPMC TO WS-NUM-NON-SELN-FTPMC          
+              END-IF                                                            
+      *BP139545 END                                                             
+              PERFORM 5700-UPDATE-BP13KH10 THRU 5700-EXIT                       
+              IF WS-ADD-DEBAR = 'Y'                                             
+                 PERFORM 7600-WRITE-BP04F010       THRU 7600-EXIT               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-NRIC3 NOT = SPACES AND LOW-VALUES                        
+              MOVE F800-NUM-NRIC3          TO WS-NUM-UIN                        
+              PERFORM 5100-POPULATE-HEADER THRU 5100-EXIT                       
+              MOVE K820-NUM-NRIC-SPOUSE    TO WS-SPS-UIN3                       
+              PERFORM 5500-POPULATE-DETAIL THRU 5500-EXIT                       
+              IF KH10-NUM-NON-SELN-FT > WS-NUM-NON-SELN-FT                      
+                 MOVE KH10-NUM-NON-SELN-FT TO WS-NUM-NON-SELN-FT                
+              END-IF                                                            
+      *BP139545 START                                                           
+              IF KH10-NUM-NON-SELN-FTPMC > WS-NUM-NON-SELN-FTPMC                
+                 MOVE KH10-NUM-NON-SELN-FTPMC TO WS-NUM-NON-SELN-FTPMC          
+              END-IF                                                            
+      *BP139545 END                                                             
+              PERFORM 5700-UPDATE-BP13KH10 THRU 5700-EXIT                       
+              IF WS-ADD-DEBAR = 'Y'                                             
+                 PERFORM 7600-WRITE-BP04F010       THRU 7600-EXIT               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-NRIC4 NOT = SPACES AND LOW-VALUES                        
+              MOVE F800-NUM-NRIC4          TO WS-NUM-UIN                        
+              PERFORM 5100-POPULATE-HEADER THRU 5100-EXIT                       
+              MOVE K820-NUM-NRIC-SPOUSE    TO WS-SPS-UIN4                       
+              PERFORM 5500-POPULATE-DETAIL THRU 5500-EXIT                       
+              IF KH10-NUM-NON-SELN-FT > WS-NUM-NON-SELN-FT                      
+                 MOVE KH10-NUM-NON-SELN-FT TO WS-NUM-NON-SELN-FT                
+              END-IF                                                            
+      *BP139545 START                                                           
+              IF KH10-NUM-NON-SELN-FTPMC > WS-NUM-NON-SELN-FTPMC                
+                 MOVE KH10-NUM-NON-SELN-FTPMC TO WS-NUM-NON-SELN-FTPMC          
+              END-IF                                                            
+      *BP139545 END                                                             
+              PERFORM 5700-UPDATE-BP13KH10 THRU 5700-EXIT                       
+              IF WS-ADD-DEBAR = 'Y'                                             
+                 PERFORM 7600-WRITE-BP04F010       THRU 7600-EXIT               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-SPS-UIN1 NOT = SPACES AND LOW-VALUES AND                       
+              F800-NUM-NRIC1 AND F800-NUM-NRIC2 AND                             
+              F800-NUM-NRIC3 AND F800-NUM-NRIC4                                 
+              MOVE WS-SPS-UIN1          TO WS-NUM-UIN                           
+              PERFORM 5100-POPULATE-HEADER THRU 5100-EXIT                       
+              PERFORM 5500-POPULATE-DETAIL THRU 5500-EXIT                       
+              IF KH10-NUM-NON-SELN-FT > WS-NUM-NON-SELN-FT                      
+                 MOVE KH10-NUM-NON-SELN-FT TO WS-NUM-NON-SELN-FT                
+              END-IF                                                            
+      *BP139545 START                                                           
+              IF KH10-NUM-NON-SELN-FTPMC > WS-NUM-NON-SELN-FTPMC                
+                 MOVE KH10-NUM-NON-SELN-FTPMC TO WS-NUM-NON-SELN-FTPMC          
+              END-IF                                                            
+      *BP139545 END                                                             
+              PERFORM 5700-UPDATE-BP13KH10 THRU 5700-EXIT                       
+              IF WS-ADD-DEBAR = 'Y'                                             
+                 PERFORM 7600-WRITE-BP04F010       THRU 7600-EXIT               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-SPS-UIN2 NOT = SPACES AND LOW-VALUES AND                       
+              F800-NUM-NRIC1 AND F800-NUM-NRIC2 AND                             
+              F800-NUM-NRIC3 AND F800-NUM-NRIC4                                 
+              MOVE WS-SPS-UIN2               TO WS-NUM-UIN                      
+              PERFORM 5100-POPULATE-HEADER THRU 5100-EXIT                       
+              PERFORM 5500-POPULATE-DETAIL THRU 5500-EXIT                       
+              IF KH10-NUM-NON-SELN-FT > WS-NUM-NON-SELN-FT                      
+                 MOVE KH10-NUM-NON-SELN-FT TO WS-NUM-NON-SELN-FT                
+              END-IF                                                            
+      *BP139545 START                                                           
+              IF KH10-NUM-NON-SELN-FTPMC > WS-NUM-NON-SELN-FTPMC                
+                 MOVE KH10-NUM-NON-SELN-FTPMC TO WS-NUM-NON-SELN-FTPMC          
+              END-IF                                                            
+      *BP139545 END                                                             
+              PERFORM 5700-UPDATE-BP13KH10 THRU 5700-EXIT                       
+              IF WS-ADD-DEBAR = 'Y'                                             
+                 PERFORM 7600-WRITE-BP04F010       THRU 7600-EXIT               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-SPS-UIN3          NOT = SPACES AND LOW-VALUES AND              
+              F800-NUM-NRIC1 AND F800-NUM-NRIC2 AND                             
+              F800-NUM-NRIC3 AND F800-NUM-NRIC4                                 
+              MOVE WS-SPS-UIN3          TO WS-NUM-UIN                           
+              PERFORM 5100-POPULATE-HEADER THRU 5100-EXIT                       
+              PERFORM 5500-POPULATE-DETAIL THRU 5500-EXIT                       
+              IF KH10-NUM-NON-SELN-FT > WS-NUM-NON-SELN-FT                      
+                 MOVE KH10-NUM-NON-SELN-FT TO WS-NUM-NON-SELN-FT                
+              END-IF                                                            
+      *BP139545 START                                                           
+              IF KH10-NUM-NON-SELN-FTPMC > WS-NUM-NON-SELN-FTPMC                
+                 MOVE KH10-NUM-NON-SELN-FTPMC TO WS-NUM-NON-SELN-FTPMC          
+              END-IF                                                            
+      *BP139545 END                                                             
+              PERFORM 5700-UPDATE-BP13KH10 THRU 5700-EXIT                       
+              IF WS-ADD-DEBAR = 'Y'                                             
+                 PERFORM 7600-WRITE-BP04F010       THRU 7600-EXIT               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-SPS-UIN4          NOT = SPACES AND LOW-VALUES AND              
+              F800-NUM-NRIC1 AND F800-NUM-NRIC2 AND                             
+              F800-NUM-NRIC3 AND F800-NUM-NRIC4                                 
+              MOVE WS-SPS-UIN4          TO WS-NUM-UIN                           
+              PERFORM 5100-POPULATE-HEADER THRU 5100-EXIT                       
+              PERFORM 5500-POPULATE-DETAIL THRU 5500-EXIT                       
+              IF KH10-NUM-NON-SELN-FT > WS-NUM-NON-SELN-FT                      
+                 MOVE KH10-NUM-NON-SELN-FT TO WS-NUM-NON-SELN-FT                
+              END-IF                                                            
+      *BP139545 START                                                           
+              IF KH10-NUM-NON-SELN-FTPMC > WS-NUM-NON-SELN-FTPMC                
+                 MOVE KH10-NUM-NON-SELN-FTPMC TO WS-NUM-NON-SELN-FTPMC          
+              END-IF                                                            
+      *BP139545 END                                                             
+              PERFORM 5700-UPDATE-BP13KH10 THRU 5700-EXIT                       
+              IF WS-ADD-DEBAR = 'Y'                                             
+                 PERFORM 7600-WRITE-BP04F010       THRU 7600-EXIT               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-ELIG-SCHEME = 'FS ' OR ' FS'                             
+              PERFORM 4700-BROWSE-BP13K820 THRU 4700-EXIT                       
+              IF WS-NUM-NRIC-FIANCE NOT = SPACES AND                            
+              F800-NUM-NRIC1 AND F800-NUM-NRIC2 AND                             
+              F800-NUM-NRIC3 AND F800-NUM-NRIC4                                 
+              MOVE WS-NUM-NRIC-FIANCE TO WS-NUM-UIN                             
+              PERFORM 5100-POPULATE-HEADER THRU 5100-EXIT                       
+              PERFORM 5500-POPULATE-DETAIL THRU 5500-EXIT                       
+              IF KH10-NUM-NON-SELN-FT > WS-NUM-NON-SELN-FT                      
+                 MOVE KH10-NUM-NON-SELN-FT TO WS-NUM-NON-SELN-FT                
+              END-IF                                                            
+      *BP139545 START                                                           
+              IF KH10-NUM-NON-SELN-FTPMC > WS-NUM-NON-SELN-FTPMC                
+                 MOVE KH10-NUM-NON-SELN-FTPMC TO WS-NUM-NON-SELN-FTPMC          
+              END-IF                                                            
+      *BP139545 END                                                             
+              PERFORM 5700-UPDATE-BP13KH10 THRU 5700-EXIT                       
+              IF WS-ADD-DEBAR = 'Y'                                             
+                 PERFORM 7600-WRITE-BP04F010       THRU 7600-EXIT               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       5100-POPULATE-HEADER.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES TO WS-ADD-DEBAR.                                         
+           MOVE SPACES TO WS-NUM-DEBAR.                                         
+           MOVE 'N'    TO WS-EXTEND-DEBAR.                                      
+                                                                                
+           PERFORM 5200-READ-BP13KH10  THRU 5200-EXIT.                          
+                                                                                
+           IF F800-DTE-BALLOT < '201307'                                        
+              PERFORM 5110-POLICY-BEFORE-JUL2013 THRU 5110-EXIT                 
+           ELSE                                                                 
+              PERFORM 5120-POLICY-AFTER-JUL2013 THRU 5120-EXIT                  
+           END-IF.                                                              
+                                                                                
+           PERFORM 5300-GET-APLT-NAME THRU 5300-EXIT.                           
+                                                                                
+           IF KH10-DTE-DEBAR-EXPIRY-FT-HH = 'CCYYMMDD' OR ZEROES OR             
+                                         LOW-VALUES                             
+              MOVE SPACES                TO KH10-DTE-DEBAR-EXPIRY-FT-HH         
+           END-IF.                                                              
+                                                                                
+           IF KH10-DTE-DEBAR-EXPIRY-FT-HG = 'CCYYMMDD' OR ZEROES OR             
+                                         LOW-VALUES                             
+              MOVE SPACES                TO KH10-DTE-DEBAR-EXPIRY-FT-HG         
+           END-IF.                                                              
+                                                                                
+      *BP139545 START                                                           
+           IF F800-DTE-BALLOT >= '202310'                                       
+              IF (WS-NUM-2-DIGIT-YES-FTPMC    >  00  AND                        
+                  KH10-DTE-DEBAR-EXPIRY-FTPMC =  SPACES)                        
+                  PERFORM 5440-COMPUTE-DEB-EXP-FTPMC THRU 5440-EXIT             
+              END-IF                                                            
+                                                                                
+      *BP139545 BP13015512 START                                                
+                                                                                
+      *       IF (WS-NUM-2-DIGIT-YES-FT       =  01  AND                        
+      *           KH10-DTE-DEBAR-EXPIRY-FT-HH =  SPACES)                        
+      *           PERFORM 5400-COMPUTE-DEB-EXP-FT02 THRU 5400-EXIT              
+                                                                                
+              IF WS-NUM-2-DIGIT-YES-FT       =  01                              
+                 IF WS-CDE-B-HH = 'H' AND                                       
+                    KH10-DTE-DEBAR-EXPIRY-FT-HH =  SPACES                       
+                    PERFORM 5400-COMPUTE-DEB-EXP-FT02 THRU 5400-EXIT            
+                 END-IF                                                         
+                 IF WS-CDE-B-HH = 'G'                                           
+                    PERFORM 5430-COMPUTE-DEB-EXP-FT04 THRU 5430-EXIT            
+                    MOVE 'Y'              TO WS-EXTEND-DEBAR                    
+                 END-IF                                                         
+      *BP139545 BP13015512 END                                                  
+              END-IF                                                            
+                                                                                
+              IF WS-NUM-2-DIGIT-YES-FT       >  01                              
+      *BP139545 BP13015512 START                                                
+                                                                                
+      *          PERFORM 5430-COMPUTE-DEB-EXP-FT04 THRU 5430-EXIT               
+      *          MOVE 'Y'              TO WS-EXTEND-DEBAR                       
+                                                                                
+                 IF WS-CDE-B-HH = 'H'                                           
+                    PERFORM 5400-COMPUTE-DEB-EXP-FT02 THRU 5400-EXIT            
+                    IF WS-NUM-2-DIGIT-YES-FT       >  02                        
+                       MOVE 'Y'              TO WS-EXTEND-DEBAR                 
+                    END-IF                                                      
+                 END-IF                                                         
+                                                                                
+                 IF WS-CDE-B-HH = 'G'                                           
+                 PERFORM 5430-COMPUTE-DEB-EXP-FT04 THRU 5430-EXIT               
+                 MOVE 'Y'              TO WS-EXTEND-DEBAR                       
+                 END-IF                                                         
+                                                                                
+      *BP139545 BP13015512 END                                                  
+              END-IF                                                            
+                                                                                
+              IF (WS-NUM-2-DIGIT-YES-ST   >  00  AND                            
+                 KH10-DTE-DEBAR-EXPIRY-ST =  SPACES)                            
+                 PERFORM 5410-COMPUTE-DEB-EXP-ST   THRU 5410-EXIT               
+                 MOVE 'Y' TO WS-ADD-DEBAR                                       
+                 MOVE 'JU' TO WS-NUM-DEBAR                                      
+              END-IF                                                            
+                                                                                
+              IF (WS-NUM-2-DIGIT-YES-FTS   >  00  AND                           
+                 KH10-DTE-DEBAR-EXPIRY-FTS =  SPACES)                           
+                 PERFORM 5420-COMPUTE-DEB-EXP-FTS  THRU 5420-EXIT               
+                 MOVE 'Y' TO WS-ADD-DEBAR                                       
+                 MOVE 'JV' TO WS-NUM-DEBAR                                      
+              END-IF                                                            
+                                                                                
+           ELSE                                                                 
+                                                                                
+              IF (WS-NUM-2-DIGIT-YES-FT       =  02  AND                        
+                  KH10-DTE-DEBAR-EXPIRY-FT-HH =  SPACES)                        
+                 PERFORM 5400-COMPUTE-DEB-EXP-FT02 THRU 5400-EXIT               
+              END-IF                                                            
+                                                                                
+              IF (WS-NUM-2-DIGIT-YES-FT       =  04  AND                        
+                  KH10-DTE-DEBAR-EXPIRY-FT-HG =  SPACES)                        
+                 PERFORM 5430-COMPUTE-DEB-EXP-FT04 THRU 5430-EXIT               
+                 MOVE 'Y'              TO WS-EXTEND-DEBAR                       
+              END-IF                                                            
+                                                                                
+              IF (WS-NUM-2-DIGIT-YES-ST    =  02  AND                           
+                  KH10-DTE-DEBAR-EXPIRY-ST =  SPACES)                           
+                 PERFORM 5410-COMPUTE-DEB-EXP-ST   THRU 5410-EXIT               
+                 MOVE 'Y' TO WS-ADD-DEBAR                                       
+                 MOVE 'FD' TO WS-NUM-DEBAR                                      
+              END-IF                                                            
+                                                                                
+              IF (WS-NUM-2-DIGIT-YES-FTS    =  02  AND                          
+                  KH10-DTE-DEBAR-EXPIRY-FTS =  SPACES)                          
+                 PERFORM 5420-COMPUTE-DEB-EXP-FTS  THRU 5420-EXIT               
+                 MOVE 'Y' TO WS-ADD-DEBAR                                       
+                 MOVE 'FE' TO WS-NUM-DEBAR                                      
+              END-IF                                                            
+           END-IF.                                                              
+      *BP139545 END                                                             
+                                                                                
+       5100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5110-POLICY-BEFORE-JUL2013.                                              
+                                                                                
+           IF WS-NUM-WITHIN-LIMIT  =  'Y'                                       
+             IF (WS-CDE-B-HH = 'H' OR 'T')                                      
+                MOVE KH10-NUM-NON-SELN-FT TO WS-TEMP-2-DIGIT-YES-FT             
+                ADD   1                   TO WS-NUM-2-DIGIT-YES-FT              
+                MOVE WS-TEMP-2-DIGIT-YES-FT TO KH10-NUM-NON-SELN-FT             
+             END-IF                                                             
+           ELSE                                                                 
+             IF (WS-CDE-B-HH = 'H' OR 'T')                                      
+                MOVE KH10-NUM-NOTBK-WAIVE-FT TO WS-TEMP-2-DIGIT-NO-FT           
+                ADD   1                    TO WS-NUM-2-DIGIT-NO-FT              
+                MOVE WS-TEMP-2-DIGIT-NO-FT TO KH10-NUM-NOTBK-WAIVE-FT           
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+       5110-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5120-POLICY-AFTER-JUL2013.                                               
+                                                                                
+           IF WS-NUM-WITHIN-LIMIT  =  'Y'                                       
+              IF ((F800-NUM-ALLO-SCHEME = 'FTS' OR 'STS') OR                    
+                 ((F800-NUM-ALLO-SCHEME = 'SAP') AND                            
+                 (F800-NUM-ELIG-SCHEME = 'SSC' OR 'JSS' OR 'NCS' OR             
+                                         'SSE' OR 'JSE' OR 'NSE')) OR           
+                 (F800-NUM-ALLO-SCHEME = 'PA ' AND                              
+                  F800-NUM-ELIG-SCHEME = 'PAC'))                                
+                 MOVE KH10-NUM-NON-SELN-FTS   TO WS-TEMP-2-DIGIT-YES-FTS        
+                 ADD   1                      TO WS-NUM-2-DIGIT-YES-FTS         
+                 MOVE WS-TEMP-2-DIGIT-YES-FTS TO KH10-NUM-NON-SELN-FTS          
+              ELSE                                                              
+                IF (WS-CDE-HH = 'H' OR 'T') OR                                  
+                   F800-NUM-FT2T = 'Y'                                          
+      *BP139545 START                                                           
+                   IF F800-DTE-BALLOT >= '202310'                               
+                      IF F800-NUM-FTPMC NOT = 'N' AND SPACE                     
+                         MOVE KH10-NUM-NON-SELN-FTPMC TO                        
+                              WS-TEMP-2-DIGIT-YES-FTPMC                         
+                         ADD  1 TO WS-NUM-2-DIGIT-YES-FTPMC                     
+                         MOVE WS-TEMP-2-DIGIT-YES-FTPMC TO                      
+                              KH10-NUM-NON-SELN-FTPMC                           
+                      ELSE                                                      
+                         MOVE KH10-NUM-NON-SELN-FT TO                           
+                              WS-TEMP-2-DIGIT-YES-FT                            
+                         ADD  1 TO WS-NUM-2-DIGIT-YES-FT                        
+                         MOVE WS-TEMP-2-DIGIT-YES-FT TO                         
+                              KH10-NUM-NON-SELN-FT                              
+                      END-IF                                                    
+                   ELSE                                                         
+                      MOVE KH10-NUM-NON-SELN-FT                                 
+                                             TO WS-TEMP-2-DIGIT-YES-FT          
+                      ADD   1                TO WS-NUM-2-DIGIT-YES-FT           
+                      MOVE WS-TEMP-2-DIGIT-YES-FT                               
+                                             TO KH10-NUM-NON-SELN-FT            
+                   END-IF                                                       
+      *BP139545 END                                                             
+                ELSE                                                            
+                   MOVE KH10-NUM-NON-SELN-ST   TO WS-TEMP-2-DIGIT-YES-ST        
+                   ADD   1                     TO WS-NUM-2-DIGIT-YES-ST         
+                   MOVE WS-TEMP-2-DIGIT-YES-ST TO KH10-NUM-NON-SELN-ST          
+                END-IF                                                          
+              END-IF                                                            
+           ELSE                                                                 
+              IF ((F800-NUM-ALLO-SCHEME = 'FTS' OR 'STS') OR                    
+                 ((F800-NUM-ALLO-SCHEME = 'SAP') AND                            
+                 (F800-NUM-ELIG-SCHEME = 'SSC' OR 'JSS' OR 'NCS' OR             
+                                         'SSE' OR 'JSE' OR 'NSE'))              
+              OR (F800-NUM-ALLO-SCHEME = 'PA ' AND                              
+                  F800-NUM-ELIG-SCHEME = 'PAC'))                                
+                 MOVE KH10-NUM-NOTBK-WAIVE-FTS TO WS-TEMP-2-DIGIT-NO-FTS        
+                 ADD   1                     TO WS-NUM-2-DIGIT-NO-FTS           
+                 MOVE WS-TEMP-2-DIGIT-NO-FTS TO KH10-NUM-NOTBK-WAIVE-FTS        
+              ELSE                                                              
+                 IF (WS-CDE-HH = 'H' OR 'T') OR                                 
+                     F800-NUM-FT2T = 'Y'                                        
+      *BP139545 START                                                           
+                    IF F800-DTE-BALLOT >= '202310'                              
+                       IF F800-NUM-FTPMC NOT = 'N' AND SPACE                    
+                          MOVE KH10-NUM-NOTBK-WAIVE-FTPMC TO                    
+                               WS-TEMP-2-DIGIT-NO-FTPMC                         
+                          ADD  1 TO WS-NUM-2-DIGIT-NO-FTPMC                     
+                          MOVE WS-TEMP-2-DIGIT-NO-FTPMC TO                      
+                               KH10-NUM-NOTBK-WAIVE-FTPMC                       
+                       ELSE                                                     
+                          MOVE KH10-NUM-NOTBK-WAIVE-FT                          
+                                              TO WS-TEMP-2-DIGIT-NO-FT          
+                          ADD   1             TO WS-NUM-2-DIGIT-NO-FT           
+                          MOVE WS-TEMP-2-DIGIT-NO-FT                            
+                                              TO KH10-NUM-NOTBK-WAIVE-FT        
+                       END-IF                                                   
+                    ELSE                                                        
+                       MOVE KH10-NUM-NOTBK-WAIVE-FT                             
+                                              TO WS-TEMP-2-DIGIT-NO-FT          
+                       ADD   1                TO WS-NUM-2-DIGIT-NO-FT           
+                       MOVE WS-TEMP-2-DIGIT-NO-FT                               
+                                              TO KH10-NUM-NOTBK-WAIVE-FT        
+                    END-IF                                                      
+      *BP139545 END                                                             
+                 ELSE                                                           
+                   MOVE KH10-NUM-NOTBK-WAIVE-ST TO WS-TEMP-2-DIGIT-NO-ST        
+                   ADD   1                    TO WS-NUM-2-DIGIT-NO-ST           
+                   MOVE WS-TEMP-2-DIGIT-NO-ST TO KH10-NUM-NOTBK-WAIVE-ST        
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       5120-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5200-READ-BP13KH10.                                                      
+                                                                                
+           MOVE SPACES                       TO BP13KH10-REC                    
+           INITIALIZE                           BP13KH10-REC                    
+                                                                                
+           MOVE WS-NUM-UIN   TO KH10-NUM-UIN.                                   
+           READ BP13KH10 KEY IS KH10-KEY-FLD.                                   
+           EVALUATE BP13KH10-STATUS                                             
+           WHEN 00                                                              
+                MOVE 'Y'     TO WS-KH10-FND                                     
+           WHEN 23                                                              
+                MOVE 'N'     TO WS-KH10-FND                                     
+                MOVE ZEROES  TO KH10-NUM-NON-SELN-FT                            
+                                KH10-NUM-NOTBK-WAIVE-FT                         
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR READING BP13KH10, STATUS  '                      
+                        BP13KH10-STATUS ',  NRIC ' KH10-NUM-UIN                 
+                MOVE BP13KH10-STATUS         TO RETURN-CODE                     
+                PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+           IF KH10-NUM-NON-SELN-FT NOT NUMERIC                                  
+             MOVE ZEROES          TO KH10-NUM-NON-SELN-FT                       
+           END-IF.                                                              
+                                                                                
+           IF KH10-NUM-NOTBK-WAIVE-FT   NOT NUMERIC                             
+              MOVE ZEROES             TO KH10-NUM-NOTBK-WAIVE-FT                
+           END-IF.                                                              
+                                                                                
+           IF KH10-NUM-NON-SELN-FTS NOT NUMERIC                                 
+              MOVE ZEROES           TO  KH10-NUM-NON-SELN-FTS                   
+           END-IF.                                                              
+                                                                                
+           IF KH10-NUM-NOTBK-WAIVE-FTS NOT NUMERIC                              
+             MOVE ZEROES          TO  KH10-NUM-NOTBK-WAIVE-FTS                  
+           END-IF.                                                              
+                                                                                
+           IF KH10-NUM-NON-SELN-ST NOT NUMERIC                                  
+              MOVE ZEROES          TO  KH10-NUM-NON-SELN-ST                     
+           END-IF.                                                              
+                                                                                
+           IF KH10-NUM-NOTBK-WAIVE-ST   NOT NUMERIC                             
+              MOVE ZEROES             TO KH10-NUM-NOTBK-WAIVE-ST                
+           END-IF.                                                              
+                                                                                
+      *BP139545 START                                                           
+           IF KH10-NUM-NON-SELN-FTPMC NOT NUMERIC                               
+             MOVE ZEROES TO KH10-NUM-NON-SELN-FTPMC                             
+           END-IF.                                                              
+                                                                                
+           IF KH10-NUM-NOTBK-WAIVE-FTPMC NOT NUMERIC                            
+              MOVE ZEROES TO KH10-NUM-NOTBK-WAIVE-FTPMC                         
+           END-IF.                                                              
+      *BP139545 END                                                             
+                                                                                
+       5200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5300-GET-APLT-NAME.                                                      
+           MOVE SPACES                      TO BP13K820-REC.                    
+           INITIALIZE                          BP13K820-REC.                    
+                                                                                
+           MOVE F800-NUM-REGN               TO K820-NUM-REGN.                   
+           MOVE KH10-NUM-UIN                TO K820-NUM-NRIC.                   
+           READ BP13K820.                                                       
+           EVALUATE BP13K820-STATUS                                             
+              WHEN 00                                                           
+                  MOVE K820-NME-OCCP        TO KH10-NME-APPLT                   
+              WHEN 23                                                           
+                   CONTINUE                                                     
+              WHEN OTHER                                                        
+                   DISPLAY 'ERROR READING BP13K820, STAT = '                    
+                   BP13K820-STATUS  ', K820-KEY-FLD = ' K820-KEY-FLD            
+                   MOVE BP13K820-STATUS        TO RETURN-CODE                   
+                   PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+       5300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5400-COMPUTE-DEB-EXP-FT02.                                               
+                                                                                
+           MOVE WS-CURRENT-DATE         TO KH10-DTE-DEBAR-FT-HH                 
+                                           WS-CURRENT-DATE1.                    
+           ADD 1                        TO WS-DTE-DEB-EXP-YR.                   
+           SUBTRACT 1                 FROM WS-DTE-DEB-EXP-MM.                   
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 0                                             
+              MOVE 12 TO WS-DTE-DEB-EXP-MM                                      
+              SUBTRACT 1 FROM WS-DTE-DEB-EXP-YR                                 
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 1 OR 3 OR 5 OR 7 OR 8 OR 10 OR 12             
+              MOVE 31                   TO WS-DTE-DEB-EXP-DD                    
+           ELSE                                                                 
+              IF WS-DTE-DEB-EXP-MM = 4 OR 6 OR 9 OR 11                          
+                 MOVE 30                TO WS-DTE-DEB-EXP-DD                    
+              ELSE                                                              
+                 DIVIDE WS-DTE-DEB-EXP-YR BY 4 GIVING  WS-QUOTIENT              
+                                             REMAINDER WS-REMAINDER             
+                 IF WS-REMAINDER = 0                                            
+                    MOVE 29             TO WS-DTE-DEB-EXP-DD                    
+                 ELSE                                                           
+                    MOVE 28             TO WS-DTE-DEB-EXP-DD.                   
+           MOVE WS-CURRENT-DATE1        TO KH10-DTE-DEBAR-EXPIRY-FT-HH.         
+       5400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5410-COMPUTE-DEB-EXP-ST.                                                 
+                                                                                
+           MOVE WS-CURRENT-DATE         TO KH10-DTE-DEBAR-ST                    
+                                           WS-CURRENT-DATE1.                    
+           ADD 1                        TO WS-DTE-DEB-EXP-YR.                   
+           SUBTRACT 1                 FROM WS-DTE-DEB-EXP-MM.                   
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 0                                             
+              MOVE 12 TO WS-DTE-DEB-EXP-MM                                      
+              SUBTRACT 1 FROM WS-DTE-DEB-EXP-YR                                 
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 1 OR 3 OR 5 OR 7 OR 8 OR 10 OR 12             
+              MOVE 31                   TO WS-DTE-DEB-EXP-DD                    
+           ELSE                                                                 
+              IF WS-DTE-DEB-EXP-MM = 4 OR 6 OR 9 OR 11                          
+                 MOVE 30                TO WS-DTE-DEB-EXP-DD                    
+              ELSE                                                              
+                 DIVIDE WS-DTE-DEB-EXP-YR BY 4 GIVING  WS-QUOTIENT              
+                                             REMAINDER WS-REMAINDER             
+                 IF WS-REMAINDER = 0                                            
+                    MOVE 29             TO WS-DTE-DEB-EXP-DD                    
+                 ELSE                                                           
+                    MOVE 28             TO WS-DTE-DEB-EXP-DD.                   
+           MOVE WS-CURRENT-DATE1        TO KH10-DTE-DEBAR-EXPIRY-ST.            
+                                                                                
+       5410-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5420-COMPUTE-DEB-EXP-FTS.                                                
+                                                                                
+           MOVE WS-CURRENT-DATE         TO KH10-DTE-DEBAR-FTS                   
+                                           WS-CURRENT-DATE1.                    
+           ADD 1                        TO WS-DTE-DEB-EXP-YR.                   
+           SUBTRACT 1                 FROM WS-DTE-DEB-EXP-MM.                   
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 0                                             
+              MOVE 12 TO WS-DTE-DEB-EXP-MM                                      
+              SUBTRACT 1 FROM WS-DTE-DEB-EXP-YR                                 
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 1 OR 3 OR 5 OR 7 OR 8 OR 10 OR 12             
+              MOVE 31                   TO WS-DTE-DEB-EXP-DD                    
+           ELSE                                                                 
+              IF WS-DTE-DEB-EXP-MM = 4 OR 6 OR 9 OR 11                          
+                 MOVE 30                TO WS-DTE-DEB-EXP-DD                    
+              ELSE                                                              
+                 DIVIDE WS-DTE-DEB-EXP-YR BY 4 GIVING  WS-QUOTIENT              
+                                             REMAINDER WS-REMAINDER             
+                 IF WS-REMAINDER = 0                                            
+                    MOVE 29             TO WS-DTE-DEB-EXP-DD                    
+                 ELSE                                                           
+                    MOVE 28             TO WS-DTE-DEB-EXP-DD.                   
+           MOVE WS-CURRENT-DATE1        TO KH10-DTE-DEBAR-EXPIRY-FTS.           
+                                                                                
+       5420-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5430-COMPUTE-DEB-EXP-FT04.                                               
+                                                                                
+           MOVE WS-CURRENT-DATE         TO KH10-DTE-DEBAR-FT-HG                 
+                                           WS-CURRENT-DATE1.                    
+           ADD 1                        TO WS-DTE-DEB-EXP-YR.                   
+           SUBTRACT 1                 FROM WS-DTE-DEB-EXP-MM.                   
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 0                                             
+              MOVE 12 TO WS-DTE-DEB-EXP-MM                                      
+              SUBTRACT 1 FROM WS-DTE-DEB-EXP-YR                                 
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 1 OR 3 OR 5 OR 7 OR 8 OR 10 OR 12             
+              MOVE 31                   TO WS-DTE-DEB-EXP-DD                    
+           ELSE                                                                 
+              IF WS-DTE-DEB-EXP-MM = 4 OR 6 OR 9 OR 11                          
+                 MOVE 30                TO WS-DTE-DEB-EXP-DD                    
+              ELSE                                                              
+                 DIVIDE WS-DTE-DEB-EXP-YR BY 4 GIVING  WS-QUOTIENT              
+                                             REMAINDER WS-REMAINDER             
+                 IF WS-REMAINDER = 0                                            
+                    MOVE 29             TO WS-DTE-DEB-EXP-DD                    
+                 ELSE                                                           
+                    MOVE 28             TO WS-DTE-DEB-EXP-DD.                   
+           MOVE WS-CURRENT-DATE1        TO KH10-DTE-DEBAR-EXPIRY-FT-HG.         
+       5430-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *BP139545 START                                                           
+       5440-COMPUTE-DEB-EXP-FTPMC.                                              
+                                                                                
+           MOVE WS-CURRENT-DATE         TO KH10-DTE-DEBAR-FTPMC                 
+                                           WS-CURRENT-DATE1.                    
+           ADD 1                        TO WS-DTE-DEB-EXP-YR.                   
+           SUBTRACT 1                 FROM WS-DTE-DEB-EXP-MM.                   
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 0                                             
+              MOVE 12 TO WS-DTE-DEB-EXP-MM                                      
+              SUBTRACT 1 FROM WS-DTE-DEB-EXP-YR                                 
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 1 OR 3 OR 5 OR 7 OR 8 OR 10 OR 12             
+              MOVE 31                   TO WS-DTE-DEB-EXP-DD                    
+           ELSE                                                                 
+              IF WS-DTE-DEB-EXP-MM = 4 OR 6 OR 9 OR 11                          
+                 MOVE 30                TO WS-DTE-DEB-EXP-DD                    
+              ELSE                                                              
+                 DIVIDE WS-DTE-DEB-EXP-YR BY 4 GIVING  WS-QUOTIENT              
+                                             REMAINDER WS-REMAINDER             
+                 IF WS-REMAINDER = 0                                            
+                    MOVE 29             TO WS-DTE-DEB-EXP-DD                    
+                 ELSE                                                           
+                    MOVE 28             TO WS-DTE-DEB-EXP-DD                    
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           MOVE WS-CURRENT-DATE1        TO KH10-DTE-DEBAR-EXPIRY-FTPMC.         
+                                                                                
+       5440-EXIT.                                                               
+           EXIT.                                                                
+      *BP139545 END                                                             
+                                                                                
+      *-------------------------------------------------------------            
+       5500-POPULATE-DETAIL.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE 'N'                    TO WS-END-OF-TABLE.                      
+           PERFORM VARYING WS-SUB FROM 1 BY 1 UNTIL END-OF-TABLE                
+              IF KH10-NUM-REGN (WS-SUB) = SPACES OR  LOW-VALUES                 
+                 SET END-OF-TABLE      TO TRUE                                  
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           SUBTRACT 1 FROM   WS-SUB.                                            
+                                                                                
+           MOVE F800-NUM-REGN          TO KH10-NUM-REGN(WS-SUB).                
+           MOVE F800-DTE-BALLOT        TO KH10-DTE-BALLOT(WS-SUB).              
+           MOVE F800-NUM-ALLO-CAT      TO KH10-NUM-ALLO-CAT(WS-SUB).            
+           MOVE WS-NUM-NEW-TOWN        TO KH10-NUM-NT(WS-SUB).                  
+           MOVE F800-NUM-FLAT-TYPE     TO KH10-NUM-FT(WS-SUB).                  
+           MOVE F800-NUM-CAT           TO KH10-NUM-CATEGORY(WS-SUB).            
+           MOVE F800-NUM-HOUSEHOLD     TO KH10-NUM-HOUSEHOLD(WS-SUB).           
+           MOVE F800-CDE-BALLOT-HOUSEHOLD                                       
+                                 TO KH10-NUM-BALLOT-HOUSEHOLD(WS-SUB).          
+           MOVE F800-NUM-ALLO-SCHEME   TO KH10-NUM-ALLOC-SCHEME(WS-SUB).        
+           MOVE F800-NUM-BALLOT-STATUS TO KH10-NUM-RESULT(WS-SUB).              
+           MOVE F800-NUM-NT-FT-QUEUE   TO KH10-NUM-QUEUE(WS-SUB).               
+           MOVE F800-NUM-NRIC1         TO KH10-NUM-NRIC1(WS-SUB).               
+           MOVE F800-NUM-NRIC2         TO KH10-NUM-NRIC2(WS-SUB).               
+           MOVE F800-NUM-NRIC3         TO KH10-NUM-NRIC3(WS-SUB).               
+           MOVE F800-NUM-NRIC4         TO KH10-NUM-NRIC4(WS-SUB).               
+           MOVE F800-DTE-BK-APPT       TO KH10-DTE-APPT(WS-SUB).                
+           MOVE F800-TME-BK-APPT       TO KH10-TME-APPT(WS-SUB).                
+                                                                                
+           MOVE WS-NUM-WITHIN-LIMIT    TO KH10-NUM-WITHIN-LIMIT(WS-SUB).        
+           MOVE WS-NUM-UNIT-AVAIL      TO KH10-NUM-UNIT-AVAIL(WS-SUB).          
+           MOVE WS-NUM-QUOTA-AVAIL     TO KH10-NUM-FLAT-QUOTA(WS-SUB).          
+                                                                                
+           IF WS-EXTEND-DEBAR = 'Y'                                             
+              MOVE 'Y'           TO KH10-NUM-EXTEND-DEBAR-DATE(WS-SUB)          
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-ELDERLY-EXEMPTION NOT = SPACES AND LOW-VALUES            
+              MOVE F800-NUM-ELDERLY-EXEMPTION TO                                
+                                    KH10-NUM-SPECIAL-APPROVAL(WS-SUB)           
+           END-IF.                                                              
+                                                                                
+           IF F800-AMT-HSE-INCOME NOT NUMERIC                                   
+              MOVE ZEROES TO F800-AMT-HSE-INCOME                                
+           END-IF.                                                              
+                                                                                
+           MOVE F800-AMT-HSE-INCOME    TO KH10-NUM-HSE-INCOME(WS-SUB).          
+           MOVE F800-NUM-PPO           TO KH10-NUM-PPO(WS-SUB).                 
+                                                                                
+      *BP139545 START                                                           
+           MOVE F800-NUM-FTPMC         TO KH10-NUM-FTPMC(WS-SUB).               
+      *BP139545 END                                                             
+                                                                                
+       5500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       5700-UPDATE-BP13KH10.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE WS-CURRENT-DATE       TO KH10-DTE-UPDATE.                       
+           MOVE WS-CURRENT-TIME       TO KH10-TME-UPDATE.                       
+                                                                                
+           REWRITE BP13KH10-REC.                                                
+                                                                                
+           EVALUATE BP13KH10-STATUS                                             
+           WHEN 00                                                              
+               ADD   1      TO WS-KH10-UPD                                      
+           WHEN 23                                                              
+               PERFORM 5800-WRITE-BP13KH10 THRU 5800-EXIT                       
+           WHEN OTHER                                                           
+               DISPLAY "BP13KH10 REWRITE ERROR STATUS " BP13KH10-STATUS         
+                                   " KEY IS " KH10-NUM-UIN                      
+               MOVE BP13KH10-STATUS TO RETURN-CODE                              
+               PERFORM 9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       5700-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5800-WRITE-BP13KH10.                                                     
+           WRITE BP13KH10-REC.                                                  
+                                                                                
+           EVALUATE BP13KH10-STATUS                                             
+            WHEN 00                                                             
+              ADD   1                    TO WS-KH10-WRITE                       
+            WHEN OTHER                                                          
+              MOVE BP13KH10-STATUS       TO RETURN-CODE                         
+              DISPLAY 'WRITE ERROR, BP13KH10 STATUS : ' BP13KH10-STATUS         
+                      ' KEY : ' KH10-KEY-FLD                                    
+              PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+           END-EVALUATE.                                                        
+       5800-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6000-CREATE-BP13KH15.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+      * ALLOC TAG SHOULD BE BLANK FOR GEN3 CASES                                
+           IF F800-NUM-GEN3          = 'Y' AND                                  
+              F800-NUM-BALLOT-STATUS = 'K'                                      
+              IF F800-NUM-ALLOC-TAG  = 'NF' OR 'NC' OR 'NS' OR                  
+                                       'SF' OR 'SC' OR 'NV' OR 'NE'             
+                 MOVE F800-NUM-ALLOC-TAG   TO KH15-NUM-ALLOC-TAG                
+                 MOVE F800-NUM-ALLOC-TAG   TO KH15-NUM-BOOK-STATUS              
+              ELSE                                                              
+                 MOVE SPACES               TO KH15-NUM-ALLOC-TAG                
+                 MOVE SPACES               TO KH15-NUM-BOOK-STATUS              
+              END-IF                                                            
+           ELSE                                                                 
+              IF F800-NUM-ALLOC-TAG NOT = 'NF' AND 'NC' AND 'NS' AND            
+                                         'SF' AND 'SC' AND 'NV' AND 'NE'        
+                 PERFORM 6050-GET-NON-SELN-TAG THRU 6050-EXIT                   
+              ELSE                                                              
+                 MOVE F800-NUM-ALLOC-TAG   TO KH15-NUM-ALLOC-TAG                
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           MOVE KH15-NUM-ALLOC-TAG         TO KH15-NUM-BOOK-STATUS.             
+           MOVE F800-NUM-HOUSEHOLD         TO KH15-NUM-HOUSEHOLD.               
+           MOVE F800-CDE-BALLOT-HOUSEHOLD  TO KH15-NUM-BALLOT-HH.               
+           MOVE F800-NUM-ALLO-SCHEME       TO KH15-NUM-ALLOC-SCHEME.            
+           MOVE F800-NUM-FT2T              TO KH15-NUM-FT2T.                    
+                                                                                
+           MOVE WS-CURRENT-DATE          TO KH15-DTE-UPDATE                     
+           MOVE WS-CURRENT-TIME          TO KH15-TME-UPDATE                     
+           MOVE 'BP13CH03'               TO KH15-NUM-USERID.                    
+                                                                                
+           PERFORM VARYING WS-SUB FROM 01 BY 1 UNTIL WRITE-SUCCESFUL            
+               MOVE WS-SUB               TO WS-TME-APPMT-MMS                    
+               PERFORM 6100-WRITE-BP13KH15 THRU 6100-EXIT                       
+           END-PERFORM.                                                         
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       6050-GET-NON-SELN-TAG.                                                   
+                                                                                
+      *BP139545 START                                                           
+           IF F800-DTE-BALLOT < '202310'                                        
+      *BP139545 END                                                             
+           IF WS-NUM-WITHIN-LIMIT = 'Y'                                         
+      * FTS                                                                     
+              EVALUATE TRUE                                                     
+                 WHEN (F800-NUM-ALLO-SCHEME = 'FTS' OR 'STS') OR                
+                     ((F800-NUM-ALLO-SCHEME = 'SAP') AND                        
+                     (F800-NUM-ELIG-SCHEME = 'SSC' OR 'JSS' OR 'NCS' OR         
+                                             'SSE' OR 'JSE' OR 'NSE'))          
+                    MOVE 'LB'              TO KH15-NUM-ALLOC-TAG                
+                                                                                
+                 WHEN (F800-NUM-ALLO-SCHEME = 'PA ' AND                         
+                       F800-NUM-ELIG-SCHEME = 'PAC')                            
+                    MOVE 'LB'              TO KH15-NUM-ALLOC-TAG                
+      * FT2T                                                                    
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'F' AND                 
+                      F800-NUM-FT2T =  'Y'                                      
+                       MOVE 'LF'        TO KH15-NUM-ALLOC-TAG                   
+                                                                                
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'G' AND                 
+                      F800-NUM-FT2T =  'Y'                                      
+                      IF F800-DTE-BALLOT >= '201307'                            
+                         IF WS-NUM-NON-SELN-FT < 3                              
+                            MOVE 'LF'     TO KH15-NUM-ALLOC-TAG                 
+                         ELSE                                                   
+                            MOVE 'LG'     TO KH15-NUM-ALLOC-TAG                 
+                         END-IF                                                 
+                      ELSE                                                      
+                         MOVE 'LS'        TO KH15-NUM-ALLOC-TAG                 
+                      END-IF                                                    
+      * FT/FT                                                                   
+                                                                                
+                 WHEN WS-CDE-HH = 'H' AND WS-CDE-B-HH = 'H'                     
+                      MOVE 'LF'        TO KH15-NUM-ALLOC-TAG                    
+                                                                                
+                 WHEN WS-CDE-HH = 'H' AND WS-CDE-B-HH = 'G'                     
+                    IF F800-DTE-BALLOT >= '201307'                              
+                       IF WS-NUM-NON-SELN-FT < 3                                
+                          MOVE 'LF'        TO KH15-NUM-ALLOC-TAG                
+                       ELSE                                                     
+                          MOVE 'LG'        TO KH15-NUM-ALLOC-TAG                
+                       END-IF                                                   
+                    ELSE                                                        
+                       MOVE 'LS'        TO KH15-NUM-ALLOC-TAG                   
+                    END-IF                                                      
+      * ST                                                                      
+                                                                                
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'G'                     
+                    IF F800-DTE-BALLOT >= '201307'                              
+                       MOVE 'LA'        TO KH15-NUM-ALLOC-TAG                   
+                    ELSE                                                        
+                       MOVE 'LS'        TO KH15-NUM-ALLOC-TAG                   
+                    END-IF                                                      
+                                                                                
+                 WHEN OTHER                                                     
+                    DISPLAY 'DBR COMBINATION NOT FND: ' F800-NUM-REGN           
+                            ' HH ' WS-CDE-HH ' BHH ' WS-CDE-B-HH                
+                            ' FT2T ' F800-NUM-FT2T                              
+              END-EVALUATE                                                      
+      * NOT WITHIN LIMIT                                                        
+           ELSE                                                                 
+              EVALUATE TRUE                                                     
+                 WHEN (F800-NUM-ALLO-SCHEME = 'FTS' OR 'STS') OR                
+                     ((F800-NUM-ALLO-SCHEME = 'SAP') AND                        
+                     (F800-NUM-ELIG-SCHEME = 'SSC' OR 'JSS' OR 'NCS' OR         
+                                             'SSE' OR 'JSE' OR 'NSE'))          
+                    MOVE 'WB'              TO KH15-NUM-ALLOC-TAG                
+                                                                                
+                 WHEN (F800-NUM-ALLO-SCHEME = 'PA ' AND                         
+                       F800-NUM-ELIG-SCHEME = 'PAC')                            
+                    MOVE 'WB'              TO KH15-NUM-ALLOC-TAG                
+      * FT2T                                                                    
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'F' AND                 
+                      F800-NUM-FT2T =  'Y'                                      
+                       MOVE 'WF'        TO KH15-NUM-ALLOC-TAG                   
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'G' AND                 
+                      F800-NUM-FT2T =  'Y'                                      
+                    IF F800-DTE-BALLOT >= '201307'                              
+                       IF WS-NUM-NON-SELN-FT < 3                                
+                          MOVE 'WF'        TO KH15-NUM-ALLOC-TAG                
+                       ELSE                                                     
+                          MOVE 'WG'        TO KH15-NUM-ALLOC-TAG                
+                       END-IF                                                   
+                    ELSE                                                        
+                       MOVE 'WS'        TO KH15-NUM-ALLOC-TAG                   
+                    END-IF                                                      
+                                                                                
+      * FTFT                                                                    
+                 WHEN WS-CDE-HH = 'H' AND WS-CDE-B-HH = 'H'                     
+                       MOVE 'WF'        TO KH15-NUM-ALLOC-TAG                   
+                 WHEN WS-CDE-HH = 'H' AND WS-CDE-B-HH = 'G'                     
+                    IF F800-DTE-BALLOT >= '201307'                              
+                       IF WS-NUM-NON-SELN-FT < 3                                
+                          MOVE 'WF'     TO KH15-NUM-ALLOC-TAG                   
+                       ELSE                                                     
+                          MOVE 'WG'     TO KH15-NUM-ALLOC-TAG                   
+                       END-IF                                                   
+                    ELSE                                                        
+                       MOVE 'WS'        TO KH15-NUM-ALLOC-TAG                   
+                    END-IF                                                      
+                                                                                
+      * ST                                                                      
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'G'                     
+                    IF F800-DTE-BALLOT >= '201307'                              
+                       MOVE 'WA'        TO KH15-NUM-ALLOC-TAG                   
+                    ELSE                                                        
+                       MOVE 'WS'        TO KH15-NUM-ALLOC-TAG                   
+                    END-IF                                                      
+                 WHEN OTHER                                                     
+                    DISPLAY 'DBR COMBINATION NOT FND: ' F800-NUM-REGN           
+                            ' HH ' WS-CDE-HH ' BHH ' WS-CDE-B-HH                
+                            ' FT2T ' F800-NUM-FT2T                              
+              END-EVALUATE                                                      
+           END-IF                                                               
+      *BP139545 START                                                           
+           ELSE                                                                 
+              PERFORM 6055-GET-NON-SELN-TAG-202310 THRU 6055-EXIT               
+           END-IF                                                               
+           .                                                                    
+      *BP139545 END                                                             
+                                                                                
+       6050-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *BP139545 START                                                           
+       6055-GET-NON-SELN-TAG-202310.                                            
+                                                                                
+           IF WS-NUM-WITHIN-LIMIT = 'Y'                                         
+      * FTS                                                                     
+              EVALUATE TRUE                                                     
+                 WHEN (F800-NUM-ALLO-SCHEME = 'FTS' OR 'STS') OR                
+                     ((F800-NUM-ALLO-SCHEME = 'SAP') AND                        
+                     (F800-NUM-ELIG-SCHEME = 'SSC' OR 'JSS' OR 'NCS' OR         
+                                             'SSE' OR 'JSE' OR 'NSE'))          
+                      MOVE 'LL'           TO KH15-NUM-ALLOC-TAG                 
+                                                                                
+                 WHEN (F800-NUM-ALLO-SCHEME = 'PA ' AND                         
+                       F800-NUM-ELIG-SCHEME = 'PAC')                            
+                      MOVE 'LL'           TO KH15-NUM-ALLOC-TAG                 
+      * FT2T                                                                    
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'F' AND                 
+                      F800-NUM-FT2T =  'Y'                                      
+                      IF F800-NUM-FTPMC NOT = 'N' AND SPACES                    
+                         MOVE 'LI'        TO KH15-NUM-ALLOC-TAG                 
+                      ELSE                                                      
+                         MOVE 'LH'        TO KH15-NUM-ALLOC-TAG                 
+                      END-IF                                                    
+                                                                                
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'G' AND                 
+                      F800-NUM-FT2T =  'Y'                                      
+                      MOVE 'LJ'           TO KH15-NUM-ALLOC-TAG                 
+      * FT/FT                                                                   
+                 WHEN WS-CDE-HH = 'H' AND WS-CDE-B-HH = 'H'                     
+                      IF F800-NUM-FTPMC NOT = 'N' AND SPACES                    
+                         MOVE 'LI'        TO KH15-NUM-ALLOC-TAG                 
+                      ELSE                                                      
+                         MOVE 'LH'        TO KH15-NUM-ALLOC-TAG                 
+                      END-IF                                                    
+                                                                                
+                 WHEN WS-CDE-HH = 'H' AND WS-CDE-B-HH = 'G'                     
+                      MOVE 'LJ'           TO KH15-NUM-ALLOC-TAG                 
+      * ST                                                                      
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'G'                     
+                      MOVE 'LK'           TO KH15-NUM-ALLOC-TAG                 
+                                                                                
+                 WHEN OTHER                                                     
+                    DISPLAY 'DBR COMBINATION NOT FND: ' F800-NUM-REGN           
+                            ' HH ' WS-CDE-HH ' BHH ' WS-CDE-B-HH                
+                            ' FT2T ' F800-NUM-FT2T                              
+              END-EVALUATE                                                      
+      * NOT WITHIN LIMIT                                                        
+           ELSE                                                                 
+              EVALUATE TRUE                                                     
+                 WHEN (F800-NUM-ALLO-SCHEME = 'FTS' OR 'STS') OR                
+                     ((F800-NUM-ALLO-SCHEME = 'SAP') AND                        
+                     (F800-NUM-ELIG-SCHEME = 'SSC' OR 'JSS' OR 'NCS' OR         
+                                             'SSE' OR 'JSE' OR 'NSE'))          
+                      MOVE 'WL'           TO KH15-NUM-ALLOC-TAG                 
+                                                                                
+                 WHEN (F800-NUM-ALLO-SCHEME = 'PA ' AND                         
+                       F800-NUM-ELIG-SCHEME = 'PAC')                            
+                      MOVE 'WL'           TO KH15-NUM-ALLOC-TAG                 
+      * FT2T                                                                    
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'F' AND                 
+                      F800-NUM-FT2T =  'Y'                                      
+                      IF F800-NUM-FTPMC NOT = 'N' AND SPACES                    
+                         MOVE 'WI'        TO KH15-NUM-ALLOC-TAG                 
+                      ELSE                                                      
+                         MOVE 'WH'        TO KH15-NUM-ALLOC-TAG                 
+                      END-IF                                                    
+                                                                                
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'G' AND                 
+                      F800-NUM-FT2T =  'Y'                                      
+                      MOVE 'WJ'           TO KH15-NUM-ALLOC-TAG                 
+      * FTFT                                                                    
+                 WHEN WS-CDE-HH = 'H' AND WS-CDE-B-HH = 'H'                     
+                      IF F800-NUM-FTPMC NOT = 'N' AND SPACES                    
+                         MOVE 'WI'        TO KH15-NUM-ALLOC-TAG                 
+                      ELSE                                                      
+                         MOVE 'WH'        TO KH15-NUM-ALLOC-TAG                 
+                      END-IF                                                    
+                                                                                
+                 WHEN WS-CDE-HH = 'H' AND WS-CDE-B-HH = 'G'                     
+                      MOVE 'WJ'           TO KH15-NUM-ALLOC-TAG                 
+      * ST                                                                      
+                 WHEN WS-CDE-HH = 'G' AND WS-CDE-B-HH = 'G'                     
+                      MOVE 'WK'           TO KH15-NUM-ALLOC-TAG                 
+                                                                                
+                 WHEN OTHER                                                     
+                    DISPLAY 'DBR COMBINATION NOT FND: ' F800-NUM-REGN           
+                            ' HH ' WS-CDE-HH ' BHH ' WS-CDE-B-HH                
+                            ' FT2T ' F800-NUM-FT2T                              
+              END-EVALUATE                                                      
+           END-IF                                                               
+           .                                                                    
+                                                                                
+       6055-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *BP139545 END                                                             
+                                                                                
+       6100-WRITE-BP13KH15.                                                     
+           MOVE WS-TME-APPMT-CHR     TO KH15-TME-BK-APPMT.                      
+                                                                                
+           WRITE BP13KH15-REC                                                   
+                                                                                
+           EVALUATE BP13KH15-STATUS                                             
+           WHEN 00                                                              
+                SET WRITE-SUCCESFUL  TO TRUE                                    
+                WRITE BP13FH15-REC FROM BP13KH15-REC                            
+                ADD   1              TO WS-KH15-WRITE                           
+           WHEN 22                                                              
+                ADD 1 TO WS-KH15-DUPL                                           
+           WHEN 02                                                              
+                SET WRITE-SUCCESFUL  TO TRUE                                    
+                WRITE BP13FH15-REC FROM BP13KH15-REC                            
+                ADD   1              TO WS-KH15-WRITE                           
+                DISPLAY 'WRITE ERROR,BP13KH15 STATUS: ' BP13KH15-STATUS         
+                        ' KEY : ' KH15-KEY-FLD                                  
+                        ' ALT KEY : ' KH15-ALT-KEY                              
+           WHEN 44                                                              
+                SET WRITE-SUCCESFUL  TO TRUE                                    
+                DISPLAY 'WRITE ERROR,BP13KH15 STATUS: ' BP13KH15-STATUS         
+                        ' KEY : ' KH15-KEY-FLD                                  
+                        ' ALT KEY : ' KH15-ALT-KEY                              
+           WHEN OTHER                                                           
+                SET WRITE-SUCCESFUL  TO TRUE                                    
+                MOVE BP13KH15-STATUS TO RETURN-CODE                             
+                DISPLAY 'WRITE ERROR,BP13KH15 STATUS: ' BP13KH15-STATUS         
+                        ' KEY : ' KH15-KEY-FLD                                  
+                        ' ALT KEY : ' KH15-ALT-KEY                              
+                PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                      
+           END-EVALUATE.                                                        
+       6100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       7000-CREATE-BP13KH15.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE F800-NUM-CAT              TO KH15-NUM-ETHNIC.                   
+           MOVE F800-DTE-BK-APPT          TO KH15-DTE-BK-APPMT.                 
+           MOVE F800-TME-BK-APPT          TO WS-TME-APPMT-CHR.                  
+      ***  KEY                                                                  
+                                                                                
+           MOVE F800-NUM-NT-FT-QUEUE      TO KH15-NUM-QUEUE                     
+           MOVE F800-NUM-REGN             TO KH15-NUM-REGN                      
+           MOVE F800-DTE-BK-APPT          TO KH15-DTE-APPMT                     
+           MOVE F800-TME-BK-APPT          TO KH15-TME-APPMT                     
+           MOVE WS-NUM-NEW-TOWN           TO KH15-NUM-NT                        
+           MOVE F800-NUM-FLAT-TYPE        TO KH15-NUM-FT                        
+           MOVE 'N'                       TO KH15-NUM-BOOK                      
+                                                                                
+      * ALLOC TAG SHOULD BE BLANK FOR GEN3 CASES                                
+           IF F800-NUM-GEN3          = 'Y' AND                                  
+              F800-NUM-BALLOT-STATUS = 'K'                                      
+              IF F800-NUM-ALLOC-TAG  = 'NF' OR 'NC' OR 'NS' OR                  
+                                       'SF' OR 'SC' OR 'NV' OR 'NE'             
+                 MOVE F800-NUM-ALLOC-TAG   TO KH15-NUM-ALLOC-TAG                
+                 MOVE F800-NUM-ALLOC-TAG   TO KH15-NUM-BOOK-STATUS              
+              ELSE                                                              
+                 MOVE SPACES               TO KH15-NUM-ALLOC-TAG                
+                 MOVE SPACES               TO KH15-NUM-BOOK-STATUS              
+              END-IF                                                            
+           ELSE                                                                 
+              IF F800-NUM-ALLOC-TAG NOT = 'NF' AND 'NC' AND 'NS' AND            
+                                         'SF' AND 'SC' AND 'NV' AND 'NE'        
+                 PERFORM 6050-GET-NON-SELN-TAG THRU 6050-EXIT                   
+              ELSE                                                              
+                 MOVE F800-NUM-ALLOC-TAG   TO KH15-NUM-ALLOC-TAG                
+              END-IF                                                            
+                                                                                
+           MOVE KH15-NUM-ALLOC-TAG        TO KH15-NUM-BOOK-STATUS.              
+           MOVE F800-NUM-HOUSEHOLD        TO KH15-NUM-HOUSEHOLD.                
+           MOVE F800-CDE-BALLOT-HOUSEHOLD TO KH15-NUM-BALLOT-HH.                
+           MOVE F800-NUM-ALLO-SCHEME      TO KH15-NUM-ALLOC-SCHEME.             
+           MOVE F800-NUM-FT2T             TO KH15-NUM-FT2T.                     
+                                                                                
+           MOVE WS-CURRENT-DATE           TO KH15-DTE-UPDATE.                   
+           MOVE WS-CURRENT-TIME           TO KH15-TME-UPDATE.                   
+           MOVE 'BP13CH03'                TO KH15-NUM-USERID.                   
+                                                                                
+           PERFORM VARYING WS-SUB2 FROM 001 BY 1 UNTIL WRITE-SUCCESFUL          
+               MOVE WS-SUB2           TO WS-TME-APPMT-SEC                       
+               PERFORM 6100-WRITE-BP13KH15 THRU 6100-EXIT                       
+           END-PERFORM.                                                         
+       7000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       7100-READ-BP13K060.                                                      
+           READ BP13K060.                                                       
+                                                                                
+           IF BP13K060-STATUS = 00                                              
+              CONTINUE                                                          
+           ELSE                                                                 
+              IF BP13K060-STATUS = 23                                           
+                 DISPLAY 'RECORD NOT FOUND IN BP13K060, KEY: '                  
+                         K060-KEY-FLD ' ' F800-NUM-FLAT-TYPE                    
+              ELSE                                                              
+                 DISPLAY 'ERROR WITH READING BP13K060, STATUS '                 
+                          BP13K060-STATUS                                       
+                         ', KEY: ' K060-KEY-FLD                                 
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       7100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       7200-READ-BP13K249.                                                      
+           READ BP13K249 KEY IS K249-KEY-FLD.                                   
+           EVALUATE BP13K249-STATUS                                             
+             WHEN 00                                                            
+                CONTINUE                                                        
+             WHEN 23                                                            
+                PERFORM 7250-READ-BP13K249  THRU 7250-EXIT                      
+             WHEN OTHER                                                         
+                DISPLAY 'BP13K249 - READ ERROR: ' BP13K249-STATUS               
+                PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                      
+           END-EVALUATE.                                                        
+       7200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       7250-READ-BP13K249.                                                      
+           IF K249-NUM-FLAT-TYPE = '2-ROOM   '                                  
+              MOVE 'SA       '          TO K249-NUM-FLAT-TYPE                   
+           END-IF.                                                              
+                                                                                
+           READ BP13K249 KEY IS K249-KEY-FLD.                                   
+           EVALUATE BP13K249-STATUS                                             
+             WHEN 00                                                            
+                CONTINUE                                                        
+             WHEN 23                                                            
+                CONTINUE                                                        
+             WHEN OTHER                                                         
+                DISPLAY 'BP13K249 - READ ERROR: ' BP13K249-STATUS               
+                PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                      
+           END-EVALUATE.                                                        
+       7250-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       7300-START-BP13K268.                                                     
+                                                                                
+           MOVE 'N'           TO WS-K268-FOUND.                                 
+           MOVE 'N'           TO WS-K268-BYPASS.                                
+           MOVE 'N'           TO WS-K268-EOF.                                   
+           MOVE SPACES        TO WS-F268-DATA.                                  
+           START BP13K268 KEY >=  K268-KEY-FLD                                  
+           EVALUATE BP13K268-STATUS                                             
+             WHEN 00                                                            
+                PERFORM 7400-READ-BP13K268 THRU 7400-EXIT                       
+                PERFORM 7500-CHECK-QUEUE-NO THRU 7500-EXIT                      
+                        UNTIL WS-K268-FOUND = 'Y' OR                            
+                              WS-K268-BYPASS = 'Y' OR                           
+                              WS-K268-EOF = 'Y'                                 
+             WHEN 23                                                            
+                MOVE 'Y'           TO WS-K268-BYPASS                            
+             WHEN OTHER                                                         
+                DISPLAY 'BP13K268 - READ ERROR: ' BP13K268-STATUS               
+                PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                      
+           END-EVALUATE.                                                        
+       7300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       7400-READ-BP13K268.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13K268 NEXT AT END                                            
+             MOVE 'Y'         TO WS-K268-EOF                                    
+             GO TO 7400-EXIT.                                                   
+                                                                                
+           ADD 1                     TO WS-K268-READ.                           
+                                                                                
+       7400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       7500-CHECK-QUEUE-NO.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           IF K268-NUM-NEW-TOWN         =  KH15-NUM-NEW-TOWN AND                
+              K268-NUM-FLAT-TYPE        =  KH15-NUM-FLAT-TYPE AND               
+              K268-NUM-SELECTION        =  KH15-NUM-SELECTION AND               
+              K268-DTE-BALLOT           =  KH15-DTE-BALLOT AND                  
+              K268-DTE-ACCEPT           =  F800-DTE-BK-APPT                     
+      *       K268-NUM-ETHNIC           =  KH15-NUM-ETHNIC                      
+              IF K268-NUM-QUEUE > F800-NUM-NT-FT-QUEUE                          
+                 MOVE 'Y'         TO WS-K268-FOUND                              
+                 ADD 1            TO WS-K268-READ                               
+                 IF F800-NUM-ALLO-CAT = 'SBF' AND                               
+                   (F800-NUM-ELDERLY = 'F' OR 'S')                              
+                 MOVE K268-NUM-REGN         TO WS-K268-NUM-REGN                 
+                 MOVE K268-NUM-UNIT-AVAIL1-F2    TO                             
+                                               WS-K268-NUM-UNIT-AVAIL1          
+                 MOVE K268-NUM-QUOTA-AVAIL1-F2   TO                             
+                                               WS-K268-NUM-QUOTA-AVAIL1         
+                 MOVE K268-NUM-UNIT-AVAIL2-F2    TO                             
+                                               WS-K268-NUM-UNIT-AVAIL2          
+                 MOVE K268-NUM-QUOTA-AVAIL2-F2   TO                             
+                                               WS-K268-NUM-QUOTA-AVAIL2         
+                 MOVE K268-NUM-UNIT-AVAIL3-F2    TO                             
+                                               WS-K268-NUM-UNIT-AVAIL3          
+                 MOVE K268-NUM-QUOTA-AVAIL3-F2   TO                             
+                                               WS-K268-NUM-QUOTA-AVAIL3         
+                 MOVE K268-NUM-WITHIN-LIMIT-F2   TO                             
+                                               WS-K268-NUM-WITHIN-LIMIT         
+                 ELSE                                                           
+                 MOVE K268-NUM-REGN         TO WS-K268-NUM-REGN                 
+                 MOVE K268-NUM-UNIT-AVAIL1  TO WS-K268-NUM-UNIT-AVAIL1          
+                 MOVE K268-NUM-QUOTA-AVAIL1 TO WS-K268-NUM-QUOTA-AVAIL1         
+                 MOVE K268-NUM-UNIT-AVAIL2  TO WS-K268-NUM-UNIT-AVAIL2          
+                 MOVE K268-NUM-QUOTA-AVAIL2 TO WS-K268-NUM-QUOTA-AVAIL2         
+                 MOVE K268-NUM-UNIT-AVAIL3  TO WS-K268-NUM-UNIT-AVAIL3          
+                 MOVE K268-NUM-QUOTA-AVAIL3 TO WS-K268-NUM-QUOTA-AVAIL3         
+                 MOVE K268-NUM-WITHIN-LIMIT TO WS-K268-NUM-WITHIN-LIMIT         
+                 END-IF                                                         
+              END-IF                                                            
+           ELSE                                                                 
+                MOVE 'Y'           TO WS-K268-BYPASS                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 7400-READ-BP13K268 THRU 7400-EXIT.                           
+                                                                                
+       7500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------                                                     
+       7600-WRITE-BP04F010.                                                     
+      *--------------------                                                     
+           MOVE SPACES TO P04F010-REC.                                          
+           INITIALIZE                    P04F010-REC                            
+           MOVE  F001-DTE-LAST-DAY-PREV  TO F010-EFF-DATE.                      
+           MOVE  WS-CURRENT-DATE         TO F010-LUPDATE.                       
+           MOVE  WS-CURRENT-DATE         TO F010-INCLUSION-DATE.                
+                                                                                
+           MOVE WS-NUM-UIN               TO F010-NUM-UINFIN.                    
+           MOVE K820-NME-OCCP            TO F010-NAME.                          
+           MOVE '012'                    TO F010-PERIOD-DEBAR.                  
+           MOVE 'BP13'                   TO F010-INTERFACE-SYS.                 
+           MOVE WS-NUM-DEBAR             TO F010-REASON-CODE.                   
+           MOVE ZEROS                    TO F010-AMT-OWING.                     
+                                                                                
+           WRITE P04F010-REC.                                                   
+           ADD 1 TO WS-F010-WRITE.                                              
+                                                                                
+       7600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       9000-CLOSE-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           DISPLAY ' BP13CH03 CONTROL TOTAL '.                                  
+           DISPLAY '------------------------------------------'.                
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO OF RECS READ FROM F800    : ' WS-F800-READ.              
+           DISPLAY 'NO OF RECS READ FROM F268    : ' WS-F268-READ.              
+           DISPLAY 'NO OF RECS MATCHED           : ' WS-MATCHED.                
+           DISPLAY 'NO OF RECS NOT FOUND F800    : ' WS-F800-NOTFD.             
+           DISPLAY 'NO OF RECS NOT FOUND F268    : ' WS-F268-NOTFD.             
+           DISPLAY 'NO OF RECS PROCESSED         : ' WS-PROCESS.                
+           DISPLAY 'NO OF RECS NOT PROCESSED     : ' WS-NOT-PROCESS.            
+           DISPLAY 'NO OF RECS UPDATED KH10      : ' WS-KH10-UPD.               
+           DISPLAY 'NO OF RECS WRITTEN KH10      : ' WS-KH10-WRITE.             
+           DISPLAY 'NO OF RECS WRITTEN KH15/FH15 : ' WS-KH15-WRITE.             
+           DISPLAY 'NO OF RECS DUP KEY KH15      : ' WS-KH15-DUPL.              
+           DISPLAY 'NO OF RECS READ FROM K268    : ' WS-K268-READ.              
+           DISPLAY 'NO OF RECS BYPASS               '                           
+           DISPLAY '    HH=G AND BAL-DTE < 201109:' WS-BYPASS.                  
+           DISPLAY 'NO OF RECS WRITE TO P04F010  : ' WS-F010-WRITE.             
+                                                                                
+           CLOSE SY02F001                                                       
+                 BP13F800                                                       
+                 BP13F268                                                       
+                 BP13K820                                                       
+                 BP13K249                                                       
+                 BP13K813                                                       
+                 BP13K060                                                       
+                 BP13KH10                                                       
+                 BP13KH15                                                       
+                 BP13FH15                                                       
+                 BP04F010.                                                      
+                                                                                
+           IF BP13K820-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'ERROR CLOSING - BP13K820 : ' BP13K820-STATUS             
+              MOVE BP13K820-STATUS TO RETURN-CODE.                              
+                                                                                
+           IF BP13K249-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'ERROR CLOSING - BP13K249 : ' BP13K249-STATUS             
+              MOVE BP13K249-STATUS TO RETURN-CODE.                              
+                                                                                
+           IF BP13K813-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'ERROR CLOSING - BP13K813 : ' BP13K813-STATUS             
+              MOVE BP13K813-STATUS TO RETURN-CODE.                              
+                                                                                
+           IF BP13K060-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'ERROR CLOSING - BP13K060 : ' BP13K060-STATUS             
+              MOVE BP13K060-STATUS TO RETURN-CODE.                              
+                                                                                
+           IF BP13KH10-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'ERROR CLOSING - BP13KH10 : ' BP13KH10-STATUS             
+              MOVE BP13KH10-STATUS TO RETURN-CODE.                              
+                                                                                
+           IF BP13KH15-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'ERROR CLOSING - BP13KH15 : ' BP13KH15-STATUS             
+              MOVE BP13KH15-STATUS TO RETURN-CODE.                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

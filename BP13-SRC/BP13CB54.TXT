@@ -1,0 +1,493 @@
+      *---------------------------------------------------------------*         
+       IDENTIFICATION DIVISION.                                                 
+      *---------------------------------------------------------------*         
+       PROGRAM-ID. BP13CB54.                                                    
+      *AUTHOR. SK.                                                              
+      *DATE-WRITTEN.   27/01/2005.                                              
+      *----------------------------------------------------------------*        
+      *                                                                *        
+      *  SYSTEM NAME : SYSTEM OF COMMITMENT                            *        
+      *                                                                *        
+      *  SYSTEM ID   : BP13                                            *        
+      *                                                                *        
+      *  OBJECTIVE   : PROGRAM TO CHECK IF APPLICANTS HAS PPO          *        
+      *                COMPUTE 30MTH USING DISPOSAL DATE.              *        
+      *                                                                *        
+      *                IF FOUND IN BR10K010/BR10K080    TAG 'W'        *        
+      *                IF FOUND IN BR10K010, CURR PPOS, TAG 'P'        *        
+      *                                                                *        
+      *                IF FOUND IN BR10K080, PPOS HISTORY FILE         *        
+      *                IF DISPOSAL-DATE = ZEROS OR SPACES, TAG AS 'Z'  *        
+      *                IF DISPOSAL-DATE> 30 MTHS         , TAG AS 'X'  *        
+      *                IF DISPOSAL-DATE=< 30 MTHS        , TAG AS 'H'  *        
+      *                                                                *        
+      * CHGE ID  OIC  DATE   DESCRIPTION                               *        
+      * -------  ---  ----   -----------                               *        
+      * BP133111 ED1  190208 NEW PGM                                   *        
+      * BP133641 LSB  270709 ADD SEPARATE TAG FOR FD-PPO, FD-EXPPO     *        
+      *                      TAG H=<30 MTH, X > 30MTH                  *        
+      ******************************************************************        
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F825   ASSIGN TO BP13F825.                                
+           SELECT BP13F730   ASSIGN TO BP13F730.                                
+           SELECT P13F730A   ASSIGN TO P13F730A.                                
+                                                                                
+           SELECT BR10K010 ASSIGN TO BR10K010                                   
+                  ACCESS MODE     IS DYNAMIC                                    
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K010-KEY-FLD                               
+                  FILE STATUS     IS WS-K010-STATUS.                            
+                                                                                
+           SELECT BR10K080 ASSIGN TO BR10K080                                   
+                  ACCESS MODE     IS DYNAMIC                                    
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K080-KEY-FLD                               
+                  FILE STATUS     IS WS-K080-STATUS.                            
+                                                                                
+           SELECT BR10F080 ASSIGN TO BR10F080.                                  
+                                                                                
+      *--------------------------------------------------------*                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *--------------------------------------------------------*                
+                                                                                
+       FD   BP13F730                                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORDING MODE IS F                                                 
+            LABEL RECORDS ARE STANDARD.                                         
+       COPY BP13F730.                                                           
+                                                                                
+       FD   BR10K010                                                            
+            RECORD CONTAINS 300 CHARACTERS.                                     
+       COPY BR10K010.                                                           
+                                                                                
+       FD   BR10K080                                                            
+            RECORD CONTAINS 300 CHARACTERS.                                     
+       COPY BR10K080.                                                           
+                                                                                
+       FD   BP13F825                                                            
+            RECORD CONTAINS 200 CHARACTERS                                      
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORDING MODE IS F                                                 
+            LABEL RECORDS ARE STANDARD.                                         
+       COPY BP13F825.                                                           
+                                                                                
+       FD   BR10F080                                                            
+            RECORD CONTAINS 300 CHARACTERS                                      
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORDING MODE IS F                                                 
+            LABEL RECORDS ARE STANDARD.                                         
+       COPY BR10F080.                                                           
+                                                                                
+       FD   P13F730A                                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORDING MODE IS F                                                 
+            LABEL RECORDS ARE STANDARD.                                         
+       01 P13F730A-REC  PIC X(500).                                             
+                                                                                
+      *--------------------------------------------------------*                
+       WORKING-STORAGE SECTION.                                                 
+      *--------------------------------------------------------*                
+       01  WORK-AREAS.                                                          
+           05 WS-F730-STATUS            PIC 9(2)    VALUE 0.                    
+           05 WS-K010-STATUS            PIC 9(2)    VALUE 0.                    
+           05 WS-K080-STATUS            PIC 9(2)    VALUE 0.                    
+           05 WS-READ-F825              PIC 9(8)    VALUE 0.                    
+           05 WS-READ-F730              PIC 9(8)    VALUE 0.                    
+           05 WS-F730A-WRITE            PIC 9(8)    VALUE 0.                    
+           05 WS-EOF                    PIC X(1)    VALUE 'N'.                  
+           05 WS-EOF1                   PIC X(1)    VALUE 'N'.                  
+           05 WS-FND-CURPPO             PIC X(1)    VALUE 'N'.                  
+           05 WS-FND-EXPPO              PIC X(1)    VALUE 'N'.                  
+           05 WS-F730-UPD               PIC 9(8)    VALUE 0.                    
+           05 WS-K010-FND               PIC 9(8)    VALUE 0.                    
+           05 WS-K080-FND               PIC 9(8)    VALUE 0.                    
+           05 WS-F730-NTFND             PIC 9(8)    VALUE 0.                    
+           05 WS-MATCHED                PIC 9(8)    VALUE 0.                    
+           05 WS-UNMAT                  PIC 9(8)    VALUE 0.                    
+           05 WS-PPO                    PIC X(1)    VALUE SPACES.               
+                                                                                
+           05 WS-DISPOSAL               PIC X(8)    VALUE SPACES.               
+           05 WS-DISPOSAL-NUM REDEFINES WS-DISPOSAL                             
+                                        PIC 9(8).                               
+                                                                                
+           05 WS-DTE-REQ                PIC X(8)    VALUE SPACES.               
+           05 WS-DTE-REQ-R    REDEFINES WS-DTE-REQ.                             
+              10 WS-DTE-REQ-NUM.                                                
+                 15 WS-DTE-REQ-CCYY     PIC 9(4).                               
+                 15 WS-DTE-REQ-MM       PIC 9(2).                               
+                 15 WS-DTE-REQ-DD       PIC 9(2).                               
+                                                                                
+           05 WS-PREV-REGN              PIC X(8)    VALUE SPACES.               
+                                                                                
+       01  WS-SYSTEM-DATE.                                                      
+           05  WS-SYS-CCYY            PIC 9(4).                                 
+           05  WS-SYS-MM              PIC 9(2).                                 
+           05  WS-SYS-DD              PIC 9(2).                                 
+                                                                                
+       01  WS-EDITED-DATE             PIC X(10).                                
+                                                                                
+      *--------------------------------------------------------*                
+       PROCEDURE DIVISION.                                                      
+      *--------------------------------------------------------*                
+                                                                                
+      *--------------------------------------------------------*                
+       0000-MAIN.                                                               
+      *--------------------------------------------------------*                
+                                                                                
+           PERFORM 1000-OPEN-FILES    THRU 1000-EXIT.                           
+           PERFORM 1500-READ-F825     THRU 1500-EXIT.                           
+           PERFORM 1600-READ-F730     THRU 1600-EXIT.                           
+           PERFORM 2000-PROCESS       THRU 2000-EXIT                            
+                   UNTIL F825-NUM-REGN = HIGH-VALUES AND                        
+                         F730-NUM-REGN = HIGH-VALUES.                           
+           PERFORM 9999-CLOSE-ROUTINE THRU 9999-EXIT.                           
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       1000-OPEN-FILES.                                                         
+      *--------------------------------------------------------*                
+                                                                                
+           OPEN INPUT  BP13F825                                                 
+                       BR10K010                                                 
+                       BR10K080                                                 
+                       BP13F730                                                 
+               OUTPUT  P13F730A                                                 
+                       BR10F080.                                                
+                                                                                
+           EVALUATE WS-K010-STATUS                                              
+              WHEN 00                                                           
+              WHEN 97                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'OPEN BR10K010 FAIL. STATUS - '                        
+                                            WS-K010-STATUS                      
+                 MOVE  WS-K010-STATUS       TO RETURN-CODE                      
+                 PERFORM 9999-CLOSE-ROUTINE THRU 9999-EXIT                      
+           END-EVALUATE.                                                        
+                                                                                
+           EVALUATE WS-K080-STATUS                                              
+              WHEN 00                                                           
+              WHEN 97                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'OPEN BR10K080 FAIL. STATUS - '                        
+                                            WS-K080-STATUS                      
+                 MOVE  WS-K080-STATUS       TO RETURN-CODE                      
+                 PERFORM 9999-CLOSE-ROUTINE THRU 9999-EXIT                      
+           END-EVALUATE.                                                        
+                                                                                
+           MOVE FUNCTION CURRENT-DATE   TO WS-SYSTEM-DATE.                      
+                                                                                
+           STRING WS-SYS-DD '/' WS-SYS-MM '/' WS-SYS-CCYY                       
+                  DELIMITED BY SIZE                                             
+                  INTO WS-EDITED-DATE                                           
+           END-STRING.                                                          
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       1500-READ-F825.                                                          
+      *--------------------------------------------------------*                
+                                                                                
+           READ BP13F825                                                        
+                AT END                                                          
+                   MOVE HIGH-VALUES TO F825-NUM-REGN                            
+                NOT AT END                                                      
+                   ADD 1 TO WS-READ-F825                                        
+           END-READ.                                                            
+                                                                                
+       1500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       1600-READ-F730.                                                          
+      *--------------------------------------------------------*                
+                                                                                
+           READ BP13F730                                                        
+                AT END                                                          
+                   MOVE HIGH-VALUES TO F730-NUM-REGN                            
+                NOT AT END                                                      
+                   ADD 1 TO WS-READ-F730                                        
+           END-READ.                                                            
+                                                                                
+       1600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       2000-PROCESS.                                                            
+      *--------------------------------------------------------*                
+           MOVE SPACES   TO P13F730A-REC.                                       
+           MOVE SPACES   TO WS-PREV-REGN.                                       
+           MOVE 'N'      TO WS-EOF1.                                            
+           MOVE 'N'      TO WS-FND-CURPPO, WS-FND-EXPPO                         
+           MOVE SPACES   TO WS-PPO.                                             
+           MOVE ZEROS    TO WS-DISPOSAL.                                        
+           MOVE ZEROS    TO WS-DTE-REQ.                                         
+                                                                                
+           IF F825-NUM-REGN = F730-NUM-REGN                                     
+              ADD 1 TO WS-MATCHED                                               
+              MOVE F825-NUM-REGN TO WS-PREV-REGN                                
+              PERFORM 2050-PROCESS-PPO  THRU 2050-EXIT                          
+                      UNTIL F825-NUM-REGN NOT  = WS-PREV-REGN OR                
+                            F825-NUM-REGN      = HIGH-VALUES OR                 
+                            WS-FND-CURPPO = 'Y'                                 
+                                                                                
+              IF P13F730A-REC NOT = SPACES AND LOW-VALUES                       
+                 WRITE              P13F730A-REC                                
+                 ADD  1             TO WS-F730A-WRITE                           
+              END-IF                                                            
+                                                                                
+                                                                                
+              PERFORM 1600-READ-F730         THRU 1600-EXIT                     
+                                                                                
+           ELSE                                                                 
+              IF F825-NUM-REGN > F730-NUM-REGN                                  
+                 MOVE BP13F730-REC      TO P13F730A-REC                         
+                 WRITE                     P13F730A-REC                         
+                 ADD  1                 TO WS-F730A-WRITE                       
+                 ADD  1                 TO WS-UNMAT                             
+                 PERFORM 1600-READ-F730      THRU 1600-EXIT                     
+              ELSE                                                              
+                 ADD 1 TO WS-F730-NTFND                                         
+                 PERFORM 1500-READ-F825      THRU 1500-EXIT                     
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       2050-PROCESS-PPO.                                                        
+      *--------------------------------------------------------*                
+           PERFORM 2100-START-K010    THRU 2100-EXIT.                           
+           IF WS-FND-CURPPO = 'Y'                                               
+              MOVE 'P'            TO F730-NUM-PPO                               
+              MOVE BP13F730-REC   TO P13F730A-REC                               
+                                                                                
+           ELSE                                                                 
+              MOVE 'N'  TO WS-EOF1                                              
+              PERFORM 2300-START-K080 THRU 2300-EXIT                            
+              IF WS-FND-EXPPO = 'Y'                                             
+                 PERFORM 2051-COMPUTE-DTE-REQ THRU 2051-EXIT                    
+                                                                                
+                 IF WS-DISPOSAL = ZEROS OR SPACES                               
+                      MOVE 'Z'  TO WS-PPO                                       
+                 ELSE                                                           
+                    IF WS-DISPOSAL-NUM >= WS-DTE-REQ-NUM                        
+                         MOVE 'H'  TO WS-PPO                                    
+                    ELSE                                                        
+                         MOVE 'X'  TO WS-PPO                                    
+                    END-IF                                                      
+                 END-IF                                                         
+                                                                                
+                 MOVE WS-PPO         TO F730-NUM-PPO                            
+                 MOVE BP13F730-REC   TO P13F730A-REC                            
+                                                                                
+                 MOVE F825-NUM-REGN TO K080-DTE-UPDATE                          
+                 WRITE BR10F080-REC FROM BR10K080-REC                           
+              ELSE                                                              
+                 MOVE 'W'            TO F730-NUM-PPO                            
+                 MOVE BP13F730-REC   TO P13F730A-REC                            
+              END-IF                                                            
+                                                                                
+           END-IF.                                                              
+                                                                                
+           PERFORM 1500-READ-F825     THRU 1500-EXIT.                           
+                                                                                
+       2050-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       2051-COMPUTE-DTE-REQ.                                                    
+      *--------------------------------------------------------*                
+            IF F730-DTE-REQUEST NOT = SPACES AND LOW-VALUES                     
+               MOVE F730-DTE-REQUEST TO WS-DTE-REQ                              
+            ELSE                                                                
+               GO TO 2051-EXIT                                                  
+            END-IF.                                                             
+                                                                                
+      * MINUS 30 MONTHS ( 2 YRS, 6 MOS)                                         
+      * --------------------------------                                        
+            COMPUTE WS-DTE-REQ-CCYY = WS-DTE-REQ-CCYY - 2.                      
+                                                                                
+            IF WS-DTE-REQ-MM > 6                                                
+               COMPUTE WS-DTE-REQ-MM = WS-DTE-REQ-MM - 6                        
+            ELSE                                                                
+               IF WS-DTE-REQ-MM = 6                                             
+                  COMPUTE WS-DTE-REQ-CCYY = WS-DTE-REQ-CCYY - 1                 
+                  MOVE 12 TO WS-DTE-REQ-MM                                      
+               ELSE                                                             
+                  IF WS-DTE-REQ-MM < 6                                          
+                     COMPUTE WS-DTE-REQ-CCYY = WS-DTE-REQ-CCYY - 1              
+                     COMPUTE WS-DTE-REQ-MM = WS-DTE-REQ-MM + 12 - 6             
+                  END-IF                                                        
+               END-IF                                                           
+            END-IF.                                                             
+                                                                                
+       2051-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       2100-START-K010.                                                         
+      *--------------------------------------------------------*                
+                                                                                
+           MOVE LOW-VALUES       TO K010-KEY-FLD.                               
+                                                                                
+           MOVE F825-NUM-NRIC    TO K010-NUM-UIN.                               
+           START BR10K010 KEY >= K010-NUM-UIN.                                  
+                                                                                
+           EVALUATE WS-K010-STATUS                                              
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN 10                                                           
+              WHEN 23                                                           
+                 MOVE 'Y' TO WS-EOF1                                            
+              WHEN OTHER                                                        
+                 DISPLAY 'ERROR READING BR10K010 STATUS - '                     
+                                            WS-K010-STATUS                      
+                 MOVE WS-K010-STATUS        TO RETURN-CODE                      
+                 PERFORM 9999-CLOSE-ROUTINE THRU 9999-EXIT                      
+           END-EVALUATE.                                                        
+                                                                                
+           PERFORM 2200-READNXT-K010   THRU 2200-EXIT                           
+              UNTIL K010-NUM-UIN NOT = F825-NUM-NRIC                            
+                 OR WS-EOF1 = 'Y'.                                              
+                                                                                
+       2100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       2200-READNXT-K010.                                                       
+      *--------------------------------------------------------*                
+                                                                                
+           READ BR10K010 NEXT RECORD                                            
+                AT END MOVE 'Y' TO WS-EOF1                                      
+           END-READ.                                                            
+                                                                                
+           IF (K010-NUM-UIN = F825-NUM-NRIC)                                    
+              MOVE 'Y' TO WS-EOF1                                               
+              MOVE 'Y' TO WS-FND-CURPPO                                         
+              ADD 1  TO WS-K010-FND                                             
+           ELSE                                                                 
+              MOVE 'Y' TO  WS-EOF1                                              
+           END-IF.                                                              
+                                                                                
+       2200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       2300-START-K080.                                                         
+      *--------------------------------------------------------*                
+                                                                                
+           MOVE LOW-VALUES       TO K080-KEY-FLD.                               
+                                                                                
+           MOVE F825-NUM-NRIC    TO K080-NUM-UIN.                               
+           START BR10K080 KEY >= K080-NUM-UIN.                                  
+                                                                                
+           EVALUATE WS-K080-STATUS                                              
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN 10                                                           
+              WHEN 23                                                           
+                 MOVE 'Y' TO WS-EOF1                                            
+              WHEN OTHER                                                        
+                 DISPLAY 'ERROR READING BR10K080 STATUS - '                     
+                                            WS-K080-STATUS                      
+                 MOVE WS-K080-STATUS        TO RETURN-CODE                      
+                 PERFORM 9999-CLOSE-ROUTINE THRU 9999-EXIT                      
+           END-EVALUATE.                                                        
+                                                                                
+           PERFORM 2400-READNXT-K080   THRU 2400-EXIT                           
+              UNTIL K080-NUM-UIN NOT = F825-NUM-NRIC                            
+                 OR WS-EOF1 = 'Y'.                                              
+                                                                                
+       2300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       2400-READNXT-K080.                                                       
+      *--------------------------------------------------------*                
+                                                                                
+           READ BR10K080 NEXT RECORD                                            
+                AT END MOVE 'Y' TO WS-EOF1                                      
+           END-READ.                                                            
+                                                                                
+           IF (K080-NUM-UIN = F825-NUM-NRIC)                                    
+              MOVE 'Y' TO WS-EOF1                                               
+              MOVE 'Y' TO WS-FND-EXPPO                                          
+              MOVE K080-DTE-DISPOSAL TO WS-DISPOSAL                             
+              ADD 1  TO WS-K080-FND                                             
+           ELSE                                                                 
+              MOVE 'Y' TO  WS-EOF1                                              
+           END-IF.                                                              
+                                                                                
+       2400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------*                
+       9999-CLOSE-ROUTINE.                                                      
+      *--------------------------------------------------------*                
+                                                                                
+           DISPLAY '*********** BP13CB54 **************'.                       
+           DISPLAY SPACES.                                                      
+           DISPLAY 'DATE : ' WS-EDITED-DATE.                                    
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO. OF RECORDS READ (BP13F825) :' WS-READ-F825.             
+           DISPLAY 'NO. OF RECORDS READ (BP13F730) :' WS-READ-F730.             
+           DISPLAY 'NO. OF RECORDS MATCH           :' WS-MATCHED.               
+           DISPLAY 'NO. OF F730 UNMATCHED          :' WS-UNMAT.                 
+           DISPLAY 'NO. OF RECORDS NOT FND IN F730 :' WS-F730-NTFND.            
+           DISPLAY 'NO. OF RECORDS WRITTEN IN F730 :' WS-F730A-WRITE.           
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO. OF RECORDS FND IN BR01K010 :' WS-K010-FND.              
+           DISPLAY 'NO. OF RECORDS FND IN BR01K080 :' WS-K080-FND.              
+           DISPLAY '***********************************'.                       
+                                                                                
+           CLOSE       BP13F730                                                 
+                       BR10K010                                                 
+                       BR10K080                                                 
+                       BP13F825                                                 
+                       BR10F080.                                                
+                                                                                
+           EVALUATE WS-K010-STATUS                                              
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'CLOSE BR10K010 FAIL. STATUS - '                       
+                                            WS-K010-STATUS                      
+                 MOVE  WS-K010-STATUS       TO RETURN-CODE                      
+           END-EVALUATE.                                                        
+                                                                                
+           EVALUATE WS-K080-STATUS                                              
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'CLOSE BR10K080 FAIL. STATUS - '                       
+                                            WS-K080-STATUS                      
+                 MOVE  WS-K080-STATUS       TO RETURN-CODE                      
+           END-EVALUATE.                                                        
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9999-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+

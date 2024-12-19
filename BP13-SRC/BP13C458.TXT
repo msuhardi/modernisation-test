@@ -1,0 +1,434 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C458.                                                 
+      *AUTHOR.        SK.                                                       
+      *DATE-WRITTEN.  22/03/2004.                                               
+      * =========================================================== *           
+      * SYSTEM OF COMMITMENT (BP13)                                 *           
+      * =========================================================== *           
+      *                                                             *           
+      *  OBJECTIVE :                                                *           
+      *   1. PROCESS VOUCHER TRANSACTION FILE AND UPDATE BP13K130   *           
+      *      AND WRITE BP13F121 (IBG FILE).                         *           
+      *   2. MANUAL PAYMENT/VOUCHER FOR THE ACCOUNT 54-4151         *           
+      *   3. SYSTEM CODE : "B5"                                     *           
+      *                                                             *           
+      *  INPUT FILE :  1. AG07F630 (VOUCHER TRANSACTION FILE)       *           
+      *                2. BP13K671                                  *           
+      *                3. BM06K110                                  *           
+      *                                                             *           
+      *  I-O FILE   :  1. BP13K130 (SOCHIST   FILE)                 *           
+      *                                                             *           
+      *  OUTPUT FILE:  1. BP13F121 (CPF TRANS FILE - IBG FILE)      *           
+      *                                                             *           
+      * CHG REF  BY    ON       DESCRIPTION                         *           
+      * -------- ----- -------- -----------                         *           
+      * BP132400 SK    20040322 NEW PROGRAM                         *           
+      * BP132526 SK    20040618 EXPAND K671 TO 3000 LENGTH          *           
+      * =========================================================== *           
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+      *--------------------------------------------------------------*          
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *--------------------------------------------------------------*          
+                                                                                
+           SELECT BP13K130 ASSIGN         TO BP13K130                           
+                           ACCESS MODE    IS DYNAMIC                            
+                           ORGANIZATION   IS INDEXED                            
+                           RECORD KEY     IS K130-KEY-FLD                       
+                           FILE STATUS    IS WS-K130-STATUS.                    
+                                                                                
+           SELECT BP13K671 ASSIGN         TO BP13K671                           
+                           ACCESS MODE    IS RANDOM                             
+                           ORGANIZATION   IS INDEXED                            
+                           RECORD KEY     IS K671-NUM-REGN                      
+                           FILE STATUS    IS WS-K671-STATUS.                    
+                                                                                
+           SELECT BM06K110  ASSIGN        TO BM06K110                           
+                            ACCESS MODE   IS RANDOM                             
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K110-KEY-FLD                       
+                            FILE STATUS   IS WS-K110-STATUS.                    
+                                                                                
+           SELECT AG07F630 ASSIGN       TO AG07F630.                            
+           SELECT BP13F121 ASSIGN       TO BP13F121.                            
+                                                                                
+      *--------------------------------------------------------------*          
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *--------------------------------------------------------------*          
+                                                                                
+       FD  AG07F630                                                             
+           RECORDING MODE  IS  F                                                
+           RECORD CONTAINS 130 CHARACTERS.                                      
+       COPY AG07F630.                                                           
+                                                                                
+       FD  BP13F121                                                             
+           RECORDING MODE  IS  F                                                
+           RECORD CONTAINS 150 CHARACTERS.                                      
+       COPY BP13F121.                                                           
+                                                                                
+       FD  BP13K130                                                             
+           RECORD CONTAINS 150 CHARACTERS.                                      
+       COPY BP13K130.                                                           
+                                                                                
+       FD  BP13K671                                                             
+           RECORD CONTAINS 3000 CHARACTERS.                                     
+       COPY BP13K671.                                                           
+                                                                                
+       FD  BM06K110                                                             
+           RECORD CONTAINS 500 CHARACTERS.                                      
+       COPY BM06K110.                                                           
+                                                                                
+      *--------------------------------------------------------------*          
+       WORKING-STORAGE SECTION.                                                 
+      *--------------------------------------------------------------*          
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-COUNT-HISTORY           PIC 9(03)       VALUE ZEROS.          
+                                                                                
+       01  WS-FILE-STATUS.                                                      
+           05  WS-K130-STATUS             PIC 9(02)       VALUE ZEROES.         
+           05  WS-K671-STATUS             PIC 9(02)       VALUE ZEROES.         
+           05  WS-K110-STATUS             PIC 9(02)       VALUE ZEROES.         
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-K130-WRITE              PIC 9(08)       VALUE ZEROES.         
+           05  WS-K671-READ               PIC 9(08)       VALUE ZEROES.         
+           05  WS-K110-READ               PIC 9(08)       VALUE ZEROES.         
+           05  WS-K671-NOTFD              PIC 9(08)       VALUE ZEROES.         
+           05  WS-F121-WRITE              PIC 9(08)       VALUE ZEROES.         
+           05  WS-F630-READ               PIC 9(08)       VALUE ZEROES.         
+           05  WS-K110-NOTFD              PIC 9(08)       VALUE ZEROES.         
+                                                                                
+       01  WS-SWITCHES.                                                         
+           05  WS-F630-EOF                PIC X(01)       VALUE 'N'.            
+           05  WS-K130-WRITTEN            PIC X(01)       VALUE SPACE.          
+                                                                                
+       01  WS-DATE                        PIC X(8)     VALUE SPACES.            
+       01  WS-EDITED-DATE                 PIC X(10)    VALUE SPACES.            
+                                                                                
+      *--------------------------------------------------------------*          
+       PROCEDURE DIVISION.                                                      
+      *--------------------------------------------------------------*          
+       0000-MAIN.                                                               
+      *--------------------------------------------------------------*          
+                                                                                
+           PERFORM 1000-OPEN-FILES       THRU 1000-EXIT.                        
+           PERFORM 2000-READ-AG07F630    THRU 2000-EXIT.                        
+           PERFORM 3000-PROCESS          THRU 3000-EXIT                         
+                   UNTIL WS-F630-EOF = 'Y'.                                     
+           PERFORM 9000-CLOSE-FILES      THRU 9000-EXIT.                        
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------------*          
+       1000-OPEN-FILES.                                                         
+      *--------------------------------------------------------------*          
+                                                                                
+           OPEN INPUT  AG07F630                                                 
+                       BP13K671                                                 
+                       BM06K110                                                 
+                I-O    BP13K130                                                 
+                OUTPUT BP13F121.                                                
+                                                                                
+           EVALUATE WS-K130-STATUS                                              
+              WHEN 00                                                           
+              WHEN 97                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'OPEN BP13K130 FAIL. STATUS - '                        
+                                            WS-K130-STATUS                      
+                 MOVE  WS-K130-STATUS       TO RETURN-CODE                      
+                 PERFORM 9000-CLOSE-FILES   THRU 9000-EXIT                      
+           END-EVALUATE.                                                        
+                                                                                
+           EVALUATE WS-K671-STATUS                                              
+              WHEN 00                                                           
+              WHEN 97                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'OPEN BP13K671 FAIL. STATUS - '                        
+                                            WS-K671-STATUS                      
+                 MOVE  WS-K671-STATUS       TO RETURN-CODE                      
+                 PERFORM 9000-CLOSE-FILES   THRU 9000-EXIT                      
+           END-EVALUATE.                                                        
+                                                                                
+           EVALUATE WS-K110-STATUS                                              
+              WHEN 00                                                           
+              WHEN 97                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'OPEN BM06K110 FAIL. STATUS - '                        
+                                            WS-K110-STATUS                      
+                 MOVE  WS-K110-STATUS       TO RETURN-CODE                      
+                 PERFORM 9000-CLOSE-FILES   THRU 9000-EXIT                      
+           END-EVALUATE.                                                        
+                                                                                
+           MOVE FUNCTION CURRENT-DATE TO WS-DATE.                               
+           STRING WS-DATE(7:2) '/' WS-DATE(5:2) '/' WS-DATE(1:4)                
+              DELIMITED BY SIZE INTO WS-EDITED-DATE.                            
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------------*          
+       2000-READ-AG07F630.                                                      
+      *--------------------------------------------------------------*          
+                                                                                
+           READ AG07F630                                                        
+                AT END                                                          
+                   MOVE 'Y' TO WS-F630-EOF                                      
+                NOT AT END                                                      
+                   ADD 1    TO WS-F630-READ                                     
+           END-READ.                                                            
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------------*          
+       3000-PROCESS.                                                            
+      *--------------------------------------------------------------*          
+                                                                                
+           IF F630-NUM-TRANS-ID = 'SBPS'                                        
+              PERFORM 3500-READ-BM06K110 THRU 3500-EXIT                         
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-READ-AG07F630 THRU 2000-EXIT.                           
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------------*          
+       3500-READ-BM06K110.                                                      
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE SPACES              TO K110-REC.                                
+           MOVE F630-NUM-HDB-REF    TO K110-KEY-FLD.                            
+                                                                                
+           READ BM06K110.                                                       
+                                                                                
+           EVALUATE WS-K110-STATUS                                              
+              WHEN 00                                                           
+                   ADD  1             TO WS-K110-READ                           
+                   MOVE K110-REGN-NO  TO K671-NUM-REGN                          
+                   PERFORM 4000-READ-BP13K671 THRU 4000-EXIT                    
+              WHEN 23                                                           
+                   ADD  1             TO WS-K110-NOTFD                          
+                   DISPLAY 'REC NOTFD IN BM06K110. KEY ' K110-KEY-FLD           
+              WHEN OTHER                                                        
+                   MOVE WS-K110-STATUS     TO RETURN-CODE                       
+                   DISPLAY 'ERROR READING BM06K110. STATUS - '                  
+                                          WS-K110-STATUS                        
+                   PERFORM 9000-CLOSE-FILES THRU 9000-EXIT                      
+           END-EVALUATE.                                                        
+                                                                                
+       3500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------------*          
+       4000-READ-BP13K671.                                                      
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE SPACES           TO BP13K671-REC.                               
+           MOVE K110-REGN-NO     TO K671-NUM-REGN.                              
+                                                                                
+           READ BP13K671.                                                       
+                                                                                
+           EVALUATE WS-K671-STATUS                                              
+              WHEN 00                                                           
+                   ADD   1  TO WS-K671-READ                                     
+                   MOVE  1  TO WS-COUNT-HISTORY                                 
+                   PERFORM 5000-WRITE-BP13K130 THRU 5000-EXIT                   
+                   PERFORM 5500-WRITE-BP13F121 THRU 5500-EXIT                   
+              WHEN 23                                                           
+                   ADD   1  TO WS-K671-NOTFD                                    
+                   DISPLAY 'REC NOTFD IN BP13K671. KEY - '                      
+                                                    K671-NUM-REGN               
+              WHEN OTHER                                                        
+                   MOVE WS-K671-STATUS    TO RETURN-CODE                        
+                   DISPLAY 'ERROR READING BP13K671. STATUS - '                  
+                                                    WS-K671-STATUS              
+                   PERFORM 9000-CLOSE-FILES THRU 9000-EXIT                      
+           END-EVALUATE.                                                        
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------------*          
+       5000-WRITE-BP13K130.                                                     
+      *--------------------------------------------------------------*          
+                                                                                
+           PERFORM 6000-MOVE-VALUES THRU 6000-EXIT.                             
+                                                                                
+           WRITE BP13K130-CDHIST.                                               
+                                                                                
+           EVALUATE WS-K130-STATUS                                              
+              WHEN 00                                                           
+                 ADD 1 TO WS-K130-WRITE                                         
+              WHEN 22                                                           
+                 MOVE 'N' TO WS-K130-WRITTEN                                    
+                 PERFORM 7000-READ-BP13K130 THRU 7000-EXIT                      
+                         UNTIL WS-K130-WRITTEN = 'Y'                            
+              WHEN OTHER                                                        
+                 MOVE WS-K130-STATUS    TO RETURN-CODE                          
+                 DISPLAY 'ERROR WRITING BP13K130. STATUS - '                    
+                                                  WS-K130-STATUS                
+                 PERFORM 9000-CLOSE-FILES THRU 9000-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------------*          
+       5500-WRITE-BP13F121.                                                     
+      *--------------------------------------------------------------*          
+                                                                                
+           WRITE BP13F121-CPFTRAN.                                              
+           ADD 1 TO WS-F121-WRITE.                                              
+                                                                                
+       5500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------------*          
+       6000-MOVE-VALUES.                                                        
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE  SPACES                TO BP13K130-CDHIST                       
+                                          BP13F121-CPFTRAN.                     
+                                                                                
+           INITIALIZE                     BP13K130-CDHIST                       
+                                          BP13F121-CPFTRAN.                     
+                                                                                
+           MOVE '43'                   TO K130-TRANS-TYPE                       
+                                          F121-CDE-TRANS-TYPE.                  
+                                                                                
+           MOVE 'MAP'                  TO K130-PAYMENT-TYPE                     
+                                          F121-CDE-PAYMENT-TYPE.                
+                                                                                
+           MOVE K110-REGN-NO           TO K130-NUM-ORIG-REGN                    
+                                          F121-NUM-REGN.                        
+                                                                                
+           MOVE F630-DTE-TRANS         TO K130-DTE-POST                         
+                                          K130-DTE-TRANS                        
+                                          F121-DTE-POST                         
+                                          F121-DTE-TRANS.                       
+                                                                                
+           MOVE WS-COUNT-HISTORY       TO K130-COUNT-HISTORY                    
+                                          F121-COUNT-HISTORY.                   
+                                                                                
+           IF F630-AMT-TRANS IS NOT NUMERIC                                     
+              MOVE ZEROS  TO F630-AMT-TRANS                                     
+           END-IF.                                                              
+                                                                                
+           MOVE F630-AMT-TRANS         TO K130-AMT-CASH                         
+                                          F121-AMT-RECIEPT.                     
+                                                                                
+           MOVE F630-NUM-TRANS-DR-CR   TO K130-AMT-TYP                          
+                                          F121-CDE-CRDR.                        
+                                                                                
+           MOVE F630-NUM-HDB-REF       TO K130-NUM-SCH-ACCT                     
+                                          F121-NUM-SCH-ACCT.                    
+                                                                                
+           MOVE F630-NUM-CPF           TO F121-NUM-CPF-APPL.                    
+                                                                                
+           STRING F630-NUM-BATCH                                                
+                  F630-NUM-VR-SERIAL                                            
+                  DELIMITED BY SIZE                                             
+                  INTO K130-NUM-RECPT-JRNO                                      
+           END-STRING.                                                          
+                                                                                
+           MOVE K130-NUM-RECPT-JRNO    TO F121-NUM-RECPT-JRNO.                  
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------------*          
+       7000-READ-BP13K130.                                                      
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE K110-REGN-NO           TO K130-NUM-ORIG-REGN.                   
+           MOVE F630-DTE-TRANS         TO K130-DTE-POST.                        
+           ADD 1                       TO WS-COUNT-HISTORY.                     
+           MOVE WS-COUNT-HISTORY       TO K130-COUNT-HISTORY.                   
+                                                                                
+           READ BP13K130.                                                       
+                                                                                
+           EVALUATE WS-K130-STATUS                                              
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN 23                                                           
+                 MOVE 'Y'  TO WS-K130-WRITTEN                                   
+                 PERFORM 5000-WRITE-BP13K130      THRU 5000-EXIT                
+              WHEN OTHER                                                        
+                 MOVE WS-K130-STATUS    TO RETURN-CODE                          
+                 DISPLAY 'ERROR READING BP13K130. STATUS - '                    
+                                                  WS-K130-STATUS                
+                 PERFORM 9000-CLOSE-FILES THRU 9000-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       7000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------------*          
+       9000-CLOSE-FILES.                                                        
+      *--------------------------------------------------------------*          
+                                                                                
+           DISPLAY '*-------- BP13C458 *--------'.                              
+           DISPLAY 'DATE :    ' WS-EDITED-DATE.                                 
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO OF RECS READ    (AG07F630) = ' WS-F630-READ.             
+           DISPLAY 'NO OF RECS WRITE   (BP13K130) = ' WS-K130-WRITE.            
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO OF RECS READ    (BM06K110) = ' WS-K110-READ.             
+           DISPLAY 'NO OF RECS NOTFD   (BM06K110) = ' WS-K110-NOTFD.            
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO OF RECS READ    (BP13K671) = ' WS-K671-READ.             
+           DISPLAY 'NO OF RECS NOTFD   (BP13K671) = ' WS-K671-NOTFD.            
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO OF RECS WRITE   (BP13F121) = ' WS-F121-WRITE.            
+           DISPLAY '*---------------------------'.                              
+                                                                                
+           CLOSE AG07F630                                                       
+                 BM06K110                                                       
+                 BP13K671                                                       
+                 BP13K130                                                       
+                 BP13F121.                                                      
+                                                                                
+           EVALUATE WS-K130-STATUS                                              
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'CLODE BP13K130 FAIL. STATUS - '                       
+                                            WS-K130-STATUS                      
+                 MOVE  WS-K130-STATUS       TO RETURN-CODE                      
+           END-EVALUATE.                                                        
+                                                                                
+           EVALUATE WS-K671-STATUS                                              
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'CLOSE BP13K671 FAIL. STATUS - '                       
+                                            WS-K671-STATUS                      
+                 MOVE  WS-K671-STATUS       TO RETURN-CODE                      
+           END-EVALUATE.                                                        
+                                                                                
+           EVALUATE WS-K110-STATUS                                              
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'CLOSE BM06K110 FAIL. STATUS - '                       
+                                            WS-K110-STATUS                      
+                 MOVE  WS-K110-STATUS       TO RETURN-CODE                      
+           END-EVALUATE.                                                        
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

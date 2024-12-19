@@ -1,0 +1,409 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.   BP13CF59.                                                  
+      *AUTHOR.       ZDD1.                                                      
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (SOC)                                 *            
+      * ========================================================== *            
+      *  OBJECTIVE:                                                *            
+      *  MATCH K800 WITH F800-NUM-REGN AND UPDATE MGPS             *            
+      *                                                            *            
+      *  I    :  BP13F800                                          *            
+      *  I/O  :  BP13K800                                          *            
+      * ========================================================== *            
+      *  CHG REF  OIC   DATE        DESCRIPTION                   *             
+      *  -------- ----  ----------  ----------------------------  *             
+      *  BP136894 ESA1  21/11/2017  TO ADD UPDATE OF BP13K200     *             
+      *  BP137200 FNP1  07/03/2018  ADD WRITE TO BP13F915         *             
+      *  BP137326 FNP1  06/12/2018  BLANK OFF OTHER DETAILS       *             
+      *                             WHEN CREATING 'TE' F915 RECORD*             
+      * ========================================================= *             
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F800 ASSIGN TO BP13F800.                                  
+                                                                                
+           SELECT BP13K800 ASSIGN TO BP13K800                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  ACCESS MODE     IS RANDOM                                     
+                  RECORD KEY      IS K800-NUM-REGN                              
+                  FILE STATUS     IS WS-K800-STATUS.                            
+                                                                                
+           SELECT BP13K820 ASSIGN TO BP13K820                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  ACCESS MODE     IS DYNAMIC                                    
+                  RECORD KEY      IS K820-KEY-FLD                               
+                  FILE STATUS     IS WS-K820-STATUS.                            
+                                                                                
+           SELECT BP13K200 ASSIGN TO BP13K200                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  ACCESS MODE     IS DYNAMIC                                    
+                  RECORD KEY      IS K200-KEY-FLD                               
+                  ALTERNATE KEY   IS K200-NUM-REGN                              
+                  FILE STATUS     IS WS-K200-STATUS.                            
+                                                                                
+           SELECT BP13F313 ASSIGN TO BP13F313.                                  
+           SELECT BP13F915 ASSIGN TO BP13F915.                                  
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD  BP13F800                                                             
+           RECORDING MODE  IS  F                                                
+           RECORD CONTAINS 2000 CHARACTERS.                                     
+       COPY BP13F800.                                                           
+                                                                                
+       FD  BP13K800                                                             
+           RECORD CONTAINS 2000 CHARACTERS.                                     
+       COPY BP13K800.                                                           
+                                                                                
+       FD   BP13K200                                                            
+            RECORD CONTAINS 300 CHARACTERS.                                     
+       COPY BP13K200.                                                           
+                                                                                
+       FD   BP13K820                                                            
+            RECORD CONTAINS 400 CHARACTERS.                                     
+       COPY BP13K820.                                                           
+                                                                                
+       FD  BP13F313                                                             
+           RECORDING MODE  IS  F                                                
+           RECORD CONTAINS 100 CHARACTERS.                                      
+       COPY BP13K313.                                                           
+                                                                                
+       FD  BP13F915                                                             
+           RECORD CONTAINS 800 CHARACTERS                                       
+           BLOCK CONTAINS 0 RECORDS                                             
+           LABEL RECORD IS STANDARD                                             
+           RECORDING MODE IS F.                                                 
+       COPY BP13F915.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-SWITCHES.                                                         
+           05  WS-K800-STATUS            PIC 99    VALUE ZEROS.                 
+           05  WS-K200-STATUS            PIC 99    VALUE ZEROS.                 
+           05  WS-K820-STATUS            PIC 99    VALUE ZEROS.                 
+           05  WS-F800-EOF               PIC X     VALUE 'N'.                   
+           05  WS-F800-READ              PIC 9(6)  VALUE ZEROS.                 
+           05  WS-K800-READ              PIC 9(6)  VALUE ZEROS.                 
+           05  WS-K200-READ              PIC 9(6)  VALUE ZEROS.                 
+           05  WS-K800-REWRITE           PIC 9(6)  VALUE ZEROS.                 
+           05  WS-K200-REWRITE           PIC 9(6)  VALUE ZEROS.                 
+           05  WS-F313-WRITE             PIC 9(6)  VALUE ZEROS.                 
+           05  WS-F915-WRITE             PIC 9(6)  VALUE ZEROS.                 
+           05  WS-K800-CAN               PIC 9(6)  VALUE ZEROS.                 
+           05  WS-K820-EOF               PIC X(01)   VALUE 'N'.                 
+           05  WS-K820-NTFND             PIC X(01)   VALUE 'N'.                 
+           05  WS-REC-PROCESS            PIC X(01)   VALUE 'N'.                 
+           05  WS-K820-FND               PIC 9(06)  VALUE ZEROES.               
+           05  WS-K820-NOTFND            PIC 9(06)  VALUE ZEROES.               
+                                                                                
+       01  WS-CUR-DATE                   PIC X(8).                              
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       000-MAIN-LOGIC.                                                          
+            PERFORM 100-OPEN-FILES      THRU 100-EXIT.                          
+            PERFORM 200-READ-BP13F800   THRU 200-EXIT.                          
+            PERFORM 500-PROCESS-K800    THRU 500-EXIT                           
+                UNTIL WS-F800-EOF = 'Y'                                         
+            PERFORM 999-CLOSE-FILES     THRU 999-EXIT.                          
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       100-OPEN-FILES.                                                          
+      *-------------------------------------------------------------            
+           OPEN INPUT  BP13F800                                                 
+                       BP13K820                                                 
+                I-O    BP13K800                                                 
+                       BP13K200                                                 
+                OUTPUT BP13F313                                                 
+                       BP13F915.                                                
+                                                                                
+           IF WS-K800-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'OPENING ERROR, K800-STATUS ' WS-K800-STATUS              
+              MOVE WS-K800-STATUS       TO RETURN-CODE                          
+              PERFORM 999-CLOSE-FILES THRU 999-EXIT.                            
+                                                                                
+           IF WS-K200-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'OPENING ERROR, K200-STATUS ' WS-K200-STATUS              
+              MOVE WS-K200-STATUS       TO RETURN-CODE                          
+              PERFORM 999-CLOSE-FILES THRU 999-EXIT.                            
+                                                                                
+           IF WS-K820-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'OPENING ERROR, K820-STATUS ' WS-K820-STATUS              
+              MOVE WS-K820-STATUS       TO RETURN-CODE                          
+              PERFORM 999-CLOSE-FILES THRU 999-EXIT.                            
+                                                                                
+           MOVE FUNCTION CURRENT-DATE    TO WS-CUR-DATE.                        
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       200-READ-BP13F800.                                                       
+      *-------------------------------------------------------------            
+           READ BP13F800 AT END                                                 
+           MOVE 'Y'                      TO WS-F800-EOF                         
+           GO TO 200-EXIT.                                                      
+                                                                                
+           ADD 1                         TO WS-F800-READ.                       
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       500-PROCESS-K800.                                                        
+      *-------------------------------------------------------------            
+             MOVE F800-NUM-REGN TO K800-NUM-REGN                                
+             READ BP13K800                                                      
+                                                                                
+             IF WS-K800-STATUS = 00                                             
+                ADD 1 TO  WS-K800-READ                                          
+                PERFORM 600-REWRITE-BP13K800 THRU 600-EXIT                      
+                PERFORM 700-PROCESS-K200     THRU 700-EXIT                      
+             ELSE                                                               
+                IF WS-K800-STATUS = 23                                          
+                   DISPLAY 'RECORD NOT FND IN BP13K800 ' WS-K800-STATUS         
+                ELSE                                                            
+                   DISPLAY 'ERROR READ BP13K800,STATUS ' WS-K800-STATUS         
+                   MOVE WS-K800-STATUS     TO RETURN-CODE                       
+                   GO TO 999-CLOSE-FILES.                                       
+                                                                                
+           PERFORM 200-READ-BP13F800 THRU 200-EXIT.                             
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       600-REWRITE-BP13K800.                                                    
+      *-------------------------------------------------------------            
+           MOVE SPACES          TO K800-NUM-MGPS                                
+                                   K800-NUM-JT-BALLOT-REGN.                     
+                                                                                
+           IF (K800-NUM-BALLOT-STATUS = 'U') AND                                
+              (K800-NUM-NT-FT-QUEUE = SPACES OR LOW-VALUES)                     
+              MOVE SPACES             TO BP13K313-REC                           
+              MOVE '04'               TO K313-NUM-TRAN-TYPE                     
+              MOVE K800-NUM-REGN      TO K313-NUM-REGN                          
+              WRITE BP13K313-REC                                                
+              ADD 1                   TO WS-F313-WRITE                          
+              MOVE 'C'          TO K800-NUM-STATUS                              
+              MOVE 'NS'         TO K800-NUM-ALLOC-TAG                           
+                                   K800-NUM-CANCEL-REASON                       
+              MOVE WS-CUR-DATE  TO K800-DTE-CANCEL                              
+              ADD 1             TO WS-K800-CAN                                  
+           END-IF.                                                              
+                                                                                
+           REWRITE BP13K800-MASTER.                                             
+                                                                                
+            IF WS-K800-STATUS = 00                                              
+               ADD 1                   TO WS-K800-REWRITE                       
+               PERFORM 650-PROCESS-CDB THRU 650-EXIT                            
+            ELSE                                                                
+               DISPLAY 'ERROR REWRITING BP13K800 STATUS '                       
+                                               WS-K800-STATUS                   
+               MOVE WS-K800-STATUS        TO RETURN-CODE                        
+               PERFORM 999-CLOSE-FILES    THRU 999-EXIT                         
+            END-IF.                                                             
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *************************************************************             
+       650-PROCESS-CDB.                                                         
+      *************************************************************             
+           MOVE SPACES                   TO BP13K820-REC.                       
+           INITIALIZE                       BP13K820-REC.                       
+                                                                                
+           MOVE 'N'                      TO WS-K820-EOF                         
+                                            WS-K820-NTFND                       
+                                            WS-REC-PROCESS.                     
+                                                                                
+           MOVE K800-NUM-REGN            TO K820-NUM-REGN.                      
+                                                                                
+           START BP13K820 KEY >= K820-KEY-FLD.                                  
+                                                                                
+           EVALUATE WS-K820-STATUS                                              
+               WHEN 00                                                          
+                    PERFORM 660-READNEXT-BP13K820 THRU 660-EXIT                 
+                      UNTIL K820-NUM-REGN NOT = K800-NUM-REGN                   
+                         OR WS-K820-EOF = 'Y'                                   
+                         OR WS-K820-NTFND = 'Y'                                 
+               WHEN 10                                                          
+               WHEN 23                                                          
+                    ADD 1                TO WS-K820-NOTFND                      
+               WHEN OTHER                                                       
+                    DISPLAY 'BP13K820 START BROWSE ERROR : '                    
+                            WS-K820-STATUS                                      
+                    MOVE WS-K820-STATUS  TO RETURN-CODE                         
+                                                                                
+                    PERFORM 999-CLOSE-FILES    THRU 999-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       650-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *************************************************************             
+       660-READNEXT-BP13K820.                                                   
+      *************************************************************             
+           MOVE SPACES                   TO BP13K820-REC.                       
+           INITIALIZE                       BP13K820-REC.                       
+                                                                                
+           READ BP13K820 NEXT RECORD.                                           
+                                                                                
+           EVALUATE WS-K820-STATUS                                              
+               WHEN 00                                                          
+                    IF K820-NUM-REGN = K800-NUM-REGN                            
+                       ADD 1             TO WS-K820-FND                         
+                       MOVE 'Y'          TO WS-REC-PROCESS                      
+                                                                                
+                       PERFORM 670-WRITE-BP13F915 THRU 670-EXIT                 
+                    ELSE                                                        
+                       IF WS-REC-PROCESS = 'N'                                  
+                          ADD 1          TO WS-K820-NOTFND                      
+                       END-IF                                                   
+                                                                                
+                       MOVE 'Y'          TO WS-K820-NTFND                       
+                    END-IF                                                      
+               WHEN 10                                                          
+               WHEN 23                                                          
+                    ADD 1                TO WS-K820-NOTFND                      
+                    MOVE 'Y'             TO WS-K820-NTFND                       
+               WHEN OTHER                                                       
+                    DISPLAY 'BP13K820 READ NEXT ERROR : ' WS-K820-STATUS        
+                    MOVE WS-K820-STATUS  TO RETURN-CODE                         
+                                                                                
+                    PERFORM 999-CLOSE-FILES THRU 999-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       660-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *************************************************************             
+       670-WRITE-BP13F915.                                                      
+      *************************************************************             
+           IF K820-NUM-CSTMR-SOURCE NOT = SPACES AND LOW-VALUES                 
+              MOVE SPACES                   TO BP13F915-REC                     
+              INITIALIZE                       BP13F915-REC                     
+                                                                                
+              MOVE  'TE'                    TO F915-TXN-TYPE                    
+              MOVE  'P'                     TO F915-CSTMR-TYPE                  
+              MOVE  'BP13'                  TO F915-NUM-UPDATE-SOURCE           
+              MOVE  'BP13CF59'              TO F915-NUM-UPDATE-USERID           
+              MOVE  K820-NUM-CSTMR-SOURCE   TO F915-NUM-CSTMR-SOURCE            
+                                                                                
+              IF K820-NUM-NRIC = K800-NUM-NRIC1                                 
+                 MOVE '011'                 TO F915-NUM-ROLE                    
+              ELSE                                                              
+                 IF (K820-NUM-NRIC = K800-NUM-NRIC2) OR                         
+                    (K820-NUM-NRIC = K800-NUM-NRIC3) OR                         
+                    (K820-NUM-NRIC = K800-NUM-NRIC4)                            
+                     MOVE '012'             TO F915-NUM-ROLE                    
+                 ELSE                                                           
+                     MOVE '013'             TO F915-NUM-ROLE                    
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              MOVE  K820-NUM-REGN           TO F915-NUM-BSNS-REF                
+                                                                                
+              STRING K800-DTE-CANCEL(1:4) '-'                                   
+                     K800-DTE-CANCEL(5:2) '-'                                   
+                     K800-DTE-CANCEL(7:2)                                       
+                     DELIMITED BY SIZE                                          
+                INTO F915-DTE-ROLE-END                                          
+                                                                                
+              STRING WS-CUR-DATE(1:4) '-'                                       
+                     WS-CUR-DATE(5:2) '-'                                       
+                     WS-CUR-DATE(7:2)                                           
+                     DELIMITED BY SIZE                                          
+                INTO F915-DTE-UPDATE-SOURCE                                     
+                                                                                
+              WRITE BP13F915-REC                                                
+                                                                                
+              ADD 1                         TO WS-F915-WRITE                    
+                                                                                
+           END-IF.                                                              
+                                                                                
+       670-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+       700-PROCESS-K200.                                                        
+      *-------------------------------------------------------------            
+             MOVE F800-NUM-REGN TO K200-NUM-REGN.                               
+             READ BP13K200 KEY IS K200-NUM-REGN.                                
+                                                                                
+             IF WS-K200-STATUS = 00                                             
+                ADD 1 TO  WS-K200-READ                                          
+                PERFORM 800-REWRITE-BP13K200 THRU 800-EXIT                      
+             ELSE                                                               
+                IF WS-K200-STATUS = 23                                          
+                   CONTINUE                                                     
+                ELSE                                                            
+                   DISPLAY 'ERROR READ BP13K200,STATUS ' WS-K200-STATUS         
+                   MOVE WS-K200-STATUS     TO RETURN-CODE                       
+                   GO TO 999-CLOSE-FILES.                                       
+                                                                                
+                                                                                
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       800-REWRITE-BP13K200.                                                    
+      *-------------------------------------------------------------            
+           MOVE SPACES          TO K200-NUM-MGPS-TAG                            
+                                   K200-NUM-JB-PARENT-REGN.                     
+                                                                                
+           REWRITE BP13K200-REC.                                                
+                                                                                
+            IF WS-K200-STATUS = 00                                              
+               ADD 1                   TO WS-K200-REWRITE                       
+            ELSE                                                                
+               DISPLAY 'ERROR REWRITING BP13K200 STATUS '                       
+                                               WS-K200-STATUS                   
+               MOVE WS-K200-STATUS        TO RETURN-CODE                        
+               PERFORM 999-CLOSE-FILES    THRU 999-EXIT                         
+            END-IF.                                                             
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       999-CLOSE-FILES.                                                         
+      *-------------------------------------------------------------            
+           DISPLAY '* ------------ BP13CF59 ------------- * '.                  
+           DISPLAY 'NO OF REC READ    BP13F800 = ' WS-F800-READ.                
+           DISPLAY 'NO OF REC READ    BP13K800 = ' WS-K800-READ.                
+           DISPLAY 'NO OF REC READ    BP13K200 = ' WS-K200-READ.                
+           DISPLAY 'NO OF REC CANCEL  BP13K800 = ' WS-K800-CAN.                 
+           DISPLAY 'NO OF REC REWRITE BP13K800 = ' WS-K800-REWRITE.             
+           DISPLAY 'NO OF REC REWRITE BP13K200 = ' WS-K200-REWRITE.             
+           DISPLAY 'NO OF REC WRITTEN BP13F313 = ' WS-F313-WRITE.               
+           DISPLAY 'NO OF REC WRITTEN BP13F915 = ' WS-F915-WRITE.               
+                                                                                
+           CLOSE BP13F800                                                       
+                 BP13K800                                                       
+                 BP13K820                                                       
+                 BP13K200                                                       
+                 BP13F915                                                       
+                 BP13F313.                                                      
+                                                                                
+           IF WS-K200-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR CLOSING BP13K200, STATUS ' WS-K200-STATUS          
+              MOVE WS-K200-STATUS        TO RETURN-CODE.                        
+                                                                                
+           IF WS-K800-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR CLOSING BP13K800, STATUS ' WS-K800-STATUS          
+              MOVE WS-K800-STATUS        TO RETURN-CODE.                        
+                                                                                
+           IF WS-K820-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR CLOSING BP13K820, STATUS ' WS-K820-STATUS          
+              MOVE WS-K820-STATUS        TO RETURN-CODE.                        
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       999-EXIT.                                                                
+           EXIT.                                                                
+

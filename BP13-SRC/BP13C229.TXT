@@ -1,0 +1,668 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C229.                                                 
+      *AUTHOR.        ELAINE S. ARGA.                                           
+      *DATE-WRITTEN.  23/11/2009.                                               
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (BP13)                                *            
+      * ========================================================== *            
+      * OBJECTIVE   :  PROGRAM TO OUTPUT DATA ITEMS TO NEW FILE    *            
+      *                BP13F206. THIS FILE IS TO BE DOWNLOADED     *            
+      *                TO EQMS FOR SCHEDULED APPOINTMENT FOR SALES *            
+      *                APPLICATIONS.                               *            
+      *                                                            *            
+      *  INPUT FILES :  1)  BP13K800  -  SOC APPLICATION MASTER    *            
+      *                     ONLY CASES WHERE STATUS NOT = 'C' AND  *            
+      *                     REGN NOS. NOT > '9000000000'           *            
+      *                 2)  BP13K820  -  SOC OCCUPIER FILE         *            
+      *                                                            *            
+      *  OUTPUT FILE :  1)  BP13F206  -  NEW FILE FOR EQMS DOWNLOAD*            
+      *                                                            *            
+      * ---------------------------------------------------------- *            
+      * CHGE NO  OIC   DATE     DESCRIPTION                        *            
+      * -------- ----  ------   -----------                        *            
+      * BP133724 ESA1 20091123  NEW PROGRAM(MODELLED FROM BP13C221)*            
+      * BP133924 ESA1 20100525  TO CATER FOR NEW APPMT TYPE 'LA'   *            
+      * BP133780 ESD1 20110224  TO CATER FOR SUBTRANSFER APPMT.    *            
+      * BP134516 ESA1 20120507  TO CATER FOR MGPS                  *            
+      * BP134681 ESA1 20121002  TO CATER FOR 3-BYTES ZONE          *            
+      * BP135068 ESA1 20131016  TO CATER FOR INVALID DATE APPMTS   *            
+      * BP136051 ESA1 20151021  TO CATER FOR NEW APPMT TYPE 'SL'   *            
+      * BP136657 RJB1 20170330  ADD CONDITION ON DTE APPT CHECKING *            
+      * BP137850 DN8  20190807  TO CATER CHECK FOR SATP & OBF CASES*            
+      *                         TO CATER CHECK FOR SOCA & OBF CASES*            
+      * ========================================================== *            
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F800  ASSIGN        TO  BP13F800.                         
+                                                                                
+           SELECT SY02F001  ASSIGN        TO  SY02F001.                         
+                                                                                
+           SELECT BP13F206  ASSIGN        TO  BP13F206                          
+                            FILE STATUS IS F206-STATUS.                         
+                                                                                
+           SELECT BP13F290  ASSIGN        TO  BP13F290                          
+                            FILE STATUS IS F290-STATUS.                         
+                                                                                
+           SELECT BP13K820  ASSIGN        TO  BP13K820                          
+                            ORGANIZATION  IS  INDEXED                           
+                            ACCESS MODE   IS  RANDOM                            
+                            RECORD KEY    IS  K820-KEY-FLD                      
+                            FILE STATUS   IS  K820-STATUS.                      
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD   BP13F800                                                            
+            BLOCK  CONTAINS 0   RECORDS                                         
+            LABEL  RECORDS  ARE STANDARD                                        
+            RECORDING MODE  IS  F                                               
+            RECORD CONTAINS 2000  CHARACTERS.                                   
+       COPY BP13F800.                                                           
+                                                                                
+       COPY SY02F001.                                                           
+                                                                                
+       FD   BP13F206                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 400 CHARACTERS                                      
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13F206.                                                           
+                                                                                
+       FD  BP13F290                                                             
+           BLOCK  CONTAINS 0 RECORDS                                            
+           RECORD CONTAINS 100 CHARACTERS                                       
+           LABEL RECORD IS STANDARD                                             
+           RECORDING MODE IS F.                                                 
+       COPY BP13F290.                                                           
+                                                                                
+       FD   BP13K820                                                            
+            RECORD CONTAINS 400 CHARACTERS.                                     
+       COPY BP13K820.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-INDICATORS.                                                       
+           05  WS-EOF-F800                PIC X       VALUE 'N'.                
+           05  WS-EOF-F001                PIC X       VALUE 'N'.                
+           05  K820-STATUS                PIC 9(2)    VALUE  00.                
+           05  F206-STATUS                PIC 9(2)    VALUE  00.                
+           05  F290-STATUS                PIC 9(2)    VALUE  00.                
+                                                                                
+       01  WS-COUNTERS-POINTERS.                                                
+           05  WS-READ-CNT-F800           PIC 9(7)    VALUE ZEROS.              
+           05  WS-WRITE-F206              PIC 9(6)    VALUE ZEROS.              
+           05  WS-SKIP-F206               PIC 9(6)    VALUE ZEROS.              
+           05  WS-WRITE-F290              PIC 9(6)    VALUE ZEROS.              
+           05  WS-MISSING-F820            PIC 9(7)    VALUE ZEROS.              
+           05  WS-INTEGER-DTE-SO-APPT     PIC S9(9)   VALUE ZEROS.              
+           05  WS-INTEGER-DTE-2ND-CONLOAN PIC S9(9)   VALUE ZEROS.              
+           05  WS-INTEGER-DTE-SUBTRANSFER PIC S9(9)   VALUE ZEROS.              
+           05  WS-INTEGER-DTE-AO-APPT     PIC S9(9)   VALUE ZEROS.              
+           05  WS-INTEGER-DTE-BK-APPT     PIC S9(9)   VALUE ZEROS.              
+           05  WS-INTEGER-DTE-SL-APPT     PIC S9(9)   VALUE ZEROS.              
+           05  WS-INTEGER-CUR-DATE1       PIC S9(9)   VALUE ZEROS.              
+           05  WS-INTEGER-CUR-DATE4       PIC S9(9)   VALUE ZEROS.              
+           05  WS-DATE-CHECK              PIC X(8)    VALUE SPACES.             
+           05  WS-INVALID                 PIC X       VALUE 'N'.                
+           05  WS-F800-DTE-SO-APPT        PIC X(8).                             
+           05  WS-F800-DTE-SO-APPT-9 REDEFINES WS-F800-DTE-SO-APPT              
+                                          PIC 9(8).                             
+           05  WS-F800-DTE-2ND-CONLOAN    PIC X(8).                             
+           05  WS-F800-DTE-2ND-CONLOAN-9 REDEFINES                              
+               WS-F800-DTE-2ND-CONLOAN    PIC 9(8).                             
+           05  WS-F800-DTE-SUBTRANSFER    PIC X(8).                             
+           05  WS-F800-DTE-SUBTRANSFER-9 REDEFINES                              
+               WS-F800-DTE-SUBTRANSFER    PIC 9(8).                             
+           05  WS-F800-DTE-AO-APPT        PIC X(8).                             
+           05  WS-F800-DTE-AO-APPT-9 REDEFINES WS-F800-DTE-AO-APPT              
+                                          PIC 9(8).                             
+           05  WS-F800-DTE-BK-APPT        PIC X(8).                             
+           05  WS-F800-DTE-BK-APPT-9 REDEFINES WS-F800-DTE-BK-APPT              
+                                          PIC 9(8).                             
+           05  WS-F800-DTE-SL-APPT        PIC X(8).                             
+           05  WS-F800-DTE-SL-APPT-9 REDEFINES WS-F800-DTE-SL-APPT              
+                                          PIC 9(8).                             
+                                                                                
+       01  WS-DATE                        PIC X(8).                             
+       01  WS-DATE9 REDEFINES WS-DATE     PIC 9(8).                             
+       01  WS-NAME-OCC                    PIC X(66)   VALUE SPACES.             
+                                                                                
+       01  LINK-VARIABLES.                                                      
+           05 WS-LINK-REC.                                                      
+              10 WS-IN-OPTION          PIC X(02).                               
+              10 WS-IN-GEN.                                                     
+                 15 WS-IN-DATE         PIC X(08).                               
+              10 WS-RET-GEN.                                                    
+                 15 WS-RETURN          PIC X(03).                               
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       000-MAIN-ROUTINE.                                                        
+      *-------------------------------------------------------------            
+           PERFORM  100-OPEN-FILES        THRU   100-EXIT.                      
+           PERFORM  150-READ-SY02F001     THRU   150-EXIT                       
+           PERFORM  200-READ-BP13F800     THRU   200-EXIT.                      
+           PERFORM  300-PROCESS-F800      THRU   300-EXIT                       
+                        UNTIL WS-EOF-F800 = 'Y'.                                
+           PERFORM  9999-CLOSE-ROUTINE    THRU   9999-EXIT.                     
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       100-OPEN-FILES.                                                          
+      *-------------------------------------------------------------            
+           OPEN INPUT  BP13F800                                                 
+                       SY02F001                                                 
+                       BP13K820                                                 
+                OUTPUT BP13F206                                                 
+                       BP13F290.                                                
+                                                                                
+           IF K820-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'BP13K820 - OPEN ERROR, K820-STATUS ' K820-STATUS         
+              MOVE     K820-STATUS      TO       RETURN-CODE                    
+              PERFORM  9999-CLOSE-ROUTINE.                                      
+                                                                                
+           MOVE ZEROS                       TO WS-COUNTERS-POINTERS.            
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       150-READ-SY02F001.                                                       
+      *-------------------------------------------------------------            
+           READ SY02F001                                                        
+                AT END MOVE 'Y'         TO     WS-EOF-F001                      
+                       GO TO 150-EXIT.                                          
+                                                                                
+           MOVE F001-DTE-CURRENT TO WS-DATE.                                    
+                                                                                
+           COMPUTE WS-INTEGER-CUR-DATE1 =                                       
+              FUNCTION INTEGER-OF-DATE(WS-DATE9) + 1                            
+           COMPUTE WS-INTEGER-CUR-DATE4 =                                       
+              FUNCTION INTEGER-OF-DATE(WS-DATE9) + 3.                           
+                                                                                
+       150-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       200-READ-BP13F800.                                                       
+      *-------------------------------------------------------------            
+           READ BP13F800                                                        
+                AT END MOVE 'Y'         TO     WS-EOF-F800                      
+                       GO TO 200-EXIT.                                          
+                                                                                
+           ADD     1                    TO     WS-READ-CNT-F800.                
+                                                                                
+           IF F800-DTE-SO-APPT NOT = SPACES AND LOW-VALUES AND                  
+                                     ZEROES AND                                 
+             (F800-DTE-SO-APPT >= F800-DTE-2ND-CONC-LOAN-APPT) AND              
+             (F800-DTE-SO-APPT >= F800-DTE-SUB-TRANSFER-APPT)  AND              
+             (F800-DTE-SO-APPT >= F800-DTE-SL-APPT)            AND              
+             (F800-DTE-SO-APPT >= F800-DTE-AO-APPT)                             
+              MOVE 'N'                  TO  WS-INVALID                          
+              MOVE F800-DTE-SO-APPT     TO  WS-DATE-CHECK                       
+              PERFORM 500-VALIDATE-DATE     THRU  500-EXIT                      
+              IF WS-INVALID = 'Y'                                               
+                 DISPLAY 'REGN: ' F800-NUM-REGN                                 
+                         '  SO-APPT: ' F800-DTE-SO-APPT                         
+                 MOVE ZEROES  TO F800-DTE-SO-APPT                               
+              END-IF                                                            
+           ELSE                                                                 
+              IF F800-DTE-2ND-CONC-LOAN-APPT NOT = SPACES AND LOW-VALUES        
+                                                   AND ZEROES AND               
+                (F800-DTE-2ND-CONC-LOAN-APPT >=                                 
+                                      F800-DTE-SUB-TRANSFER-APPT) AND           
+                (F800-DTE-2ND-CONC-LOAN-APPT >= F800-DTE-SL-APPT) AND           
+                (F800-DTE-2ND-CONC-LOAN-APPT >= F800-DTE-AO-APPT)               
+                 MOVE 'N'                  TO  WS-INVALID                       
+                 MOVE F800-DTE-2ND-CONC-LOAN-APPT TO WS-DATE-CHECK              
+                 PERFORM 500-VALIDATE-DATE     THRU  500-EXIT                   
+                 IF WS-INVALID = 'Y'                                            
+                    DISPLAY 'REGN: ' F800-NUM-REGN                              
+                            '  2ND-CONC-LOAN: '                                 
+                            F800-DTE-2ND-CONC-LOAN-APPT                         
+                    MOVE ZEROES  TO F800-DTE-2ND-CONC-LOAN-APPT                 
+                 END-IF                                                         
+              ELSE                                                              
+                 IF F800-DTE-SUB-TRANSFER-APPT NOT = SPACES AND                 
+                                           LOW-VALUES AND ZEROES AND            
+                   (F800-DTE-SUB-TRANSFER-APPT >= F800-DTE-SL-APPT) AND         
+                   (F800-DTE-SUB-TRANSFER-APPT >= F800-DTE-AO-APPT)             
+                    MOVE 'N'                  TO  WS-INVALID                    
+                    MOVE F800-DTE-SUB-TRANSFER-APPT  TO WS-DATE-CHECK           
+                    PERFORM 500-VALIDATE-DATE     THRU  500-EXIT                
+                    IF WS-INVALID = 'Y'                                         
+                       DISPLAY 'REGN: ' F800-NUM-REGN                           
+                               ' SUB-TRANSFER-APPT: '                           
+                               F800-DTE-SUB-TRANSFER-APPT                       
+                       MOVE ZEROES  TO F800-DTE-SUB-TRANSFER-APPT               
+                    END-IF                                                      
+                 ELSE                                                           
+                    IF F800-DTE-SL-APPT NOT = SPACES AND LOW-VALUES AND         
+                                              ZEROES AND                        
+                      (F800-DTE-SL-APPT >= F800-DTE-AO-APPT)                    
+                       MOVE 'N'                  TO  WS-INVALID                 
+                       MOVE F800-DTE-SL-APPT     TO  WS-DATE-CHECK              
+                       PERFORM 500-VALIDATE-DATE     THRU  500-EXIT             
+                       IF WS-INVALID = 'Y'                                      
+                          DISPLAY 'REGN: ' F800-NUM-REGN                        
+                                  '  SL-APPT: ' F800-DTE-SL-APPT                
+                          MOVE ZEROES   TO F800-DTE-SL-APPT                     
+                       END-IF                                                   
+                    ELSE                                                        
+                       IF F800-DTE-AO-APPT NOT = SPACES AND LOW-VALUES          
+                                                 AND ZEROES                     
+                          MOVE 'N'                  TO  WS-INVALID              
+                          MOVE F800-DTE-AO-APPT     TO  WS-DATE-CHECK           
+                          PERFORM 500-VALIDATE-DATE     THRU  500-EXIT          
+                          IF WS-INVALID = 'Y'                                   
+                             DISPLAY 'REGN: ' F800-NUM-REGN                     
+                                     '  AO-APPT: ' F800-DTE-AO-APPT             
+                             MOVE ZEROES   TO F800-DTE-AO-APPT                  
+                          END-IF                                                
+                       ELSE                                                     
+                          IF F800-DTE-BK-APPT-MGPS NOT = SPACES AND             
+                                                LOW-VALUES AND ZEROES           
+                             MOVE 'N'                   TO  WS-INVALID          
+                             MOVE F800-DTE-BK-APPT-MGPS TO WS-DATE-CHECK        
+                             PERFORM 500-VALIDATE-DATE   THRU  500-EXIT         
+                             IF WS-INVALID = 'Y'                                
+                                DISPLAY 'REGN: ' F800-NUM-REGN                  
+                                        '  BK-APPT-MGPS: '                      
+                                        F800-DTE-BK-APPT-MGPS                   
+                                MOVE ZEROES   TO F800-DTE-BK-APPT-MGPS          
+                             END-IF                                             
+                          ELSE                                                  
+                             IF F800-DTE-BK-APPT NOT = SPACES AND               
+                                             LOW-VALUES AND ZEROES              
+                                MOVE 'N'               TO WS-INVALID            
+                                MOVE F800-DTE-BK-APPT  TO WS-DATE-CHECK         
+                                PERFORM 500-VALIDATE-DATE  THRU 500-EXIT        
+                                IF WS-INVALID = 'Y'                             
+                                   DISPLAY 'REGN: ' F800-NUM-REGN               
+                                           '  BK-APPT: '                        
+                                           F800-DTE-BK-APPT                     
+                                   MOVE ZEROES   TO F800-DTE-BK-APPT            
+                                END-IF                                          
+                             END-IF                                             
+                          END-IF                                                
+                       END-IF                                                   
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       300-PROCESS-F800.                                                        
+      *-------------------------------------------------------------            
+           MOVE SPACES TO BP13F206-REC.                                         
+           INITIALIZE BP13F206-REC.                                             
+           MOVE F800-NUM-REGN        TO  F206-NUM-REGN.                         
+           IF F800-NUM-ZONE = LOW-VALUES                                        
+              MOVE SPACES TO F800-NUM-ZONE                                      
+           END-IF.                                                              
+           MOVE SPACES               TO  F206-NUM-ZONE.                         
+           MOVE F800-NUM-NEW-TOWN    TO  F206-NUM-NEW-TOWN.                     
+           MOVE F800-NUM-FLAT-TYPE   TO  F206-NUM-FLAT-TYPE.                    
+           MOVE F800-DTE-BALLOT      TO  F206-DTE-BALLOT.                       
+           MOVE F800-NUM-NRIC1       TO  F206-NUM-NRIC1.                        
+           MOVE F800-NUM-NRIC2       TO  F206-NUM-NRIC2.                        
+           MOVE F800-NUM-NRIC3       TO  F206-NUM-NRIC3.                        
+           MOVE F800-NUM-NRIC4       TO  F206-NUM-NRIC4.                        
+           MOVE F800-NUM-ALLO-CAT    TO  F206-NUM-SELECT-TYPE.                  
+           IF F800-DTE-SO-APPT NOT = SPACES AND LOW-VALUES AND ZEROES           
+                                     AND                                        
+             (F800-DTE-SO-APPT >= F800-DTE-2ND-CONC-LOAN-APPT)  AND             
+             (F800-DTE-SO-APPT >= F800-DTE-SUB-TRANSFER-APPT)   AND             
+             (F800-DTE-SO-APPT >= F800-DTE-SL-APPT)             AND             
+             (F800-DTE-SO-APPT >= F800-DTE-AO-APPT)                             
+              MOVE F800-DTE-SO-APPT  TO  WS-F800-DTE-SO-APPT                    
+              COMPUTE WS-INTEGER-DTE-SO-APPT =                                  
+                 FUNCTION INTEGER-OF-DATE(WS-F800-DTE-SO-APPT-9)                
+              IF WS-INTEGER-DTE-SO-APPT >= WS-INTEGER-CUR-DATE1 AND             
+                 WS-INTEGER-DTE-SO-APPT <= WS-INTEGER-CUR-DATE4                 
+                 IF F800-DTE-AO-APPT = SPACES OR LOW-VALUES OR ZEROES           
+                    MOVE 'SATP'  TO  F206-NUM-APPMT-TYPE                        
+                    MOVE F800-DTE-SO-APPT TO F206-DTE-APPMT                     
+                    MOVE F800-TME-SO-APPT TO F206-TME-APPMT                     
+                    PERFORM 400-WRITE-F290 THRU 400-EXIT                        
+                    PERFORM 310-WRITE-F206 THRU 310-EXIT                        
+                 ELSE                                                           
+                    MOVE 'TP  '  TO  F206-NUM-APPMT-TYPE                        
+                    MOVE F800-DTE-SO-APPT TO F206-DTE-APPMT                     
+                    MOVE F800-TME-SO-APPT TO F206-TME-APPMT                     
+                    PERFORM 400-WRITE-F290 THRU 400-EXIT                        
+                    PERFORM 310-WRITE-F206 THRU 310-EXIT                        
+                 END-IF                                                         
+              END-IF                                                            
+           ELSE                                                                 
+              IF F800-DTE-2ND-CONC-LOAN-APPT NOT = SPACES AND LOW-VALUES        
+                                                   AND ZEROES AND               
+                (F800-DTE-2ND-CONC-LOAN-APPT >=                                 
+                                  F800-DTE-SUB-TRANSFER-APPT)     AND           
+                (F800-DTE-2ND-CONC-LOAN-APPT >= F800-DTE-SL-APPT) AND           
+                (F800-DTE-2ND-CONC-LOAN-APPT >= F800-DTE-AO-APPT)               
+                 MOVE F800-DTE-2ND-CONC-LOAN-APPT                               
+                                       TO WS-F800-DTE-2ND-CONLOAN               
+                 COMPUTE WS-INTEGER-DTE-2ND-CONLOAN =                           
+                   FUNCTION INTEGER-OF-DATE(WS-F800-DTE-2ND-CONLOAN-9)          
+                 IF WS-INTEGER-DTE-2ND-CONLOAN >= WS-INTEGER-CUR-DATE1          
+                    AND                                                         
+                    WS-INTEGER-DTE-2ND-CONLOAN <= WS-INTEGER-CUR-DATE4          
+                    MOVE 'LA  '           TO F206-NUM-APPMT-TYPE                
+                    MOVE F800-DTE-2ND-CONC-LOAN-APPT TO F206-DTE-APPMT          
+                    MOVE F800-TME-2ND-CONC-LOAN-APPT TO F206-TME-APPMT          
+                    PERFORM 400-WRITE-F290 THRU 400-EXIT                        
+                    PERFORM 310-WRITE-F206 THRU 310-EXIT                        
+                 END-IF                                                         
+              ELSE                                                              
+                 IF F800-DTE-SUB-TRANSFER-APPT  NOT = SPACES AND                
+                                                  LOW-VALUES AND ZEROES         
+                                                AND                             
+                   (F800-DTE-SUB-TRANSFER-APPT >= F800-DTE-SL-APPT) AND         
+                   (F800-DTE-SUB-TRANSFER-APPT >= F800-DTE-AO-APPT)             
+                    MOVE F800-DTE-SUB-TRANSFER-APPT                             
+                                             TO WS-F800-DTE-SUBTRANSFER         
+                    COMPUTE WS-INTEGER-DTE-SUBTRANSFER =                        
+                    FUNCTION INTEGER-OF-DATE(WS-F800-DTE-SUBTRANSFER-9)         
+                    IF WS-INTEGER-DTE-SUBTRANSFER >=                            
+                       WS-INTEGER-CUR-DATE1 AND                                 
+                       WS-INTEGER-DTE-SUBTRANSFER <=                            
+                       WS-INTEGER-CUR-DATE4                                     
+                       MOVE 'SOCT'           TO F206-NUM-APPMT-TYPE             
+                       MOVE F800-DTE-SUB-TRANSFER-APPT TO                       
+                                                      F206-DTE-APPMT            
+                       MOVE F800-TME-SUB-TRANSFER-APPT TO                       
+                                                      F206-TME-APPMT            
+                       PERFORM 400-WRITE-F290 THRU 400-EXIT                     
+                       PERFORM 310-WRITE-F206 THRU 310-EXIT                     
+                    END-IF                                                      
+                 ELSE                                                           
+                    IF F800-DTE-SL-APPT NOT = SPACES AND LOW-VALUES             
+                                              AND ZEROES AND                    
+                      (F800-DTE-SL-APPT >= F800-DTE-AO-APPT)                    
+                       MOVE F800-DTE-SL-APPT TO WS-F800-DTE-SL-APPT             
+                       COMPUTE WS-INTEGER-DTE-SL-APPT =                         
+                       FUNCTION INTEGER-OF-DATE                                 
+                                (WS-F800-DTE-SL-APPT-9)                         
+                       IF WS-INTEGER-DTE-SL-APPT >=                             
+                          WS-INTEGER-CUR-DATE1  AND                             
+                          WS-INTEGER-DTE-SL-APPT <=                             
+                          WS-INTEGER-CUR-DATE4                                  
+                          MOVE 'SL  '  TO  F206-NUM-APPMT-TYPE                  
+                          MOVE F800-DTE-SL-APPT TO F206-DTE-APPMT               
+                          MOVE F800-TME-SL-APPT TO F206-TME-APPMT               
+                          MOVE F800-NUM-NT-FT-QUEUE(2:4)                        
+                                             TO F206-NUM-QUEUE                  
+                          MOVE F800-NUM-NT-FT-QUEUE(1:1)                        
+                                           TO F206-NUM-QUEUE-PREFIX             
+                          MOVE F800-DTE-RESELECTION TO                          
+                                              F206-DTE-RESELECT                 
+                          PERFORM 400-WRITE-F290   THRU 400-EXIT                
+                          PERFORM 310-WRITE-F206   THRU 310-EXIT                
+                       END-IF                                                   
+                    ELSE                                                        
+                       IF F800-DTE-AO-APPT NOT = SPACES AND LOW-VALUES          
+                                                 AND ZEROES                     
+                          MOVE F800-DTE-AO-APPT TO  WS-F800-DTE-AO-APPT         
+                          COMPUTE WS-INTEGER-DTE-AO-APPT = FUNCTION             
+                                 INTEGER-OF-DATE(WS-F800-DTE-AO-APPT-9)         
+                          IF WS-INTEGER-DTE-AO-APPT >=                          
+                             WS-INTEGER-CUR-DATE1 AND                           
+                             WS-INTEGER-DTE-AO-APPT <=                          
+                             WS-INTEGER-CUR-DATE4                               
+                             IF F800-NUM-ALLO-CAT = 'DBS'                       
+                                MOVE 'DSNP'  TO  F206-NUM-APPMT-TYPE            
+                             ELSE                                               
+                                IF ((F800-NUM-FLAT-TYPE NOT = '1A' OR           
+                                    '2A') AND F800-NUM-LOAN-TAG = 'N')          
+                                   MOVE 'SOCN'  TO  F206-NUM-APPMT-TYPE         
+                                ELSE                                            
+                                   MOVE 'SOCA'  TO  F206-NUM-APPMT-TYPE         
+                                END-IF                                          
+                             END-IF                                             
+                             MOVE F800-DTE-AO-APPT TO F206-DTE-APPMT            
+                             MOVE F800-TME-AO-APPT TO F206-TME-APPMT            
+                             PERFORM 400-WRITE-F290 THRU 400-EXIT               
+                             PERFORM 310-WRITE-F206 THRU 310-EXIT               
+                          END-IF                                                
+                       ELSE                                                     
+                          IF F800-DTE-BK-APPT-MGPS NOT = SPACES AND             
+                                              LOW-VALUES AND ZEROES             
+                             MOVE F800-DTE-BK-APPT-MGPS                         
+                                        TO WS-F800-DTE-BK-APPT                  
+                             COMPUTE WS-INTEGER-DTE-BK-APPT =                   
+                             FUNCTION INTEGER-OF-DATE                           
+                                     (WS-F800-DTE-BK-APPT-9)                    
+                             IF WS-INTEGER-DTE-BK-APPT >=                       
+                                WS-INTEGER-CUR-DATE1  AND                       
+                                WS-INTEGER-DTE-BK-APPT <=                       
+                                WS-INTEGER-CUR-DATE4                            
+                                MOVE 'BK  '  TO  F206-NUM-APPMT-TYPE            
+                                MOVE F800-DTE-BK-APPT-MGPS                      
+                                             TO F206-DTE-APPMT                  
+                                MOVE F800-TME-BK-APPT-MGPS                      
+                                             TO F206-TME-APPMT                  
+                                MOVE F800-NUM-QUEUE-MGPS(2:4)                   
+                                             TO F206-NUM-QUEUE                  
+                                MOVE F800-NUM-QUEUE-MGPS(1:1)                   
+                                             TO F206-NUM-QUEUE-PREFIX           
+                                MOVE F800-DTE-RESELECTION TO                    
+                                                F206-DTE-RESELECT               
+                                IF F800-NUM-ZONE NOT = SPACES                   
+                                   MOVE SPACES TO F206-NUM-NEW-TOWN             
+                                END-IF                                          
+                                PERFORM 400-WRITE-F290   THRU 400-EXIT          
+                                PERFORM 310-WRITE-F206   THRU 310-EXIT          
+                             END-IF                                             
+                          END-IF                                                
+                          IF F800-DTE-BK-APPT NOT = SPACES AND                  
+                                                  LOW-VALUES AND ZEROES         
+                             MOVE F800-DTE-BK-APPT TO                           
+                                  WS-F800-DTE-BK-APPT                           
+                             COMPUTE WS-INTEGER-DTE-BK-APPT =                   
+                             FUNCTION INTEGER-OF-DATE                           
+                                      (WS-F800-DTE-BK-APPT-9)                   
+                             IF WS-INTEGER-DTE-BK-APPT >=                       
+                                WS-INTEGER-CUR-DATE1  AND                       
+                                WS-INTEGER-DTE-BK-APPT <=                       
+                                WS-INTEGER-CUR-DATE4                            
+                                MOVE 'BK  '  TO  F206-NUM-APPMT-TYPE            
+                                MOVE F800-DTE-BK-APPT TO F206-DTE-APPMT         
+                                MOVE F800-TME-BK-APPT TO F206-TME-APPMT         
+                                MOVE F800-NUM-NT-FT-QUEUE(2:4)                  
+                                                      TO F206-NUM-QUEUE         
+                                MOVE F800-NUM-NT-FT-QUEUE(1:1)                  
+                                               TO F206-NUM-QUEUE-PREFIX         
+                                MOVE F800-DTE-RESELECTION TO                    
+                                                  F206-DTE-RESELECT             
+                                IF F800-NUM-ZONE NOT = SPACES                   
+                                   MOVE SPACES TO F206-NUM-NEW-TOWN             
+                                END-IF                                          
+                                PERFORM 400-WRITE-F290   THRU 400-EXIT          
+                                PERFORM 310-WRITE-F206   THRU 310-EXIT          
+                             END-IF                                             
+                          END-IF                                                
+                      END-IF                                                    
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+           PERFORM  200-READ-BP13F800     THRU   200-EXIT.                      
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       310-WRITE-F206.                                                          
+           IF F206-NUM-SELECT-TYPE = 'OBF'                                      
+              IF F206-NUM-APPMT-TYPE  = 'BK  '                                  
+                 ADD 1  TO WS-SKIP-F206                                         
+              ELSE                                                              
+                MOVE F800-NUM-MGPS          TO F206-NUM-MGPS                    
+                PERFORM 320-GET-OCCP-NAMES  THRU 320-EXIT                       
+                WRITE BP13F206-REC                                              
+                IF F206-STATUS NOT = ZEROES                                     
+                 DISPLAY 'BP13F206 - WRITE ERROR, CHECK SPACE ALLCTN: '         
+                       F206-STATUS                                              
+                 PERFORM  9999-CLOSE-ROUTINE                                    
+                ELSE                                                            
+                 ADD 1  TO WS-WRITE-F206                                        
+                END-IF                                                          
+              END-IF                                                            
+           ELSE                                                                 
+              MOVE F800-NUM-MGPS          TO F206-NUM-MGPS                      
+              PERFORM 320-GET-OCCP-NAMES  THRU 320-EXIT                         
+              WRITE BP13F206-REC                                                
+              IF F206-STATUS NOT = ZEROES                                       
+                 DISPLAY 'BP13F206 - WRITE ERROR, CHECK SPACE ALLCTN: '         
+                       F206-STATUS                                              
+                 PERFORM  9999-CLOSE-ROUTINE                                    
+              ELSE                                                              
+                 ADD 1  TO WS-WRITE-F206                                        
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       310-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       320-GET-OCCP-NAMES.                                                      
+           IF F800-NUM-NRIC1 NOT = SPACES AND LOW-VALUES                        
+              MOVE F800-NUM-REGN  TO K820-NUM-REGN                              
+              MOVE F800-NUM-NRIC1 TO K820-NUM-NRIC                              
+              PERFORM 350-READ-K820  THRU 350-EXIT                              
+              MOVE WS-NAME-OCC          TO  F206-NME-NRIC1                      
+              MOVE K820-NUM-HP-PGR      TO  F206-NUM-HANDPHONE                  
+           END-IF                                                               
+           IF F800-NUM-NRIC2 NOT = SPACES AND LOW-VALUES                        
+              MOVE F800-NUM-REGN  TO K820-NUM-REGN                              
+              MOVE F800-NUM-NRIC2 TO K820-NUM-NRIC                              
+              PERFORM 350-READ-K820  THRU 350-EXIT                              
+              MOVE WS-NAME-OCC          TO  F206-NME-NRIC2                      
+           END-IF                                                               
+           IF F800-NUM-NRIC3 NOT = SPACES AND LOW-VALUES                        
+              MOVE F800-NUM-REGN  TO K820-NUM-REGN                              
+              MOVE F800-NUM-NRIC3 TO K820-NUM-NRIC                              
+              PERFORM 350-READ-K820  THRU 350-EXIT                              
+              MOVE WS-NAME-OCC          TO  F206-NME-NRIC3                      
+           END-IF                                                               
+           IF F800-NUM-NRIC4 NOT = SPACES AND LOW-VALUES                        
+              MOVE F800-NUM-REGN  TO K820-NUM-REGN                              
+              MOVE F800-NUM-NRIC4 TO K820-NUM-NRIC                              
+              PERFORM 350-READ-K820  THRU 350-EXIT                              
+              MOVE WS-NAME-OCC          TO  F206-NME-NRIC4                      
+           END-IF.                                                              
+                                                                                
+       320-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       350-READ-K820.                                                           
+                                                                                
+           READ BP13K820.                                                       
+           EVALUATE K820-STATUS                                                 
+           WHEN 00                                                              
+                MOVE K820-NME-OCCP TO WS-NAME-OCC                               
+           WHEN 23                                                              
+                DISPLAY 'BP13K820 - RECORD NOT FOUND, KEY: '                    
+                         K820-NUM-REGN K820-NUM-NRIC                            
+                MOVE SPACES        TO WS-NAME-OCC                               
+                ADD 1 TO WS-MISSING-F820                                        
+                                                                                
+           WHEN OTHER                                                           
+                DISPLAY 'BP13K820 - ERROR READING, KEY: '                       
+                         K820-NUM-REGN K820-NUM-NRIC                            
+                MOVE SPACES        TO WS-NAME-OCC                               
+                ADD 1 TO WS-MISSING-F820                                        
+                                                                                
+           END-EVALUATE.                                                        
+                                                                                
+       350-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       400-WRITE-F290.                                                          
+           STRING F206-NUM-QUEUE-PREFIX  F206-NUM-QUEUE                         
+                  DELIMITED BY SIZE INTO  F290-NUM-QUEUE                        
+           END-STRING.                                                          
+           MOVE F290-NUM-QUEUE   TO  F290-NUM-QUEUE-ALT.                        
+           MOVE F206-NUM-REGN    TO  F290-NUM-REGN.                             
+           IF F800-NUM-ALLO-CAT = 'BTO'                                         
+              MOVE F800-NUM-BTO-ZONE TO F290-NUM-ZONE                           
+           ELSE                                                                 
+              MOVE F206-NUM-ZONE     TO F290-NUM-ZONE                           
+           END-IF.                                                              
+           MOVE F206-NUM-NEW-TOWN    TO F290-NUM-NEW-TOWN.                      
+           MOVE F206-NUM-FLAT-TYPE   TO F290-NUM-FLAT-TYPE.                     
+           MOVE F206-DTE-APPMT       TO F290-DTE-APPMT.                         
+           MOVE F206-TME-APPMT       TO F290-TME-APPMT.                         
+           MOVE F206-NUM-APPMT-TYPE  TO F290-NUM-APPMT-TYPE.                    
+           MOVE F206-NUM-SELECT-TYPE TO F290-NUM-SELECT-TYPE.                   
+           MOVE F206-DTE-BALLOT      TO F290-DTE-BALLOT.                        
+           STRING '##' F800-NUM-REGN(3:6)                                       
+                DELIMITED BY SIZE INTO F290-NUM-CSO                             
+           END-STRING.                                                          
+           MOVE SPACES               TO F290-NUM-STATUS                         
+                                        F290-NUM-USERID                         
+                                        F290-DTE-UPDATE                         
+                                        F290-TME-UPDATE                         
+                                        F290-HOLD-UNIT                          
+                                        F290-HOLD-BLOCK.                        
+           MOVE F206-NUM-MGPS        TO F290-NUM-MGPS.                          
+                                                                                
+           WRITE BP13F290-REC.                                                  
+           IF F290-STATUS NOT = ZEROES                                          
+              DISPLAY 'BP13F290 - WRITE ERROR, CHECK SPACE ALLOCATION: '        
+                       F290-STATUS                                              
+              PERFORM  9999-CLOSE-ROUTINE                                       
+           ELSE                                                                 
+              ADD 1  TO WS-WRITE-F290.                                          
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       500-VALIDATE-DATE.                                                       
+           MOVE 'CD'                     TO  WS-IN-OPTION.                      
+           MOVE WS-DATE-CHECK            TO  WS-IN-DATE.                        
+                                                                                
+           CALL 'AV02C001' USING WS-LINK-REC.                                   
+                                                                                
+           IF WS-RETURN NOT = '000'                                             
+              MOVE 'Y'                   TO  WS-INVALID                         
+           END-IF.                                                              
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       9999-CLOSE-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+           DISPLAY '  '.                                                        
+           DISPLAY '*----------- BP13C229 CONTROL LIST ----------*'.            
+           DISPLAY '  '.                                                        
+           DISPLAY 'NO OF BP13F800 READ        = ' WS-READ-CNT-F800.            
+           DISPLAY 'NO OF F206 RECORDS WRITTEN = ' WS-WRITE-F206.               
+           DISPLAY 'NO OF F206 RECORDS SKIPPED = ' WS-SKIP-F206.                
+           DISPLAY 'NO OF F290 RECORDS WRITTEN = ' WS-WRITE-F290.               
+           DISPLAY 'NO OF F820 MISSING RECORD  = ' WS-MISSING-F820.             
+                                                                                
+           CLOSE BP13F800                                                       
+                 BP13K820                                                       
+                 SY02F001                                                       
+                 BP13F206                                                       
+                 BP13F290.                                                      
+                                                                                
+           IF K820-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'BP13K820 CLOSE ERROR, K820-STATUS ' K820-STATUS          
+              MOVE     K820-STATUS      TO       RETURN-CODE.                   
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9999-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+

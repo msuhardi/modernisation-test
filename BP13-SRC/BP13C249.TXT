@@ -1,0 +1,871 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C249.                                                 
+      *AUTHOR.        JOEL E PARRENO.                                           
+      *DATE-WRITTEN.  03/05/94.                                                 
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (BP13)                                *            
+      * ========================================================== *            
+      *  THIS PROGRAM HAS THE SAME OBJECTIVE AS BP13C241. HOWEVER, *            
+      *  THIS PROGRAM DOES NOT UPDATE ANY FILES.                   *            
+      *                                                            *            
+      *  OBJECTIVE   :  SCHEDULE BOOKING APPOINTMENT FOR THE       *            
+      *                 SELECTED NT/FT BASED ON THE APPOINTMENT    *            
+      *                 WORK PLAN UPDATED BY USER.                 *            
+      *                                                            *            
+      *  INPUT FILE  :  1.  BP13F200 - BOOKING APPMT FILE (SEQ)    *            
+      *                                                            *            
+      *  I-O   FILES :  1.  BP13K200 - BOOKING APPOINTMENT FILE    *            
+      *                 2.  BP13K210 - BOOKING WORKPLAN FILE       *            
+      * ---------------------------------------------------------- *            
+      * CHG-NO   BY   DATE    DESCRIPTION                          *            
+      * -------  ---  ------  -----------                          *            
+      * SOC-PH9  GD   941031  TO CHECK FOR JB CASES                *            
+      * BP130066 LMS  951207  TO INCLUDE INFO IN BP13L229          *            
+      * BP130180 SSS  960904  INCLUDE ABOVE DUE TO IA COMMENTS     *            
+      * BP130418 MPA  980403  YEAR 2000 CHANGES                    *            
+      * BP130586 SAM  981022  TO INCLUDE OT TIME SLOT.             *            
+      * BP130606 SAM  981209  TO INCLUDE 4/4 TIME SCHEDULE.        *            
+      * BP130949 ANC  001031  CHG F200-NUM-JB-REGN TO F200-NUM-    *            
+      *                       JB-PARENT-REGN.                      *            
+      * BP132071 MTD  011226  ADD 12/12 TIME SCHEDULE              *            
+      * BP132095 MTD  020423  EXPAND LENGTH OF BP13K200/BP13F200   *            
+      *                       (FROM 100 TO 300)                    *            
+      * BP132144 MTD  020517  ADD 30/30 TIME SCHEDULE              *            
+      * BP133809 ESA1 050110  TO ADD SEQUENCE OF SCHEDULE FOR OT   *            
+      * BP133851 ESA1 190210  TO CATER FOR PAIRED UNIT (4P/5P)     *            
+      *                       TO ADD READING OF BP13K800           *            
+      * BP134513 ESA1 130412  TO CATER FOR MGPS                    *            
+      * BP134521 ESA1 030512  TO CATER FOR MGPS                    *            
+      * BP135281 ESA1 280314  TO CATER FOR UPDATE OF ALLOCATION DATE            
+      * BP135591 ESA1 051214  TO CATER FOR Z SCHEDULING            *            
+      *                       TO CATER FOR MGPS WITHOUT PA QUEUE   *            
+      * BP135735 KG12 090415  NOT TO SCHEDULE APPT FOR MGPS DELINK *            
+      *                       CASES                                *            
+      * BP137114 ESA1 260318  TO CORRECT UPDATE OF MGPS            *            
+      * ========================================================== *            
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+           SELECT BP13F200  ASSIGN       TO BP13F200.                           
+           SELECT BP13K200  ASSIGN       TO BP13K200                            
+                            ACCESS MODE  IS DYNAMIC                             
+                            ORGANIZATION IS INDEXED                             
+                            RECORD KEY   IS K200-KEY-FLD                        
+                            ALTERNATE KEY IS K200-NUM-REGN                      
+                            FILE STATUS  IS WS-K200-STATUS.                     
+           SELECT BP13K210  ASSIGN       TO BP13K210                            
+                            ACCESS MODE  IS DYNAMIC                             
+                            ORGANIZATION IS INDEXED                             
+                            RECORD KEY   IS K210-KEY-FLD                        
+                            FILE STATUS  IS WS-K210-STATUS.                     
+                                                                                
+           SELECT BP13K800  ASSIGN       TO BP13K800                            
+                            ACCESS MODE  IS RANDOM                              
+                            ORGANIZATION IS INDEXED                             
+                            RECORD KEY   IS K800-NUM-REGN                       
+                            FILE STATUS  IS WS-K800-STATUS.                     
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD   BP13F200                                                            
+            RECORDING  MODE IS  F                                               
+            RECORD CONTAINS 300 CHARACTERS.                                     
+       COPY BP13F200.                                                           
+                                                                                
+       FD   BP13K200                                                            
+            RECORD CONTAINS 300 CHARACTERS.                                     
+       COPY BP13K200.                                                           
+                                                                                
+       FD   BP13K210                                                            
+            RECORD CONTAINS 100 CHARACTERS.                                     
+       COPY BP13K210.                                                           
+                                                                                
+       FD   BP13K800                                                            
+            RECORD CONTAINS 2000 CHARACTERS.                                    
+       COPY BP13K800.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-INDICATORS.                                                       
+           05  WS-K200-STATUS               PIC 99    VALUE  00.                
+           05  WS-K210-STATUS               PIC 99    VALUE  00.                
+           05  WS-K800-STATUS               PIC 99    VALUE  00.                
+           05  WS-EOF-F200                  PIC X     VALUE 'N'.                
+           05  WS-EOF-K210                  PIC X     VALUE 'N'.                
+           05  WS-K200A-FND                 PIC X     VALUE 'N'.                
+           05  WS-K200B-FND                 PIC X     VALUE 'N'.                
+           05  WS-FND-K210-IND              PIC X     VALUE 'Y'.                
+           05  WS-CREATE-APPMT-IND          PIC X     VALUE 'Y'.                
+           05  WS-READ-NEXT-F200            PIC X     VALUE 'Y'.                
+           05  WS-OT-FLAG                   PIC X     VALUE 'N'.                
+                                                                                
+       01  WS-COUNTERS-POINTERS.                                                
+           05  WS-CNT-READ-F200             PIC 9(6)  VALUE ZEROS.              
+           05  WS-CNT-LOAD-F200             PIC 9(6)  VALUE ZEROS.              
+           05  WS-CNT-WRTE-K200             PIC 9(6)  VALUE ZEROS.              
+           05  WS-CNT-REWRTE-K200           PIC 9(6)  VALUE ZEROS.              
+           05  WS-CNT-UPDT-K210             PIC 9(6)  VALUE ZEROS.              
+           05  WS-CNT-BKAPPMT               PIC 9(6)  VALUE ZEROS.              
+           05  WS-CNT-CREATE-REC            PIC 9(6)  VALUE ZEROS.              
+           05  WS-REC-PTR                   PIC 9(6)  VALUE ZEROS.              
+           05  WS-CTR                       PIC 9(2)  VALUE ZEROS.              
+                                                                                
+       01  WS-TABLE.                                                            
+           05  WS-TIME-ARRAY.                                                   
+               10  WS-TIME             PIC 9(4)   OCCURS 5000 TIMES.            
+           05  WS-RECORD-ARRAY.                                                 
+               10  WS-SAVE-RECORD      PIC X(300) OCCURS 5000 TIMES.            
+               10  WS-SAVE-DTE-ALLOC   PIC X(08)  OCCURS 5000 TIMES.            
+               10  WS-SAVE-REGN        PIC X(08)  OCCURS 5000 TIMES.            
+               10  WS-SAVE-MGPS-TAG    PIC X(01)  OCCURS 5000 TIMES.            
+               10  WS-SAVE-PARENT-REGN PIC X(08)  OCCURS 5000 TIMES.            
+               10  WS-SAVE-KEY-FLD     PIC X(21)  OCCURS 5000 TIMES.            
+               10  WS-SAVE-QUEUE       PIC X(05)  OCCURS 5000 TIMES.            
+               10  WS-SAVE-NT-ZONEA    PIC X(03)  OCCURS 5000 TIMES.            
+               10  WS-SAVE-FTA         PIC X(02)  OCCURS 5000 TIMES.            
+               10  WS-SAVE-DTE-BALLOT  PIC X(06)  OCCURS 5000 TIMES.            
+               10  WS-SAVE-BALLOT-STAT PIC X      OCCURS 5000 TIMES.            
+                                                                                
+       01  WS-OTHER-VARIABLES.                                                  
+           05  WS-TIME-BKAPPMT-CHAR         PIC X(4)  VALUE SPACES.             
+           05  WS-FILLER  REDEFINES WS-TIME-BKAPPMT-CHAR.                       
+               10  WS-TIME-BKAPPMT.                                             
+                   15  WS-TIME-HRS          PIC 9(2).                           
+                   15  WS-TIME-MIN          PIC 9(2).                           
+           05  WS-TIME-BKAPPMT-CHAR-EXIT    PIC X(4)  VALUE SPACES.             
+           05  WS-FILLER-EXIT  REDEFINES WS-TIME-BKAPPMT-CHAR-EXIT.             
+               10  WS-TIME-BKAPPMT-EXIT.                                        
+                   15  WS-TIME-HRS-EXIT     PIC 9(2).                           
+                   15  WS-TIME-MIN-EXIT     PIC 9(2).                           
+           05  WS-EXCESS-MIN-EXIT           PIC 9(2).                           
+           05  WS-EXCESS-TIME-MIN           PIC 9(2).                           
+           05  WS-SAVE-NT-ZONE              PIC X(3)  VALUE SPACES.             
+           05  WS-SAVE-FT                   PIC X(2)  VALUE SPACES.             
+           05  WS-SAVE-JB-PARENT-REGN       PIC X(8)  VALUE SPACES.             
+           05  WS-FIRST-SLOT                PIC X(1)  VALUE SPACES.             
+           05  WS-TIME-SLOT                 PIC 9(02) VALUE ZEROS.              
+           05  WS-PAIRED-REGN               PIC X(08) VALUE SPACES.             
+           05  WS-PREV-REGN                 PIC X(08) VALUE SPACES.             
+           05  WS-PREV-PARENT-REGN          PIC X(08) VALUE SPACES.             
+           05  WS-PREV-QUEUE                PIC X(05) VALUE SPACES.             
+           05  WS-PREV-DTE-BKAPPMT          PIC X(08) VALUE SPACES.             
+           05  WS-PREV-TME-BKAPPMT          PIC X(04) VALUE SPACES.             
+           05  WS-PREV-MGPS-TAG             PIC X     VALUE SPACES.             
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       000-MAIN-ROUTINE.                                                        
+      *-------------------------------------------------------------            
+           PERFORM  100-OPEN-ROUTINE         THRU  100-EXIT.                    
+           PERFORM  200-READ-BP13F200        THRU  200-EXIT.                    
+           MOVE     F200-NUM-NT-ZONE         TO    WS-SAVE-NT-ZONE.             
+           MOVE     F200-NUM-FLAT-TYPE       TO    WS-SAVE-FT.                  
+           PERFORM  300-STARTBR-BP13K210     THRU  300-EXIT.                    
+           PERFORM  400-READNXT-BP13K210     THRU  400-EXIT.                    
+           PERFORM  500-PROCESS-RECORD       THRU  500-EXIT                     
+                        UNTIL  (WS-EOF-F200 = 'Y')                              
+                        OR     (WS-EOF-K210 = 'Y').                             
+                                                                                
+           IF WS-CNT-LOAD-F200 NOT = ZEROES                                     
+              PERFORM  540-WRITE-APPMT-REC      THRU  540-EXIT                  
+                           VARYING  WS-REC-PTR  FROM  1 BY 1                    
+                           UNTIL    WS-REC-PTR   >    WS-CNT-LOAD-F200          
+                           OR       WS-REC-PTR   >    5000                      
+           END-IF.                                                              
+                                                                                
+           PERFORM  800-DISPLAY-STATISTICS   THRU  800-EXIT.                    
+           PERFORM  900-CLOSE-ROUTINE        THRU  900-EXIT.                    
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       100-OPEN-ROUTINE.                                                        
+      *-------------------------------------------------------------            
+           OPEN INPUT  BP13F200                                                 
+                       BP13K210                                                 
+                       BP13K800                                                 
+                I-O    BP13K200.                                                
+                                                                                
+           IF WS-K200-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR OPENING BP13K200, STATUS = ' WS-K200-STATUS        
+              MOVE     WS-K200-STATUS TO RETURN-CODE                            
+              PERFORM  900-CLOSE-ROUTINE                                        
+           END-IF.                                                              
+                                                                                
+           IF WS-K210-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR OPENING BP13K210, STATUS = ' WS-K210-STATUS        
+              MOVE     WS-K210-STATUS TO RETURN-CODE                            
+              PERFORM  900-CLOSE-ROUTINE                                        
+           END-IF.                                                              
+                                                                                
+           IF WS-K800-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR OPENING BP13K800, STATUS = ' WS-K800-STATUS        
+              MOVE     WS-K800-STATUS TO RETURN-CODE                            
+              PERFORM  900-CLOSE-ROUTINE                                        
+           END-IF.                                                              
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       200-READ-BP13F200.                                                       
+      *-------------------------------------------------------------            
+           READ BP13F200                                                        
+                AT END MOVE 'Y' TO WS-EOF-F200                                  
+                GO TO  200-EXIT.                                                
+                                                                                
+           ADD  1  TO  WS-CNT-READ-F200.                                        
+                                                                                
+           MOVE F200-NUM-REGN       TO K800-NUM-REGN.                           
+           PERFORM 700-READ-K800    THRU 700-EXIT.                              
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       300-STARTBR-BP13K210.                                                    
+      *-------------------------------------------------------------            
+           MOVE    SPACES               TO   K210-KEY-FLD.                      
+           MOVE    F200-NUM-NT-ZONE     TO   K210-NUM-NT-ZONE.                  
+           MOVE    F200-NUM-FLAT-TYPE   TO   K210-NUM-FLAT-TYPE.                
+           MOVE    F200-DTE-ALLOC       TO   K210-DTE-BKAPPMT.                  
+                                                                                
+           START   BP13K210 KEY IS NOT LESS THAN K210-KEY-FLD.                  
+                                                                                
+           IF WS-K210-STATUS = 00                                               
+              MOVE    'Y'   TO WS-FND-K210-IND                                  
+           ELSE                                                                 
+           IF WS-K210-STATUS = 23                                               
+              DISPLAY 'REC NOT FOUND IN BP13K210, STAT ' WS-K210-STATUS         
+              DISPLAY '                 K210-KEY-FLD   ' K210-KEY-FLD           
+              MOVE    'N'   TO WS-FND-K210-IND                                  
+           ELSE                                                                 
+           IF WS-K210-STATUS NOT = 00 AND 23                                    
+              DISPLAY 'ERROR START BRWSE BP13K210, STAT ' WS-K210-STATUS        
+              MOVE     WS-K210-STATUS  TO RETURN-CODE                           
+              PERFORM  900-CLOSE-ROUTINE.                                       
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       400-READNXT-BP13K210.                                                    
+      *-------------------------------------------------------------            
+           IF WS-FND-K210-IND = 'N'                                             
+              MOVE   ZEROES  TO  WS-CNT-LOAD-F200  WS-CNT-BKAPPMT               
+              GO TO  400-EXIT.                                                  
+                                                                                
+           IF WS-EOF-K210 = 'Y'                                                 
+              MOVE   ZEROES  TO  WS-CNT-LOAD-F200  WS-CNT-BKAPPMT               
+              GO TO  400-EXIT.                                                  
+                                                                                
+           READ BP13K210 NEXT                                                   
+                         AT END MOVE 'Y' TO WS-EOF-K210                         
+                         GO TO  400-EXIT.                                       
+                                                                                
+           IF WS-K210-STATUS NOT =  00                                          
+              IF WS-K210-STATUS  =  46                                          
+                 MOVE 'Y' TO WS-EOF-K210                                        
+              ELSE                                                              
+                 DISPLAY 'ERROR READNXT BP13K210, STAT ' WS-K210-STATUS         
+                 MOVE     WS-K210-STATUS TO  RETURN-CODE                        
+                 PERFORM  900-CLOSE-ROUTINE                                     
+           END-IF.                                                              
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+      *  PROCESS THE READ RECORD FROM BP13F200 FILE                  *          
+      ****************************************************************          
+       500-PROCESS-RECORD.                                                      
+      *-------------------------------------------------------------            
+           IF WS-CREATE-APPMT-IND = 'Y'                                         
+              MOVE    ZEROES   TO   WS-CNT-CREATE-REC                           
+              MOVE    ZEROES   TO   WS-TIME-ARRAY                               
+              MOVE    ZEROES   TO   WS-TIME-BKAPPMT                             
+              MOVE    ZEROES   TO   WS-TIME-BKAPPMT-EXIT                        
+              MOVE    ZEROES   TO   WS-CNT-BKAPPMT                              
+              PERFORM  520-GENERATE-APPMT-REC  THRU  520-EXIT                   
+              MOVE     SPACES    TO    WS-CREATE-APPMT-IND                      
+           END-IF.                                                              
+                                                                                
+           IF F200-NUM-NT-ZONE    = WS-SAVE-NT-ZONE AND                         
+              F200-NUM-FLAT-TYPE  = WS-SAVE-FT                                  
+              IF F200-NUM-NT-ZONE    = K210-NUM-NT-ZONE AND                     
+                 F200-NUM-FLAT-TYPE  = K210-NUM-FLAT-TYPE AND                   
+                 K800-NUM-NT-FT-QUEUE(1:1) NOT = 'Z'                            
+               IF (F200-NUM-MGPS-TAG = 'P' OR 'C') AND                          
+                  K800-NUM-MGPS = SPACES OR LOW-VALUES                          
+                  CONTINUE                                                      
+               ELSE                                                             
+                 ADD  1             TO WS-CNT-LOAD-F200                         
+                 MOVE F200-DTE-ALLOC                                            
+                                  TO WS-SAVE-DTE-ALLOC(WS-CNT-LOAD-F200)        
+                 MOVE F200-NUM-REGN TO WS-SAVE-REGN   (WS-CNT-LOAD-F200)        
+                 MOVE BP13F200-REC TO WS-SAVE-RECORD (WS-CNT-LOAD-F200)         
+                 MOVE K800-NUM-BALLOT-STATUS TO                                 
+                                  WS-SAVE-BALLOT-STAT(WS-CNT-LOAD-F200)         
+                 MOVE F200-NUM-MGPS-TAG TO                                      
+                                      WS-SAVE-MGPS-TAG(WS-CNT-LOAD-F200)        
+                 MOVE F200-NUM-JB-PARENT-REGN TO                                
+                                  WS-SAVE-PARENT-REGN(WS-CNT-LOAD-F200)         
+                 MOVE F200-KEY-FLD     TO                                       
+                                   WS-SAVE-KEY-FLD(WS-CNT-LOAD-F200)            
+                 MOVE F200-NUM-HHTY-QUEUE-SERIAL TO                             
+                                   WS-SAVE-QUEUE(WS-CNT-LOAD-F200)              
+                 IF F200-NUM-SELTYPE = 'BTO'                                    
+                    IF F200-NUM-JB-PARENT-REGN NOT = SPACES AND                 
+                                                     LOW-VALUES                 
+                       MOVE F200-NUM-JB-PARENT-REGN  TO K800-NUM-REGN           
+                       PERFORM 700-READ-K800    THRU 700-EXIT                   
+                       MOVE K800-NUM-BTO-ZONE       TO                          
+                                   WS-SAVE-NT-ZONEA(WS-CNT-LOAD-F200)           
+                       MOVE '00'                       TO                       
+                                   WS-SAVE-FTA(WS-CNT-LOAD-F200)                
+                       MOVE K800-DTE-BALLOT            TO                       
+                                   WS-SAVE-DTE-BALLOT(WS-CNT-LOAD-F200)         
+                    END-IF                                                      
+                 END-IF                                                         
+                 IF WS-CNT-LOAD-F200 = WS-CNT-BKAPPMT                           
+                    PERFORM 540-WRITE-APPMT-REC      THRU   540-EXIT            
+                            VARYING  WS-REC-PTR  FROM   1 BY 1                  
+                            UNTIL   (WS-REC-PTR  >  WS-CNT-BKAPPMT)             
+                            OR      (WS-REC-PTR  >  5000)                       
+                    IF F200-NUM-JB-PARENT-REGN NOT = ZEROES AND SPACES          
+                                               AND LOW-VALUES                   
+                       PERFORM 550-CHECK-JB THRU 550-EXIT                       
+                    END-IF                                                      
+                    PERFORM 400-READNXT-BP13K210     THRU   400-EXIT            
+                    MOVE    ZEROES   TO WS-CNT-LOAD-F200                        
+                    MOVE   'Y'       TO WS-CREATE-APPMT-IND                     
+                 END-IF                                                         
+               END-IF                                                           
+              END-IF                                                            
+           ELSE                                                                 
+              IF  WS-CNT-LOAD-F200  NOT = ZEROES                                
+                  PERFORM 540-WRITE-APPMT-REC       THRU  540-EXIT              
+                              VARYING  WS-REC-PTR   FROM  1 BY 1                
+                              UNTIL    WS-REC-PTR   >  WS-CNT-LOAD-F200         
+                              OR       WS-REC-PTR   >  5000                     
+              END-IF                                                            
+              PERFORM 400-READNXT-BP13K210 THRU 400-EXIT                        
+              PERFORM 580-CHECK-FT         THRU 580-EXIT                        
+              MOVE    ZEROES                 TO WS-CNT-LOAD-F200                
+              MOVE   'Y'                     TO WS-CREATE-APPMT-IND             
+              MOVE    F200-NUM-NT-ZONE       TO WS-SAVE-NT-ZONE                 
+              MOVE    F200-NUM-FLAT-TYPE     TO WS-SAVE-FT                      
+              MOVE    ZEROES                 TO WS-CNT-CREATE-REC               
+              IF F200-NUM-NT-ZONE    = K210-NUM-NT-ZONE AND                     
+                 F200-NUM-FLAT-TYPE  = K210-NUM-FLAT-TYPE AND                   
+                 K800-NUM-NT-FT-QUEUE(1:1) NOT = 'Z'                            
+               IF (F200-NUM-MGPS-TAG = 'P' OR 'C') AND                          
+                  K800-NUM-QUEUE-MGPS = SPACES OR LOW-VALUES                    
+                  CONTINUE                                                      
+               ELSE                                                             
+                 MOVE 1                      TO WS-CNT-LOAD-F200                
+                 MOVE F200-DTE-ALLOC                                            
+                                  TO WS-SAVE-DTE-ALLOC(WS-CNT-LOAD-F200)        
+                 MOVE F200-NUM-REGN  TO WS-SAVE-REGN(WS-CNT-LOAD-F200)          
+                 MOVE BP13F200-REC TO WS-SAVE-RECORD(WS-CNT-LOAD-F200)          
+                 MOVE K800-NUM-BALLOT-STATUS TO                                 
+                                  WS-SAVE-BALLOT-STAT(WS-CNT-LOAD-F200)         
+                 MOVE  F200-NUM-MGPS-TAG TO                                     
+                                      WS-SAVE-MGPS-TAG(WS-CNT-LOAD-F200)        
+                 MOVE  F200-NUM-JB-PARENT-REGN TO                               
+                                   WS-SAVE-PARENT-REGN(WS-CNT-LOAD-F200)        
+                 MOVE  F200-KEY-FLD TO WS-SAVE-KEY-FLD(WS-CNT-LOAD-F200)        
+                 MOVE  F200-NUM-HHTY-QUEUE-SERIAL TO                            
+                                    WS-SAVE-QUEUE(WS-CNT-LOAD-F200)             
+                 IF F200-NUM-SELTYPE = 'BTO'                                    
+                    IF F200-NUM-JB-PARENT-REGN NOT = SPACES AND                 
+                                                     LOW-VALUES                 
+                       MOVE F200-NUM-JB-PARENT-REGN  TO K800-NUM-REGN           
+                       PERFORM 700-READ-K800    THRU 700-EXIT                   
+                       MOVE K800-NUM-BTO-ZONE       TO                          
+                                   WS-SAVE-NT-ZONEA(WS-CNT-LOAD-F200)           
+                       MOVE '00'                       TO                       
+                                   WS-SAVE-FTA(WS-CNT-LOAD-F200)                
+                       MOVE K800-DTE-BALLOT            TO                       
+                                   WS-SAVE-DTE-BALLOT(WS-CNT-LOAD-F200)         
+                    END-IF                                                      
+                  END-IF                                                        
+                 END-IF                                                         
+              ELSE                                                              
+                 MOVE K210-NUM-NT-ZONE       TO WS-SAVE-NT-ZONE                 
+                 MOVE K210-NUM-FLAT-TYPE     TO WS-SAVE-FT                      
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-READ-NEXT-F200 = 'Y'                                           
+              PERFORM    200-READ-BP13F200   THRU  200-EXIT                     
+           ELSE                                                                 
+              MOVE 'Y'   TO WS-READ-NEXT-F200                                   
+           END-IF.                                                              
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+      *  GENERATE   RECORDS (TIME-ARRAY) FOR EVERY 15 TIME INTERVALS *          
+      *  ACCORDING TO THE TIME SLOT NUMBERS                          *          
+      ****************************************************************          
+       520-GENERATE-APPMT-REC.                                                  
+      *-------------------------------------------------------------            
+                                                                                
+           IF K210-TME-START-BKAPPMT-AM NOT = ZEROES                            
+              MOVE    K210-TME-START-BKAPPMT-AM TO WS-TIME-BKAPPMT-CHAR         
+              MOVE    'Y'                       TO WS-FIRST-SLOT                
+              MOVE    'N'                       TO WS-OT-FLAG                   
+              PERFORM 522-MOVE-TIME-ARRAY       THRU  522-EXIT                  
+              PERFORM 524-CALCULATE-TIME        THRU  524-EXIT                  
+                UNTIL (WS-TIME-BKAPPMT-EXIT > K210-TME-END-BKAPPMT-AM)          
+           END-IF.                                                              
+                                                                                
+           IF K210-TME-START-BKAPPMT-PM NOT = ZEROES                            
+              MOVE    K210-TME-START-BKAPPMT-PM TO WS-TIME-BKAPPMT-CHAR         
+              MOVE    'Y'                       TO WS-FIRST-SLOT                
+              MOVE    'N'                       TO WS-OT-FLAG                   
+              PERFORM 522-MOVE-TIME-ARRAY       THRU  522-EXIT                  
+              PERFORM 524-CALCULATE-TIME        THRU  524-EXIT                  
+                UNTIL (WS-TIME-BKAPPMT-EXIT > K210-TME-END-BKAPPMT-PM)          
+           END-IF.                                                              
+                                                                                
+           IF K210-TME-START-BKAPPMT-OT NOT = ZEROES                            
+              MOVE    K210-TME-START-BKAPPMT-OT TO WS-TIME-BKAPPMT-CHAR         
+              MOVE    'Y'                       TO WS-FIRST-SLOT                
+                                                   WS-OT-FLAG                   
+              PERFORM 522-MOVE-TIME-ARRAY       THRU  522-EXIT                  
+              PERFORM 524-CALCULATE-TIME        THRU  524-EXIT                  
+                UNTIL (WS-TIME-BKAPPMT-EXIT > K210-TME-END-BKAPPMT-OT)          
+           END-IF.                                                              
+                                                                                
+       520-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ****************************************************************          
+      *  MOVE TIME-DETAILS TO WS-TIME-ARRAY                          *          
+      ****************************************************************          
+       522-MOVE-TIME-ARRAY.                                                     
+      *-------------------------------------------------------------            
+           IF WS-CNT-BKAPPMT >= 5000                                            
+              GO TO 522-EXIT                                                    
+           END-IF.                                                              
+                                                                                
+           IF WS-FIRST-SLOT = 'Y'                                               
+              IF WS-OT-FLAG = 'Y'                                               
+                 MOVE K210-NUM-TIME-SLOT-OT TO WS-TIME-SLOT                     
+              ELSE                                                              
+                 MOVE K210-NUM-TIME-SLOT1   TO WS-TIME-SLOT                     
+              END-IF                                                            
+           ELSE                                                                 
+              IF WS-OT-FLAG = 'Y'                                               
+                 MOVE K210-NUM-TIME-SLOT-OT TO WS-TIME-SLOT                     
+              ELSE                                                              
+                 MOVE K210-NUM-TIME-SLOT2   TO WS-TIME-SLOT                     
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM VARYING WS-CTR FROM 1 BY 1                                   
+                   UNTIL WS-CTR > WS-TIME-SLOT                                  
+              ADD  1                TO  WS-CNT-BKAPPMT                          
+              MOVE WS-TIME-BKAPPMT  TO  WS-TIME (WS-CNT-BKAPPMT)                
+           END-PERFORM.                                                         
+                                                                                
+           MOVE WS-TIME-BKAPPMT TO WS-TIME-BKAPPMT-EXIT.                        
+           IF K210-NUM-INTERVAL >= 60                                           
+              COMPUTE WS-EXCESS-MIN-EXIT = K210-NUM-INTERVAL - 60               
+              ADD     1        TO  WS-TIME-HRS-EXIT                             
+              COMPUTE WS-TIME-MIN-EXIT = WS-TIME-MIN-EXIT +                     
+                                         WS-EXCESS-MIN-EXIT                     
+           ELSE                                                                 
+              ADD K210-NUM-INTERVAL TO  WS-TIME-MIN-EXIT                        
+           END-IF.                                                              
+                                                                                
+           IF  WS-TIME-MIN-EXIT  = 60                                           
+               MOVE    ZEROES   TO  WS-TIME-MIN-EXIT                            
+               ADD     1        TO  WS-TIME-HRS-EXIT                            
+           ELSE                                                                 
+              IF  WS-TIME-MIN-EXIT  > 60                                        
+                  SUBTRACT 60    FROM  WS-TIME-MIN-EXIT                         
+                  ADD       1      TO  WS-TIME-HRS-EXIT                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       522-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ****************************************************************          
+      *  CALCULATE TIME UNTIL IT IS = OR > K210-TIME-END   (AM-PM)   *          
+      ****************************************************************          
+       524-CALCULATE-TIME.                                                      
+      *-------------------------------------------------------------            
+           IF K210-NUM-INTERVAL >= 60                                           
+              COMPUTE WS-EXCESS-TIME-MIN = K210-NUM-INTERVAL - 60               
+              ADD 1              TO  WS-TIME-HRS                                
+              COMPUTE WS-TIME-MIN = WS-EXCESS-TIME-MIN +                        
+                                    WS-TIME-MIN                                 
+           ELSE                                                                 
+              ADD K210-NUM-INTERVAL TO  WS-TIME-MIN                             
+           END-IF.                                                              
+                                                                                
+           IF  WS-TIME-MIN  = 60                                                
+               MOVE    ZEROES   TO  WS-TIME-MIN                                 
+               ADD     1        TO  WS-TIME-HRS                                 
+           ELSE                                                                 
+              IF  WS-TIME-MIN  > 60                                             
+                  SUBTRACT 60    FROM  WS-TIME-MIN                              
+                  ADD       1      TO  WS-TIME-HRS                              
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-FIRST-SLOT = 'Y'                                               
+              MOVE 'N' TO WS-FIRST-SLOT                                         
+           ELSE                                                                 
+              MOVE 'Y' TO WS-FIRST-SLOT                                         
+           END-IF.                                                              
+                                                                                
+           PERFORM  522-MOVE-TIME-ARRAY  THRU   522-EXIT.                       
+                                                                                
+       524-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ****************************************************************          
+      *  WRITE BP13K200 BOOKING APPOINTMENT RECORD                   *          
+      ****************************************************************          
+       540-WRITE-APPMT-REC.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           IF (WS-TIME (WS-REC-PTR) NUMERIC) AND                                
+              (WS-TIME (WS-REC-PTR) NOT = ZEROES)                               
+              IF WS-SAVE-MGPS-TAG(WS-REC-PTR) = 'P'                             
+                 MOVE WS-SAVE-KEY-FLD(WS-REC-PTR)      TO K200-KEY-FLD          
+                 PERFORM 540A-READ-K200         THRU  540A-EXIT                 
+                 IF WS-K200A-FND = 'N'                                          
+                    MOVE SPACES                       TO BP13K200-REC           
+                    MOVE WS-SAVE-RECORD (WS-REC-PTR)  TO  BP13K200-REC          
+                    IF WS-SAVE-BALLOT-STAT(WS-REC-PTR) = 'U' OR 'W'             
+                       MOVE SPACES       TO K200-NUM-HHTY-QUEUE-SERIAL          
+                    END-IF                                                      
+                    MOVE WS-SAVE-QUEUE(WS-REC-PTR)                              
+                                         TO K200-NUM-MGPS-QUEUE-SERIAL          
+                    MOVE K210-DTE-BKAPPMT TO K200-DTE-BKAPPMT-DATE-MGPS         
+                    MOVE WS-TIME (WS-REC-PTR) TO K200-TME-BKAPPMT-MGPS          
+                    MOVE FUNCTION CURRENT-DATE     TO K200-DTE-UPDATE           
+                    PERFORM 541-WRITE-BP13K200      THRU 541-EXIT               
+                 ELSE                                                           
+                    MOVE WS-SAVE-QUEUE(WS-REC-PTR)                              
+                                         TO K200-NUM-MGPS-QUEUE-SERIAL          
+                    MOVE K210-DTE-BKAPPMT TO K200-DTE-BKAPPMT-DATE-MGPS         
+                    MOVE WS-TIME (WS-REC-PTR) TO K200-TME-BKAPPMT-MGPS          
+                    MOVE FUNCTION CURRENT-DATE     TO K200-DTE-UPDATE           
+                    PERFORM 541A-REWRITE-BP13K200   THRU 541A-EXIT              
+                 END-IF                                                         
+                 MOVE WS-SAVE-PARENT-REGN(WS-REC-PTR)  TO K200-NUM-REGN         
+                 PERFORM 540B-READ-K200         THRU  540B-EXIT                 
+                 IF WS-K200B-FND = 'N'                                          
+                    MOVE SPACES           TO BP13K200-REC                       
+                    MOVE WS-SAVE-DTE-ALLOC(WS-REC-PTR)                          
+                                          TO K200-DTE-ALLOC                     
+                    MOVE WS-SAVE-PARENT-REGN(WS-REC-PTR)                        
+                                          TO K200-NUM-REGN                      
+                    MOVE WS-SAVE-REGN(WS-REC-PTR)                               
+                                          TO K200-NUM-JB-PARENT-REGN            
+                    MOVE WS-SAVE-QUEUE(WS-REC-PTR)                              
+                                          TO K200-NUM-MGPS-QUEUE-SERIAL         
+                    MOVE WS-SAVE-NT-ZONEA(WS-REC-PTR)                           
+                                          TO K200-NUM-NT-ZONE                   
+                    MOVE WS-SAVE-FTA(WS-REC-PTR)                                
+                                          TO K200-NUM-FLAT-TYPE                 
+                    MOVE WS-SAVE-DTE-BALLOT(WS-REC-PTR)                         
+                                          TO K200-DTE-BALLOT                    
+                    MOVE K210-DTE-BKAPPMT TO K200-DTE-BKAPPMT-DATE-MGPS         
+                    MOVE WS-TIME (WS-REC-PTR) TO K200-TME-BKAPPMT-MGPS          
+                    MOVE 'C'                  TO K200-NUM-MGPS-TAG              
+                    MOVE FUNCTION CURRENT-DATE     TO K200-DTE-UPDATE           
+                    PERFORM 541-WRITE-BP13K200      THRU 541-EXIT               
+                 ELSE                                                           
+                    MOVE WS-SAVE-QUEUE(WS-REC-PTR)                              
+                                         TO K200-NUM-MGPS-QUEUE-SERIAL          
+                    MOVE 'C'                TO K200-NUM-MGPS-TAG                
+                    MOVE K210-DTE-BKAPPMT TO K200-DTE-BKAPPMT-DATE-MGPS         
+                    MOVE WS-TIME (WS-REC-PTR)  TO K200-TME-BKAPPMT-MGPS         
+                    MOVE FUNCTION CURRENT-DATE TO K200-DTE-UPDATE               
+                    PERFORM 541A-REWRITE-BP13K200   THRU 541A-EXIT              
+                 END-IF                                                         
+              ELSE                                                              
+                 IF WS-SAVE-MGPS-TAG(WS-REC-PTR) = ' '                          
+                    MOVE WS-SAVE-REGN(WS-REC-PTR) TO K200-ALT-KEY               
+                    PERFORM 540B-READ-K200     THRU 540B-EXIT                   
+                    IF WS-K200B-FND = 'N'                                       
+                      MOVE SPACES           TO BP13K200-REC                     
+                      MOVE WS-SAVE-RECORD(WS-REC-PTR)                           
+                                            TO BP13K200-REC                     
+                      MOVE WS-SAVE-REGN(WS-REC-PTR) TO K800-NUM-REGN            
+                      PERFORM 700-READ-K800    THRU 700-EXIT                    
+                      IF K800-NUM-FLAT-TYPE = '4P' OR '5P' OR 'SP'              
+                         MOVE WS-PAIRED-REGN  TO                                
+                                          K200-NUM-JB-PARENT-REGN               
+                      END-IF                                                    
+                      MOVE K210-DTE-BKAPPMT TO K200-DTE-BKAPPMT-DATE            
+                      MOVE WS-TIME (WS-REC-PTR)  TO K200-TME-BKAPPMT            
+                      MOVE FUNCTION CURRENT-DATE TO K200-DTE-UPDATE             
+                      PERFORM 541-WRITE-BP13K200 THRU 541-EXIT                  
+                    ELSE                                                        
+                      PERFORM 540A-READ-K200     THRU 540A-EXIT                 
+                      IF K200-NUM-NT-ZONE = SPACES OR LOW-VALUES                
+                         MOVE K200-NUM-JB-PARENT-REGN                           
+                                           TO WS-PREV-PARENT-REGN               
+                         MOVE K200-NUM-MGPS-QUEUE-SERIAL                        
+                                           TO WS-PREV-QUEUE                     
+                         MOVE K200-DTE-BKAPPMT-DATE-MGPS                        
+                                           TO WS-PREV-DTE-BKAPPMT               
+                         MOVE K200-TME-BKAPPMT-MGPS                             
+                                           TO WS-PREV-TME-BKAPPMT               
+                         MOVE K200-NUM-MGPS-TAG                                 
+                                           TO WS-PREV-MGPS-TAG                  
+                         PERFORM 540C-DELETE-BP13K200 THRU 540C-EXIT            
+                         MOVE WS-SAVE-RECORD(WS-REC-PTR)                        
+                                           TO BP13K200-REC                      
+                         MOVE K210-DTE-BKAPPMT TO K200-DTE-BKAPPMT-DATE         
+                         MOVE WS-TIME (WS-REC-PTR) TO K200-TME-BKAPPMT          
+                         MOVE WS-PREV-PARENT-REGN  TO                           
+                              K200-NUM-JB-PARENT-REGN                           
+                         MOVE WS-PREV-QUEUE        TO                           
+                              K200-NUM-MGPS-QUEUE-SERIAL                        
+                         MOVE WS-PREV-DTE-BKAPPMT  TO                           
+                              K200-DTE-BKAPPMT-DATE-MGPS                        
+                         MOVE WS-PREV-TME-BKAPPMT  TO                           
+                              K200-TME-BKAPPMT-MGPS                             
+                         MOVE WS-PREV-MGPS-TAG     TO                           
+                              K200-NUM-MGPS-TAG                                 
+                         MOVE FUNCTION CURRENT-DATE TO K200-DTE-UPDATE          
+                         PERFORM 541-WRITE-BP13K200 THRU 541-EXIT               
+                       ELSE                                                     
+                          MOVE WS-SAVE-QUEUE(WS-REC-PTR)                        
+                                         TO K200-NUM-HHTY-QUEUE-SERIAL          
+                          MOVE K210-DTE-BKAPPMT      TO                         
+                               K200-DTE-BKAPPMT-DATE                            
+                          MOVE WS-TIME (WS-REC-PTR)  TO                         
+                               K200-TME-BKAPPMT                                 
+                          MOVE FUNCTION CURRENT-DATE TO K200-DTE-UPDATE         
+                          PERFORM 541A-REWRITE-BP13K200  THRU 541A-EXIT         
+                       END-IF                                                   
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       540-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       540A-READ-K200.                                                          
+      *--------------------------------------------------------------*          
+                                                                                
+           READ BP13K200.                                                       
+                                                                                
+           EVALUATE WS-K200-STATUS                                              
+              WHEN 00                                                           
+              WHEN 02                                                           
+                   MOVE 'Y'          TO WS-K200A-FND                            
+              WHEN 23                                                           
+                   MOVE 'N'          TO WS-K200A-FND                            
+              WHEN OTHER                                                        
+                   DISPLAY 'ERROR READING BP13K200. STATUS IS '                 
+                           WS-K200-STATUS                                       
+                   PERFORM 900-CLOSE-ROUTINE   THRU 900-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       540A-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       540B-READ-K200.                                                          
+      *--------------------------------------------------------------*          
+                                                                                
+           READ BP13K200 KEY IS K200-NUM-REGN.                                  
+                                                                                
+           EVALUATE WS-K200-STATUS                                              
+              WHEN 00                                                           
+              WHEN 02                                                           
+                   MOVE 'Y'          TO WS-K200B-FND                            
+              WHEN 23                                                           
+                   MOVE 'N'          TO WS-K200B-FND                            
+              WHEN OTHER                                                        
+                   DISPLAY 'ERROR READING BP13K200 ALT. STATUS IS '             
+                           WS-K200-STATUS                                       
+                   PERFORM 900-CLOSE-ROUTINE   THRU 900-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       540B-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       540C-DELETE-BP13K200.                                                    
+      *--------------------------------------------------------------*          
+                                                                                
+           DELETE BP13K200.                                                     
+                                                                                
+           EVALUATE WS-K200-STATUS                                              
+              WHEN 00                                                           
+              WHEN 02                                                           
+                   CONTINUE                                                     
+              WHEN OTHER                                                        
+                   DISPLAY 'ERROR DELETING BP13K200. STATUS IS '                
+                           WS-K200-STATUS                                       
+                   PERFORM 900-CLOSE-ROUTINE   THRU 900-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       540C-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       541-WRITE-BP13K200.                                                      
+      *-------------------------------------------------------------            
+           WRITE   BP13K200-REC.                                                
+                                                                                
+           IF WS-K200-STATUS = 00 OR 02                                         
+              ADD     1        TO  WS-CNT-CREATE-REC                            
+              ADD     1        TO  WS-CNT-WRTE-K200                             
+           ELSE                                                                 
+           IF WS-K200-STATUS = 22                                               
+              REWRITE BP13K200-REC                                              
+              ADD     1        TO  WS-CNT-CREATE-REC                            
+              ADD     1        TO  WS-CNT-WRTE-K200                             
+           ELSE                                                                 
+              DISPLAY 'ERROR WRITE BP13K200, STAT = ' WS-K200-STATUS            
+              DISPLAY '            K200-KEY-FLD   = ' K200-KEY-FLD              
+              MOVE     WS-K200-STATUS TO  RETURN-CODE                           
+              PERFORM  900-CLOSE-ROUTINE.                                       
+                                                                                
+       541-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       541A-REWRITE-BP13K200.                                                   
+      *-------------------------------------------------------------            
+           REWRITE   BP13K200-REC.                                              
+                                                                                
+           IF WS-K200-STATUS = 00 OR 02                                         
+              ADD     1        TO  WS-CNT-REWRTE-K200                           
+           ELSE                                                                 
+              DISPLAY 'ERROR WRITE BP13K200, STAT = ' WS-K200-STATUS            
+              DISPLAY '            K200-KEY-FLD   = ' K200-KEY-FLD              
+              MOVE     WS-K200-STATUS TO  RETURN-CODE                           
+              PERFORM  900-CLOSE-ROUTINE.                                       
+                                                                                
+       541A-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ****************************************************************          
+      *  TO PROCESS SUCCEEDING F520 RECORDS WITH THE SAME            *          
+      *  NUM-JB-PARENT-REGN AS THE PREVIOUS F200-RECORDS (JB CASES)  *          
+      ****************************************************************          
+       550-CHECK-JB.                                                            
+      *-------------------------------------------------------------            
+           MOVE 'N'                         TO   WS-READ-NEXT-F200.             
+           MOVE F200-NUM-JB-PARENT-REGN     TO   WS-SAVE-JB-PARENT-REGN.        
+           PERFORM 200-READ-BP13F200        THRU 200-EXIT.                      
+                                                                                
+           PERFORM UNTIL F200-NUM-JB-PARENT-REGN NOT =                          
+                         WS-SAVE-JB-PARENT-REGN                                 
+                      OR F200-NUM-NT-ZONE   NOT = WS-SAVE-NT-ZONE               
+                      OR F200-NUM-FLAT-TYPE NOT = WS-SAVE-FT                    
+                      OR WS-EOF-F200 = 'Y'                                      
+                                                                                
+              MOVE BP13F200-REC             TO  BP13K200-REC                    
+              MOVE K210-DTE-BKAPPMT         TO  K200-DTE-BKAPPMT-DATE           
+              MOVE WS-TIME (WS-REC-PTR - 1) TO  K200-TME-BKAPPMT                
+              MOVE FUNCTION CURRENT-DATE    TO  K200-DTE-UPDATE                 
+              PERFORM 541-WRITE-BP13K200  THRU 541-EXIT                         
+              PERFORM 200-READ-BP13F200   THRU 200-EXIT                         
+                                                                                
+           END-PERFORM.                                                         
+                                                                                
+       550-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ****************************************************************          
+      *  TO READ UNTIL THE WKPLAN UNTIL THE NEXT NT/FT               *          
+      ****************************************************************          
+       580-CHECK-FT.                                                            
+      *-------------------------------------------------------------            
+           PERFORM 400-READNXT-BP13K210  THRU 400-EXIT                          
+             UNTIL (F200-NUM-NT-ZONE     = K210-NUM-NT-ZONE    AND              
+                    F200-NUM-FLAT-TYPE   = K210-NUM-FLAT-TYPE  AND              
+                    F200-DTE-ALLOC       = K210-DTE-ALLOC)     OR               
+                   (WS-EOF-K210          = 'Y').                                
+                                                                                
+       580-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       700-READ-K800.                                                           
+      *-------------------------------------------------------------            
+           READ BP13K800.                                                       
+                                                                                
+           IF WS-K800-STATUS = 00                                               
+              MOVE K800-NUM-JT-BALLOT-REGN TO  WS-PAIRED-REGN                   
+           ELSE                                                                 
+              IF WS-K800-STATUS = 23                                            
+                 MOVE SPACES               TO  WS-PAIRED-REGN                   
+                 DISPLAY 'REC NOT FOUND IN BP13K800 ' WS-K800-STATUS            
+                 DISPLAY 'K800-KEY-FLD = ' K800-NUM-REGN                        
+              ELSE                                                              
+                 DISPLAY 'ERROR READING BP13K800 ' WS-K800-STATUS               
+                 DISPLAY 'K800-KEY-FLD = ' K800-NUM-REGN                        
+                 PERFORM 900-CLOSE-ROUTINE THRU 900-EXIT                        
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       800-DISPLAY-STATISTICS.                                                  
+      *-------------------------------------------------------------            
+           DISPLAY ' '.                                                         
+           DISPLAY '*--------- BP13C249 CONTROL LIST ----------*'.              
+           DISPLAY ' '.                                                         
+           DISPLAY 'BP13F200 READ    RECORDS  = ' WS-CNT-READ-F200.             
+           DISPLAY 'BP13K200 WRITTEN RECORDS  = ' WS-CNT-WRTE-K200.             
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       900-CLOSE-ROUTINE.                                                       
+      *-------------------------------------------------------------            
+           CLOSE BP13F200                                                       
+                 BP13K200                                                       
+                 BP13K210                                                       
+                 BP13K800.                                                      
+                                                                                
+           IF WS-K200-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR CLOSING BP13K200, STATUS = ' WS-K200-STATUS        
+              MOVE     WS-K200-STATUS TO RETURN-CODE                            
+           END-IF.                                                              
+                                                                                
+           IF WS-K210-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR CLOSING BP13K210, STATUS = ' WS-K210-STATUS        
+              MOVE     WS-K210-STATUS TO RETURN-CODE                            
+           END-IF.                                                              
+                                                                                
+           IF WS-K800-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR CLOSING BP13K800, STATUS = ' WS-K800-STATUS        
+              MOVE     WS-K800-STATUS TO RETURN-CODE                            
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+

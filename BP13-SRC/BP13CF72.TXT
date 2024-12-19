@@ -1,0 +1,924 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CF72.                                                 
+      *AUTHOR.        SMR2.                                                     
+      *DATE-WRITTEN.  15/01/2013.                                               
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (BP13)                                *            
+      * ========================================================== *            
+      *                                                            *            
+      * OBJECTIVE    : TO DETERMINE IF THE APPLICANT IS ELIGIBLE   *            
+      *                FOR PPS OR NOT                              *            
+      *                                                            *            
+      * INPUT  FILE  : BP13F730 - CASES PER REGN                   *            
+      *                BP13K825 - BP13.K825.REQOCCP                *            
+      *                BP13K813 - BP13.K813.BTOBE                  *            
+      * OUTPUT FILE  : P13F730A - F730 REPLICATED                  *            
+      *                                                            *            
+      * NOTE : IF CASE IS UPGRADER OR ELDERLY APPLICATION          *            
+      *        THEN PPS-ELIG-TAG = BLANK                           *            
+      *                                                            *            
+      * ========================================================== *            
+      * CHG-REF#  BY    DDMMCCYY  DESCRIPTION                      *            
+      * --------  ----  --------  -------------------------------- *            
+      * BP134626  SMR2  15012013  NEW PROGRAM                      *            
+      * BP134906  SMR2  02052013  COMPUTE ALL YOUNGEST-SC-CHILD &  *            
+      *                           ADD DETERMINATION FOR PREGNANT   *            
+      * BP134906  SMR2  28052013  INCLUDE YOUNG-CHILD-AGE-NSC      *            
+      *                           NC = NO CHILD                    *            
+      *                           BB = BABY (< 1 YR OLD)           *            
+      * BP134906  SMR2  04062013  PPS-ELIG-TAG IS BLANK FOR UPG/SA *            
+      *                           CASES                            *            
+      * BP134906  SMR2  06062013  PPS-ELIG-TAG = 'N' FOR UPG CASES *            
+      * BP134996  SMR2  24062013  VALIDATION FOR BRO/SIS CASES     *            
+      * BP135059  SMR2  10092013  DETERMINATION FOR NUM-GEN3       *            
+      * BP135059  SMR2  30092013  ADD NEW SCENARIO FOR NUM-GEN3    *            
+      * BP135148  SMR2  25112013  ADD NEW SCENARIO FOR NUM-GEN3    *            
+      * BP135190  SMR2  04122013  EXPAND BP13K813 TO 1000          *            
+      * BP135552  IMC1  01122014  ALLOW SBF CASES FOR GEN3         *            
+      * BP135944  SMR2  31082015  ENHANCE DETERMINATION FOR PPS=E  *            
+      * BP136239  SMR2  10032016  DO NOT DETERMINE PPS FOR ELDERLY *            
+      * BP136852  SMR2  21072017  DO NOT DETERMINE PPS FOR ROF     *            
+      * BP136852  SMR2  31072017  BYPASS DETERMINATION OF AGE-SC   *            
+      *                           AND AGE-NSC FOR ELDERLY & ROF    *            
+      * BP137208  YCH2  19022018  INCLUDE SERS CASES TO DETERMINE  *            
+      *                            3 GEN FOR APPLIED FT = 5        *            
+      * BP137783  IL5   26032019  CATER FOR 3GEN TAG UPDATES       *            
+      * BP137749  AM25  17052019  CATER FOR CHILD AGE INCR TO 18   *            
+      * BP139673  AM25  15092023  CATER FOR HFE SUBMISSION DATE    *            
+      * BP139780  AM25  30112023  CATER FOR PPS TAG 'F'            *            
+      * ========================================================== *            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F730 ASSIGN       TO BP13F730.                            
+                                                                                
+           SELECT BP13K825 ASSIGN       TO BP13K825                             
+                           ACCESS MODE  IS DYNAMIC                              
+                           ORGANIZATION IS INDEXED                              
+                           RECORD KEY   IS K825-KEY-FLD                         
+                           FILE STATUS  IS WS-K825-STATUS.                      
+                                                                                
+           SELECT BP13K813 ASSIGN       TO BP13K813                             
+                           ACCESS MODE  IS RANDOM                               
+                           ORGANIZATION IS INDEXED                              
+                           RECORD KEY   IS K813-KEY-FLD                         
+                           FILE STATUS  IS WS-K813-STATUS.                      
+                                                                                
+           SELECT P13F730A ASSIGN       TO P13F730A.                            
+                                                                                
+           SELECT BP17F100 ASSIGN       TO BP17F100.                            
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F730                                                            
+            BLOCK CONTAINS     0 RECORDS                                        
+            RECORD CONTAINS  500 CHARACTERS                                     
+            RECORDING MODE    IS F                                              
+            LABEL RECORD      IS STANDARD.                                      
+       COPY BP13F730.                                                           
+                                                                                
+       FD   BP13K825                                                            
+            RECORD CONTAINS  200 CHARACTERS.                                    
+       COPY BP13K825.                                                           
+                                                                                
+       FD   BP13K813                                                            
+            RECORD CONTAINS 1000 CHARACTERS.                                    
+       COPY BP13K813.                                                           
+                                                                                
+       FD   P13F730A                                                            
+            BLOCK CONTAINS     0 RECORDS                                        
+            RECORD CONTAINS  500 CHARACTERS                                     
+            RECORDING MODE    IS F                                              
+            LABEL RECORD      IS STANDARD.                                      
+       01   P13F730A-REC                   PIC X(500).                          
+                                                                                
+       FD  BP17F100                                                             
+           BLOCK  CONTAINS 0   RECORDS                                          
+           RECORD CONTAINS 400 CHARACTERS                                       
+           RECORDING MODE IS F                                                  
+           LABEL RECORDS ARE STANDARD.                                          
+       COPY BP17F100.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-FILE-STATUS.                                                      
+           05  WS-K825-STATUS              PIC 9(02)   VALUE ZEROES.            
+           05  WS-K813-STATUS              PIC 9(02)   VALUE ZEROES.            
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F730-READ                PIC 9(08)   VALUE ZEROES.            
+           05  WS-730A-WRITE               PIC 9(08)   VALUE ZEROES.            
+           05  WS-PPS-YES                  PIC 9(08)   VALUE ZEROES.            
+           05  WS-PPS-NO                   PIC 9(08)   VALUE ZEROES.            
+           05  WS-PPS-NO-UPG               PIC 9(08)   VALUE ZEROES.            
+           05  WS-PPS-PENDING              PIC 9(08)   VALUE ZEROES.            
+           05  WS-PPS-PREGNANT             PIC 9(08)   VALUE ZEROES.            
+           05  WS-PPS-BLANK                PIC 9(08)   VALUE ZEROES.            
+           05  WS-FPPS                     PIC 9(08)   VALUE ZEROES.            
+           05  WS-PPS-SINGLE               PIC 9(08)   VALUE ZEROES.            
+           05  WS-PPS-ADOPTED              PIC 9(08)   VALUE ZEROES.            
+                                                                                
+       01  WS-SWITCHES.                                                         
+           05  WS-EOF-BP17F100             PIC X(01)   VALUE 'N'.               
+           05  WS-F730-EOF                 PIC X(01)   VALUE 'N'.               
+           05  WS-K825-EOF                 PIC X(01)   VALUE 'N'.               
+           05  WS-K825-FND                 PIC X(01)   VALUE 'N'.               
+           05  WS-CHILD-FND                PIC X(01)   VALUE 'N'.               
+           05  WS-NEPHEW-NIECE             PIC X(01)   VALUE 'N'.               
+           05  WS-CHILD-SC                 PIC X(01)   VALUE 'N'.               
+           05  WS-CHILD-NSC                PIC X(01)   VALUE 'N'.               
+           05  WS-CHILD-BABY               PIC X(01)   VALUE 'N'.               
+           05  WS-GCHILD                   PIC X(01)   VALUE 'N'.               
+           05  WS-APPL-ELIG                PIC X(01)   VALUE 'N'.               
+           05  WS-HA-SINGLE                PIC X(01)   VALUE 'N'.               
+           05  WS-PREGNANT                 PIC X(01)   VALUE 'N'.               
+           05  WS-SP-INELIG                PIC X(01)   VALUE 'N'.               
+           05  WS-CHILD-ADOPTED            PIC X(01)   VALUE 'N'.               
+           05  WS-CHILD-ONLY               PIC X(01)   VALUE 'N'.               
+           05  WS-BRO-SIS                  PIC X(01)   VALUE 'N'.               
+           05  WS-PARENT-FND               PIC X(01)   VALUE 'N'.               
+           05  WS-GEN3-PARENT              PIC X(01)   VALUE 'N'.               
+           05  WS-GEN3-CHILD               PIC X(01)   VALUE 'N'.               
+           05  WS-GEN3-PARTNER             PIC X(01)   VALUE 'N'.               
+                                                                                
+       01  WS-DATE-VARIABLES.                                                   
+           05  WS-DTE-REQUEST              PIC 9(08)   VALUE ZEROES.            
+           05  WS-DTE-CHILD-BIRTH          PIC 9(08)   VALUE ZEROES.            
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-APPL-MS                  PIC X(01)   VALUE SPACES.            
+           05  WS-OCCP-MS                  PIC X(01)   VALUE SPACES.            
+           05  WS-CHILD-MS                 PIC X(01)   VALUE SPACES.            
+           05  WS-PARENT-MS                PIC X(01)   VALUE SPACES.            
+           05  WS-GEN3-PEND                PIC X(01)   VALUE SPACES.            
+           05  WS-GEN3-PEND2               PIC X(01)   VALUE SPACES.            
+           05  WS-NUM-AGE-CHILD            PIC 9(02)   VALUE ZEROES.            
+           05  WS-NUM-AGE-CHILD-NSC        PIC 9(02)   VALUE ZEROES.            
+           05  WS-BROSIS-AGE-SC            PIC 9(02)   VALUE ZEROES.            
+           05  WS-BROSIS-AGE-NSC           PIC 9(02)   VALUE ZEROES.            
+           05  WS-PEND-AGE-SC              PIC 9(02)   VALUE ZEROES.            
+           05  WS-CHILD-AGE-SC             PIC 9(02)   VALUE ZEROES.            
+           05  WS-NUM-AGE                  PIC 9(08)   VALUE ZEROES.            
+           05  WS-CHILD-AGE REDEFINES WS-NUM-AGE.                               
+               10  WS-AGE-CY               PIC 9(04).                           
+               10  WS-AGE-MM               PIC 9(02).                           
+               10  WS-AGE-DD               PIC 9(02).                           
+           05  WS-NRIC-SP                  PIC X(09)  VALUE SPACES.             
+           05  WS-CITZ-PREG                PIC X(02)  VALUE SPACES.             
+           05  WS-SERS-OFFER-GEN3          PIC X(01)  VALUE SPACES.             
+           05  WS-SERS-DTE-ANNOUNCE        PIC X(08)  VALUE SPACES.             
+                                                                                
+      ******************************************************************        
+       PROCEDURE DIVISION.                                                      
+      ******************************************************************        
+                                                                                
+      ********************                                                      
+       0000-MAIN-ROUTINE.                                                       
+      ********************                                                      
+                                                                                
+           PERFORM 1000-OPEN-FILES         THRU 1000-EXIT.                      
+           PERFORM 2000-READ-BP13F730      THRU 2000-EXIT.                      
+           PERFORM 3000-PROCESS-RECS       THRU 3000-EXIT                       
+             UNTIL WS-F730-EOF = 'Y'.                                           
+           PERFORM 9000-CLOSE-FILES        THRU 9000-EXIT.                      
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************                                                        
+       1000-OPEN-FILES.                                                         
+      ******************                                                        
+                                                                                
+           OPEN INPUT  BP13F730                                                 
+                       BP13K825                                                 
+                       BP13K813                                                 
+                       BP17F100                                                 
+                OUTPUT P13F730A.                                                
+                                                                                
+           IF WS-K825-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'OPENING BP13K825 FILE ERROR ' WS-K825-STATUS             
+              MOVE WS-K825-STATUS          TO RETURN-CODE                       
+              PERFORM 9000-CLOSE-FILES     THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF WS-K813-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'OPENING BP13K813 FILE ERROR ' WS-K813-STATUS             
+              MOVE WS-K813-STATUS          TO RETURN-CODE                       
+              PERFORM 9000-CLOSE-FILES     THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           MOVE SPACES                     TO WS-SERS-OFFER-GEN3                
+                                              WS-SERS-DTE-ANNOUNCE.             
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *********************                                                     
+       2000-READ-BP13F730.                                                      
+      *********************                                                     
+                                                                                
+           READ BP13F730 AT END                                                 
+                MOVE 'Y'                   TO WS-F730-EOF                       
+                GO TO 2000-EXIT.                                                
+                                                                                
+           ADD 1                           TO WS-F730-READ.                     
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ********************                                                      
+       3000-PROCESS-RECS.                                                       
+      ********************                                                      
+                                                                                
+           MOVE SPACES                     TO WS-APPL-MS                        
+                                              WS-OCCP-MS                        
+                                              WS-CHILD-MS                       
+                                              WS-PARENT-MS                      
+                                              WS-GEN3-PEND                      
+                                              WS-GEN3-PEND2                     
+                                              WS-NRIC-SP                        
+                                              WS-CITZ-PREG.                     
+                                                                                
+           INITIALIZE                         WS-NUM-AGE-CHILD                  
+                                              WS-NUM-AGE-CHILD-NSC              
+                                              WS-BROSIS-AGE-SC                  
+                                              WS-BROSIS-AGE-NSC                 
+                                              WS-PEND-AGE-SC                    
+                                              WS-CHILD-AGE-SC.                  
+                                                                                
+           MOVE 'N'                        TO WS-K825-FND                       
+                                              WS-CHILD-FND                      
+                                              WS-NEPHEW-NIECE                   
+                                              WS-CHILD-SC                       
+                                              WS-CHILD-NSC                      
+                                              WS-CHILD-BABY                     
+                                              WS-GCHILD                         
+                                              WS-APPL-ELIG                      
+                                              WS-HA-SINGLE                      
+                                              WS-PREGNANT                       
+                                              WS-CHILD-ADOPTED                  
+                                              WS-CHILD-ONLY                     
+                                              WS-BRO-SIS                        
+                                              WS-PARENT-FND                     
+                                              WS-GEN3-PARENT                    
+                                              WS-GEN3-CHILD                     
+                                              WS-GEN3-PARTNER.                  
+                                                                                
+           IF F730-NUM-ALLO-CAT = 'SER'                                         
+              PERFORM 8500-OFFER-3GEN         THRU 8500-EXIT                    
+                UNTIL WS-EOF-BP17F100 = 'Y'                                     
+           ELSE                                                                 
+              PERFORM 8100-READ-BP13K813      THRU 8100-EXIT                    
+           END-IF.                                                              
+                                                                                
+           PERFORM 4000-STARTBR-K825       THRU 4000-EXIT.                      
+                                                                                
+      *** TO TAG ELIGIBLE APPLICATIONS (WITH MULTI-TIER FAMILY) ***             
+           MOVE SPACES                     TO F730-NUM-GEN3.                    
+           IF K813-NUM-GEN3-TAG = 'Y' OR                                        
+              WS-SERS-OFFER-GEN3 = 'Y'                                          
+                                                                                
+              IF WS-GEN3-PARENT = 'Y' OR WS-GEN3-CHILD = 'Y'                    
+                 IF ((WS-GEN3-PEND = 'P') AND                                   
+                    ((WS-GEN3-PARENT = 'Y' AND WS-CHILD-ONLY = 'Y' AND          
+                      WS-GEN3-PARTNER NOT = 'Y') OR                             
+                     (WS-GEN3-CHILD = 'Y' AND WS-GCHILD = 'Y' AND               
+                      WS-CHILD-MS = 'O'))) OR                                   
+                    ((WS-GEN3-PEND2 = 'P') AND                                  
+                     (WS-GEN3-PARENT = 'Y' AND WS-APPL-MS NOT = 'S' AND         
+      **>>>         ((WS-PARENT-MS = 'M') OR                                    
+      **>>>          (WS-PARENT-MS = 'O' AND WS-GEN3-CHILD = 'Y'))))            
+                    ((WS-PARENT-MS NOT = 'S' AND WS-GEN3-CHILD = 'Y'))))        
+                    MOVE 'P'               TO F730-NUM-GEN3                     
+                 END-IF                                                         
+                 IF (WS-GEN3-PARENT = 'Y' AND WS-GEN3-PARTNER = 'Y') OR         
+                    (WS-GEN3-CHILD = 'Y' AND WS-CHILD-MS = 'M')                 
+                    IF WS-GEN3-PEND = 'P'                                       
+                       MOVE 'P'            TO F730-NUM-GEN3                     
+                    ELSE                                                        
+                       MOVE 'Y'            TO F730-NUM-GEN3                     
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *** TO POPULATE AGE SC AND AGE NSC ***                                    
+           IF (F730-NUM-ELDERLY = 'F' OR 'S') OR                                
+              (F730-NUM-ALLO-CAT = 'ROF' OR 'SER')                              
+              MOVE SPACES               TO F730-NUM-YOUNG-CHILD-AGE-SC          
+                                           F730-NUM-YOUNG-CHILD-AGE-NSC         
+           ELSE                                                                 
+              IF WS-K825-FND = 'Y'                                              
+                 IF WS-CHILD-FND = 'Y'                                          
+                    IF (WS-OCCP-MS = 'S' OR SPACES OR LOW-VALUES) AND           
+                       (WS-APPL-MS = 'S')                                       
+                       MOVE 'N'         TO WS-APPL-ELIG                         
+                    ELSE                                                        
+                       MOVE 'Y'         TO WS-APPL-ELIG                         
+                    END-IF                                                      
+                 END-IF                                                         
+                 PERFORM 3100-EVAL-YOUNGEST   THRU 3100-EXIT                    
+              ELSE                                                              
+                 MOVE 'NC'              TO F730-NUM-YOUNG-CHILD-AGE-SC          
+                                           F730-NUM-YOUNG-CHILD-AGE-NSC         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *** TO POPULATE PPS ELIGIBILITY TAG ***                                   
+           IF (F730-NUM-ELDERLY = 'F' OR 'S') OR                                
+              (F730-NUM-ALLO-CAT = 'ROF' OR 'SER')                              
+              MOVE SPACES                  TO F730-NUM-PPS-ELIG-TAG             
+              ADD 1                        TO WS-PPS-BLANK                      
+           ELSE                                                                 
+              IF (F730-CDE-BALLOT-HOUSEHOLD = 'H' OR 'T' OR 'F') AND            
+                 (WS-NUM-AGE-CHILD <= 18) AND                                   
+                 (WS-NUM-AGE-CHILD NOT = ZEROES) AND                            
+                 (WS-CHILD-SC = 'Y')                                            
+                 PERFORM 3200-DETERMINE-PPS   THRU 3200-EXIT                    
+              ELSE                                                              
+                 MOVE 'N'                  TO F730-NUM-PPS-ELIG-TAG             
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF F730-CDE-BALLOT-HOUSEHOLD = 'H' OR 'T' OR 'F'                     
+              IF F730-NUM-PPS-ELIG-TAG = 'N'                                    
+                 IF WS-PREGNANT = 'Y'                                           
+                    PERFORM 3300-READ-BP13K825 THRU 3300-EXIT                   
+                    IF (WS-CITZ-PREG NOT = '10' AND '20') AND                   
+                       (WS-SP-INELIG = 'Y')                                     
+                       MOVE 'P'            TO F730-NUM-PPS-ELIG-TAG             
+                       ADD 1               TO WS-PPS-PENDING                    
+                    ELSE                                                        
+                       MOVE 'E'            TO F730-NUM-PPS-ELIG-TAG             
+                       ADD 1               TO WS-PPS-PREGNANT                   
+                    END-IF                                                      
+                 ELSE                                                           
+                    IF F730-NUM-FTPMC = 'M' OR 'C' OR 'O' OR 'A'                
+                       MOVE 'F'            TO F730-NUM-PPS-ELIG-TAG             
+                       ADD 1               TO WS-FPPS                           
+                    ELSE                                                        
+                       ADD 1               TO WS-PPS-NO                         
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           ELSE                                                                 
+              IF F730-NUM-PPS-ELIG-TAG = 'N'                                    
+                 ADD 1                     TO WS-PPS-NO-UPG                     
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 7000-WRITE-P13F730A     THRU 7000-EXIT.                      
+           PERFORM 2000-READ-BP13F730      THRU 2000-EXIT.                      
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *********************                                                     
+       3100-EVAL-YOUNGEST.                                                      
+      *********************                                                     
+                                                                                
+           MOVE 'NC'                   TO F730-NUM-YOUNG-CHILD-AGE-SC           
+                                          F730-NUM-YOUNG-CHILD-AGE-NSC.         
+                                                                                
+           IF WS-CHILD-SC = 'Y'                                                 
+              IF WS-CHILD-FND = 'Y' OR WS-NEPHEW-NIECE = 'Y' OR                 
+                 WS-GCHILD = 'Y'                                                
+                 MOVE WS-NUM-AGE-CHILD    TO F730-NUM-YOUNG-CHILD-AGE-SC        
+                 IF WS-NUM-AGE-CHILD = 1 AND WS-CHILD-BABY = 'Y'                
+                    MOVE 'BB'             TO F730-NUM-YOUNG-CHILD-AGE-SC        
+                 END-IF                                                         
+                 IF WS-NUM-AGE-CHILD = ZEROES                                   
+                    MOVE 'NC'             TO F730-NUM-YOUNG-CHILD-AGE-SC        
+                 END-IF                                                         
+              END-IF                                                            
+              IF WS-BRO-SIS = 'Y' AND WS-PARENT-FND = 'Y'                       
+                 IF (WS-BROSIS-AGE-SC NOT = ZEROES) AND                         
+                    (WS-BROSIS-AGE-SC < WS-NUM-AGE-CHILD OR                     
+                     WS-NUM-AGE-CHILD = ZEROES)                                 
+                    MOVE WS-BROSIS-AGE-SC TO F730-NUM-YOUNG-CHILD-AGE-SC        
+                                             WS-NUM-AGE-CHILD                   
+                    IF WS-BROSIS-AGE-SC = 1 AND WS-CHILD-BABY = 'Y'             
+                       MOVE 'BB'          TO F730-NUM-YOUNG-CHILD-AGE-SC        
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-CHILD-NSC = 'Y'                                                
+              IF WS-CHILD-FND = 'Y' OR WS-NEPHEW-NIECE = 'Y' OR                 
+                 WS-GCHILD = 'Y'                                                
+                 MOVE WS-NUM-AGE-CHILD-NSC                                      
+                                       TO F730-NUM-YOUNG-CHILD-AGE-NSC          
+                 IF WS-NUM-AGE-CHILD-NSC = 1 AND WS-CHILD-BABY = 'Y'            
+                    MOVE 'BB'          TO F730-NUM-YOUNG-CHILD-AGE-NSC          
+                 END-IF                                                         
+                 IF WS-NUM-AGE-CHILD-NSC = ZEROES                               
+                    MOVE 'NC'          TO F730-NUM-YOUNG-CHILD-AGE-NSC          
+                 END-IF                                                         
+              END-IF                                                            
+              IF WS-BRO-SIS = 'Y' AND WS-PARENT-FND = 'Y'                       
+                 IF (WS-BROSIS-AGE-NSC NOT = ZEROES) AND                        
+                    (WS-BROSIS-AGE-NSC < WS-NUM-AGE-CHILD-NSC OR                
+                     WS-NUM-AGE-CHILD-NSC = ZEROES)                             
+                    MOVE WS-BROSIS-AGE-NSC                                      
+                                       TO F730-NUM-YOUNG-CHILD-AGE-NSC          
+                    IF WS-BROSIS-AGE-NSC = 1 AND WS-CHILD-BABY = 'Y'            
+                       MOVE 'BB'       TO F730-NUM-YOUNG-CHILD-AGE-NSC          
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *********************                                                     
+       3200-DETERMINE-PPS.                                                      
+      *********************                                                     
+                                                                                
+           IF WS-CHILD-FND = 'Y' AND                                            
+              WS-CHILD-AGE-SC = WS-NUM-AGE-CHILD                                
+              IF WS-APPL-ELIG = 'Y'                                             
+                 MOVE 'Y'                  TO F730-NUM-PPS-ELIG-TAG             
+                 ADD 1                     TO WS-PPS-YES                        
+                 GO TO 3200-EXIT                                                
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-BRO-SIS = 'Y' AND                                              
+              WS-BROSIS-AGE-SC = WS-NUM-AGE-CHILD                               
+              IF WS-PARENT-FND = 'Y'                                            
+                 MOVE 'Y'                  TO F730-NUM-PPS-ELIG-TAG             
+                 ADD 1                     TO WS-PPS-YES                        
+                 GO TO 3200-EXIT                                                
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF (WS-NEPHEW-NIECE = 'Y' OR WS-GCHILD = 'Y') AND                    
+              (WS-PEND-AGE-SC = WS-NUM-AGE-CHILD)                               
+              MOVE 'P'                     TO F730-NUM-PPS-ELIG-TAG             
+              ADD 1                        TO WS-PPS-PENDING                    
+              GO TO 3200-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           MOVE 'N'                        TO F730-NUM-PPS-ELIG-TAG.            
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *********************                                                     
+       3300-READ-BP13K825.                                                      
+      *********************                                                     
+                                                                                
+           MOVE SPACES                     TO BP13K825-REC.                     
+           INITIALIZE                         BP13K825-REC.                     
+                                                                                
+           MOVE 'N'                        TO WS-SP-INELIG.                     
+                                                                                
+           MOVE F730-NUM-REGN              TO K825-NUM-REGN.                    
+           MOVE WS-NRIC-SP                 TO K825-NUM-NRIC.                    
+                                                                                
+           READ BP13K825.                                                       
+                                                                                
+           EVALUATE WS-K825-STATUS                                              
+           WHEN ZEROES                                                          
+              IF K825-NUM-CITIZENSHIP NOT = '10'                                
+                 MOVE 'Y'                  TO WS-SP-INELIG                      
+              END-IF                                                            
+                                                                                
+           WHEN 23                                                              
+              DISPLAY 'RECORD NOT FOUND IN BP13K825 : ' K825-KEY-FLD            
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'ERROR READING ON BP13K825 : ' WS-K825-STATUS             
+              MOVE WS-K825-STATUS          TO RETURN-CODE                       
+              PERFORM 9000-CLOSE-FILES     THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       3300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ********************                                                      
+       4000-STARTBR-K825.                                                       
+      ********************                                                      
+                                                                                
+           MOVE SPACES                     TO BP13K825-REC.                     
+           INITIALIZE                         BP13K825-REC.                     
+                                                                                
+           MOVE 'N'                        TO WS-K825-EOF.                      
+                                                                                
+           MOVE F730-NUM-REGN              TO K825-NUM-REGN.                    
+                                                                                
+           START BP13K825 KEY >= K825-KEY-FLD.                                  
+                                                                                
+           EVALUATE WS-K825-STATUS                                              
+           WHEN ZEROES                                                          
+           WHEN 02                                                              
+              PERFORM 5000-READNEXT-K825   THRU 5000-EXIT                       
+              PERFORM 6000-PROCESS-K825    THRU 6000-EXIT                       
+                UNTIL WS-K825-EOF = 'Y'                                         
+                                                                                
+           WHEN 10                                                              
+           WHEN 23                                                              
+              CONTINUE                                                          
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'START ERROR BP13K825 : ' WS-K825-STATUS                  
+                      ' REGN : ' K825-NUM-REGN                                  
+              MOVE WS-K825-STATUS          TO RETURN-CODE                       
+              PERFORM 9000-CLOSE-FILES     THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *********************                                                     
+       5000-READNEXT-K825.                                                      
+      *********************                                                     
+                                                                                
+           READ BP13K825 NEXT RECORD.                                           
+                                                                                
+           EVALUATE WS-K825-STATUS                                              
+           WHEN ZEROES                                                          
+              CONTINUE                                                          
+                                                                                
+           WHEN 23                                                              
+           WHEN 10                                                              
+              DISPLAY 'RECORD NOT FOUND IN BP13K825 : ' K825-KEY-FLD            
+              MOVE 'Y'                     TO WS-K825-EOF                       
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'ERROR READING ON BP13K825'                               
+              MOVE WS-K825-STATUS          TO RETURN-CODE                       
+              PERFORM 9000-CLOSE-FILES     THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ********************                                                      
+       6000-PROCESS-K825.                                                       
+      ********************                                                      
+                                                                                
+           IF F730-NUM-REGN = K825-NUM-REGN                                     
+              MOVE 'Y'                     TO WS-K825-FND                       
+                                                                                
+              IF K825-NUM-NRIC = F730-NUM-NRIC1 OR F730-NUM-NRIC2 OR            
+                                 F730-NUM-NRIC3 OR F730-NUM-NRIC4               
+                 IF K825-NUM-MARITAL-STATUS = '1'                               
+                    MOVE 'Y'               TO WS-HA-SINGLE                      
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              IF K825-NUM-PPS-PREGNANT = 'Y' AND                                
+                 K825-NUM-MARITAL-STATUS NOT = '1' AND                          
+                 F730-CDE-ELIG-SCH NOT = 'FS '                                  
+                 MOVE K825-NUM-NRIC-SPOUSE TO WS-NRIC-SP                        
+                 MOVE K825-NUM-CITIZENSHIP TO WS-CITZ-PREG                      
+                 MOVE 'Y'                  TO WS-PREGNANT                       
+              END-IF                                                            
+                                                                                
+              IF K825-NUM-MARITAL-STATUS = '5'                                  
+                 MOVE 'P'                  TO WS-GEN3-PEND                      
+              END-IF                                                            
+                                                                                
+              EVALUATE K825-NUM-RELATIONSHIP                                    
+              WHEN '00'                                                         
+                 EVALUATE K825-NUM-MARITAL-STATUS                               
+                 WHEN '1'                                                       
+                    MOVE 'S'               TO WS-APPL-MS                        
+                 WHEN '2'                                                       
+                    MOVE 'M'               TO WS-APPL-MS                        
+                 WHEN '3'                                                       
+                    MOVE 'W'               TO WS-APPL-MS                        
+                 WHEN '4'                                                       
+                    MOVE 'D'               TO WS-APPL-MS                        
+                    MOVE 'P'               TO WS-GEN3-PEND2                     
+                 WHEN '5'                                                       
+                    MOVE 'P'               TO WS-APPL-MS                        
+                    MOVE 'P'               TO WS-GEN3-PEND2                     
+                 WHEN OTHER                                                     
+                    MOVE 'O'               TO WS-APPL-MS                        
+                 END-EVALUATE                                                   
+                                                                                
+              WHEN '08'                                                         
+                 MOVE 'Y'                  TO WS-NEPHEW-NIECE                   
+                 PERFORM 8000-COMPUTE-AGE  THRU 8000-EXIT                       
+                                                                                
+              WHEN '09'                                                         
+                 IF K825-NUM-MARITAL-STATUS = '1'                               
+                    MOVE 'S'               TO WS-OCCP-MS                        
+                 ELSE                                                           
+                    MOVE 'O'               TO WS-OCCP-MS                        
+                 END-IF                                                         
+      *          IF K825-NUM-CITIZENSHIP = '10' OR '20'                         
+                    MOVE 'Y'               TO WS-GEN3-PARTNER                   
+      *          END-IF                                                         
+                                                                                
+              WHEN '20'                                                         
+                 MOVE 'Y'                  TO WS-GEN3-PARTNER                   
+      *          IF K825-NUM-CITIZENSHIP = '10' OR '20'                         
+      *             CONTINUE                                                    
+      *          ELSE                                                           
+      *             MOVE 'P'               TO WS-GEN3-PEND                      
+      *          END-IF                                                         
+                                                                                
+              WHEN '39'                                                         
+                 MOVE 'Y'                  TO WS-CHILD-FND                      
+                                              WS-CHILD-ADOPTED                  
+                 PERFORM 8000-COMPUTE-AGE  THRU 8000-EXIT                       
+                                                                                
+              WHEN '41'                                                         
+                 MOVE 'Y'                  TO WS-CHILD-FND                      
+                                              WS-CHILD-ONLY                     
+                 IF K825-NUM-MARITAL-STATUS = '2'                               
+                    MOVE 'M'               TO WS-CHILD-MS                       
+                 ELSE                                                           
+                    IF K825-NUM-MARITAL-STATUS NOT = '1'                        
+                       MOVE 'O'            TO WS-CHILD-MS                       
+                    END-IF                                                      
+                 END-IF                                                         
+                 IF K825-NUM-CITIZENSHIP = '10' OR '20'                         
+                    MOVE 'Y'               TO WS-GEN3-CHILD                     
+                 END-IF                                                         
+                 PERFORM 8000-COMPUTE-AGE  THRU 8000-EXIT                       
+                                                                                
+              WHEN '06'                                                         
+              WHEN '07'                                                         
+                 MOVE 'Y'                  TO WS-BRO-SIS                        
+                 PERFORM 8000-COMPUTE-AGE  THRU 8000-EXIT                       
+                                                                                
+              WHEN '43'                                                         
+              WHEN '45'                                                         
+                 MOVE 'Y'                  TO WS-GCHILD                         
+                 PERFORM 8000-COMPUTE-AGE  THRU 8000-EXIT                       
+                                                                                
+              WHEN '38'                                                         
+                 MOVE 'Y'                  TO WS-CHILD-ADOPTED                  
+                                                                                
+              WHEN '02'                                                         
+              WHEN '12'                                                         
+              WHEN '22'                                                         
+              WHEN '32'                                                         
+                 IF K825-NUM-NRIC = F730-NUM-NRIC1 OR F730-NUM-NRIC2 OR         
+                                    F730-NUM-NRIC3 OR F730-NUM-NRIC4            
+                    IF (K825-NUM-MARITAL-STATUS = '2' OR '3' OR '4') AND        
+                       (K825-NUM-CITIZENSHIP = '10')                            
+                       MOVE 'Y'            TO WS-PARENT-FND                     
+                    END-IF                                                      
+                 END-IF                                                         
+                 IF K825-NUM-CITIZENSHIP = '10' OR '20'                         
+                    IF K825-NUM-MARITAL-STATUS = '2'                            
+                       MOVE 'Y'            TO WS-GEN3-PARENT                    
+                       MOVE 'M'            TO WS-PARENT-MS                      
+                    ELSE                                                        
+                       IF K825-NUM-MARITAL-STATUS NOT = '1'                     
+                          MOVE 'Y'         TO WS-GEN3-PARENT                    
+                          MOVE 'O'         TO WS-PARENT-MS                      
+                       END-IF                                                   
+                    END-IF                                                      
+                 END-IF                                                         
+                                                                                
+              WHEN OTHER                                                        
+                 CONTINUE                                                       
+              END-EVALUATE                                                      
+           ELSE                                                                 
+              MOVE 'Y'                     TO WS-K825-EOF                       
+           END-IF.                                                              
+                                                                                
+           PERFORM 5000-READNEXT-K825      THRU 5000-EXIT.                      
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      **********************                                                    
+       7000-WRITE-P13F730A.                                                     
+      **********************                                                    
+                                                                                
+           MOVE SPACES                     TO P13F730A-REC.                     
+           INITIALIZE                         P13F730A-REC.                     
+                                                                                
+           IF (F730-NUM-ELDERLY = 'F' OR 'S') OR                                
+              (F730-NUM-ALLO-CAT = 'ROF') OR                                    
+              (F730-CDE-BALLOT-HOUSEHOLD = 'G' OR SPACES OR LOW-VALUES)         
+              CONTINUE                                                          
+           ELSE                                                                 
+           IF WS-HA-SINGLE = 'Y' AND WS-CHILD-ONLY = 'Y' AND                    
+              WS-CHILD-SC = 'Y' AND WS-NUM-AGE-CHILD <= 18 AND                  
+              WS-NUM-AGE-CHILD NOT = ZEROES                                     
+              MOVE 'Y'                     TO BP13F730-REC(9:1)                 
+              ADD 1                        TO WS-PPS-SINGLE                     
+           END-IF                                                               
+           IF WS-CHILD-ADOPTED = 'Y'                                            
+              MOVE 'Y'                     TO BP13F730-REC(10:1)                
+              ADD 1                        TO WS-PPS-ADOPTED                    
+           END-IF                                                               
+           END-IF.                                                              
+                                                                                
+           WRITE P13F730A-REC              FROM BP13F730-REC.                   
+           ADD 1                           TO WS-730A-WRITE.                    
+                                                                                
+       7000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *******************                                                       
+       8000-COMPUTE-AGE.                                                        
+      *******************                                                       
+                                                                                
+           IF K825-NUM-MARITAL-STATUS NOT = '1'                                 
+              GO TO 8000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           IF F730-NUM-ALLO-CAT = 'SER'                                         
+              IF WS-SERS-DTE-ANNOUNCE NOT NUMERIC                               
+                 MOVE ZEROES               TO WS-DTE-REQUEST                    
+              ELSE                                                              
+                 MOVE WS-SERS-DTE-ANNOUNCE TO WS-DTE-REQUEST                    
+              END-IF                                                            
+           ELSE                                                                 
+              IF F730-DTE-REQUEST NOT NUMERIC                                   
+                 MOVE ZEROES               TO WS-DTE-REQUEST                    
+              ELSE                                                              
+                 MOVE F730-DTE-REQUEST     TO WS-DTE-REQUEST                    
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF K825-DTE-BIRTH NOT NUMERIC                                        
+              MOVE ZEROES                  TO WS-DTE-CHILD-BIRTH                
+           ELSE                                                                 
+              MOVE K825-DTE-BIRTH          TO WS-DTE-CHILD-BIRTH                
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-REQUEST > WS-DTE-CHILD-BIRTH                               
+              COMPUTE WS-NUM-AGE = WS-DTE-REQUEST -                             
+                                   WS-DTE-CHILD-BIRTH                           
+           ELSE                                                                 
+      *** FOR CHILD THAT WAS BORN AFTER LAUNCH DATE ***                         
+              MOVE 1                       TO WS-AGE-CY                         
+              MOVE 'Y'                     TO WS-CHILD-BABY                     
+           END-IF.                                                              
+                                                                                
+      *** FOR CHILD LESS THAN 1 YEAR OLD ***                                    
+           IF (WS-AGE-CY = ZEROES) AND                                          
+              (WS-AGE-MM > ZEROES OR WS-AGE-DD > ZEROES)                        
+              COMPUTE WS-AGE-CY = WS-AGE-CY + 1                                 
+              MOVE 'Y'                     TO WS-CHILD-BABY                     
+           END-IF.                                                              
+                                                                                
+      *** FOR SINGLE SINGAPORE CITIZEN CHILD ***                                
+           IF K825-NUM-MARITAL-STATUS = '1'                                     
+              IF K825-NUM-CITIZENSHIP = '10'                                    
+                 MOVE 'Y'                  TO WS-CHILD-SC                       
+                 IF K825-NUM-RELATIONSHIP = '06' OR '07'                        
+                    IF WS-BROSIS-AGE-SC = ZEROES                                
+                       MOVE WS-AGE-CY      TO WS-BROSIS-AGE-SC                  
+                    ELSE                                                        
+                       IF WS-AGE-CY < WS-BROSIS-AGE-SC                          
+                          MOVE WS-AGE-CY   TO WS-BROSIS-AGE-SC                  
+                       END-IF                                                   
+                    END-IF                                                      
+                 ELSE                                                           
+                    IF WS-NUM-AGE-CHILD = ZEROES                                
+                       MOVE WS-AGE-CY      TO WS-NUM-AGE-CHILD                  
+                    ELSE                                                        
+                       IF WS-AGE-CY < WS-NUM-AGE-CHILD                          
+                          MOVE WS-AGE-CY   TO WS-NUM-AGE-CHILD                  
+                       END-IF                                                   
+                    END-IF                                                      
+                    IF K825-NUM-RELATIONSHIP = '08' OR '43' OR '45'             
+                       IF WS-PEND-AGE-SC = ZEROES                               
+                          MOVE WS-AGE-CY      TO WS-PEND-AGE-SC                 
+                       ELSE                                                     
+                          IF WS-AGE-CY < WS-PEND-AGE-SC                         
+                             MOVE WS-AGE-CY   TO WS-PEND-AGE-SC                 
+                          END-IF                                                
+                       END-IF                                                   
+                    END-IF                                                      
+                    IF K825-NUM-RELATIONSHIP = '39' OR '41'                     
+                       IF WS-CHILD-AGE-SC = ZEROES                              
+                          MOVE WS-AGE-CY      TO WS-CHILD-AGE-SC                
+                       ELSE                                                     
+                          IF WS-AGE-CY < WS-CHILD-AGE-SC                        
+                             MOVE WS-AGE-CY   TO WS-CHILD-AGE-SC                
+                          END-IF                                                
+                       END-IF                                                   
+                    END-IF                                                      
+                 END-IF                                                         
+              ELSE                                                              
+      *** FOR SINGLE NON-SINGAPORE CITIZEN CHILD ***                            
+                 MOVE 'Y'                  TO WS-CHILD-NSC                      
+                 IF K825-NUM-RELATIONSHIP = '06' OR '07'                        
+                    IF WS-BROSIS-AGE-NSC = ZEROES                               
+                       MOVE WS-AGE-CY      TO WS-BROSIS-AGE-NSC                 
+                    ELSE                                                        
+                       IF WS-AGE-CY < WS-BROSIS-AGE-NSC                         
+                          MOVE WS-AGE-CY   TO WS-BROSIS-AGE-NSC                 
+                       END-IF                                                   
+                    END-IF                                                      
+                 ELSE                                                           
+                    IF WS-NUM-AGE-CHILD-NSC = ZEROES                            
+                       MOVE WS-AGE-CY         TO WS-NUM-AGE-CHILD-NSC           
+                    ELSE                                                        
+                       IF WS-AGE-CY < WS-NUM-AGE-CHILD-NSC                      
+                          MOVE WS-AGE-CY      TO WS-NUM-AGE-CHILD-NSC           
+                       END-IF                                                   
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       8000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *********************                                                     
+       8100-READ-BP13K813.                                                      
+      *********************                                                     
+                                                                                
+           MOVE SPACES                     TO BP13K813-REC.                     
+           INITIALIZE                         BP13K813-REC.                     
+                                                                                
+           MOVE F730-CDE-NT1               TO K813-NUM-ZONE.                    
+           MOVE F730-CDE-FLAT-TYPE         TO K813-NUM-FLAT-TYPE.               
+           MOVE F730-DTE-BALLOT            TO K813-DTE-BALLOT.                  
+                                                                                
+           READ BP13K813.                                                       
+                                                                                
+           EVALUATE WS-K813-STATUS                                              
+           WHEN ZEROES                                                          
+           WHEN 02                                                              
+              CONTINUE                                                          
+                                                                                
+           WHEN 23                                                              
+              DISPLAY 'RECORD NOT FOUND IN BP13K813 : ' K813-KEY-FLD            
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'ERROR READING ON BP13K813 : ' WS-K813-STATUS             
+              MOVE WS-K813-STATUS          TO RETURN-CODE                       
+              PERFORM 9000-CLOSE-FILES     THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       8100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *******************                                                       
+       8500-OFFER-3GEN.                                                         
+      *******************                                                       
+      * READ FILES TO GET ANNOUNCEMENT SITE OFFER 3GEN REPFLAT                  
+      *    MOVE 'Y' TO  WS-SERS-OFFER-GEN3                                      
+                                                                                
+           READ BP17F100 AT END                                                 
+                MOVE 'Y' TO WS-EOF-BP17F100                                     
+                GO TO 8500-EXIT.                                                
+                                                                                
+           MOVE F100-NUM-OFFER-3GEN     TO WS-SERS-OFFER-GEN3                   
+           MOVE F100-DTE-ANNOUNCE       TO WS-SERS-DTE-ANNOUNCE.                
+                                                                                
+       8500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *******************                                                       
+       9000-CLOSE-FILES.                                                        
+      *******************                                                       
+                                                                                
+           DISPLAY SPACES.                                                      
+           DISPLAY '*================ BP13CF72 ================*'.              
+           DISPLAY '  NO OF F730 RECORDS READ     = ' WS-F730-READ.             
+           DISPLAY '  NO OF 730A RECORDS WRITTEN  = ' WS-730A-WRITE.            
+           DISPLAY '  NO OF PPS ELIGIBLE          = ' WS-PPS-YES.               
+           DISPLAY '  NO OF PPS NOT ELIGIBLE      = ' WS-PPS-NO.                
+           DISPLAY '  NO OF PPS NOT ELIGIBLE(UPG) = ' WS-PPS-NO-UPG.            
+           DISPLAY '  NO OF PPS PENDING           = ' WS-PPS-PENDING.           
+           DISPLAY '  NO OF PPS PREGNANT          = ' WS-PPS-PREGNANT.          
+           DISPLAY '  NO OF PPS BLANK(ELD/ROF)    = ' WS-PPS-BLANK.             
+           DISPLAY '  NO OF FPPS                  = ' WS-FPPS.                  
+           DISPLAY '  NO OF SINGLE HA W/ SC CHILD = ' WS-PPS-SINGLE.            
+           DISPLAY '  NO OF RELATIONSHIP = 38/39  = ' WS-PPS-ADOPTED.           
+           DISPLAY '*==========================================*'.              
+                                                                                
+           CLOSE BP13F730                                                       
+                 BP13K825                                                       
+                 BP13K813                                                       
+                 BP17F100                                                       
+                 P13F730A.                                                      
+                                                                                
+           IF WS-K825-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'CLOSING BP13K825 FILE ERROR ' WS-K825-STATUS             
+              MOVE WS-K825-STATUS          TO RETURN-CODE                       
+           END-IF.                                                              
+                                                                                
+           IF WS-K813-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'CLOSING BP13K813 FILE ERROR ' WS-K813-STATUS             
+              MOVE WS-K813-STATUS          TO RETURN-CODE                       
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+        9000-EXIT.                                                              
+            EXIT.                                                               
+                                                                                
+

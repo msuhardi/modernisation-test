@@ -1,0 +1,266 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CH04.                                                 
+      *AUTHOR.        MSD1.                                                     
+      *DATE-WRITTEN.  24/06/2008.                                               
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (BP13)                                *            
+      * ========================================================== *            
+      *                                                            *            
+      * OBJECTIVES:                                                *            
+      * 1. DAILY, UPDATE BOOKING STATUS TO BALLOT LOG FILE FOR     *            
+      *    COMPUTATION OF UNSUCC ATTEMPT.                          *            
+      *    BOOKED STATUS =BF, CASES BOOKED A FLAT                   *           
+      *                   LF, CASES DID NOT BOOK, WITHIN FLAT LIMIT *           
+      *                   WF, CASES DID NOT BOOK, OUSIDE FLAT LIMIT *           
+      * ---------------------------------------------------------- *            
+      * CHG REF   BY    DATE      DETAILS                          *            
+      * -------   ====  ========= ================================ *            
+      * BP133367  MSD1  20080624  NEW PGM                          *            
+      * BP133452  MSD1  20081017  ALLOW BK-ST UPDATE TO LF OR WF   *            
+      *                           WHEN IT IS NOT NF/SF OR NC/SC    *            
+      * BP133555  ESA1  20090303  CATER FOR NV                     *            
+      * BP133840  PCL3  20100316  TO UPDATE BOOK-STATUS TO 'NE'    *            
+      * BP134388  ZDD1  20111012  ADD LS AND WS FOR HH = G                      
+      * BP135039  IMC1  20130912  CATER FOR FTS CASES                           
+      * BP139545  JM23  20231106  POLICY CHANGE STARTING           *            
+      *                           FROM 202310                      *            
+      * ========================================================== *            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+           SELECT BP13FH15  ASSIGN        TO BP13FH15.                          
+                                                                                
+           SELECT BP13K595  ASSIGN        TO BP13K595                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K595-KEY-FLD                       
+                            FILE STATUS   IS BP13K595-STATUS.                   
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD   BP13FH15                                                            
+            RECORD CONTAINS 200 CHARACTERS                                      
+            BLOCK CONTAINS 0 RECORDS                                            
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13FH15.                                                           
+                                                                                
+       FD   BP13K595                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BP13K595.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01 WS-COUNTERS.                                                          
+          05 WS-FH15-READ         PIC 9(08) VALUE ZEROES.                       
+          05 WS-FH15-FOUND        PIC 9(08) VALUE ZEROES.                       
+          05 WS-FH15-NOTFND       PIC 9(08) VALUE ZEROES.                       
+          05 WS-K595-UPDATE       PIC 9(08) VALUE ZEROES.                       
+                                                                                
+       01 WS-FILE-STATUS.                                                       
+          05 BP13K595-STATUS      PIC 9(02) VALUE ZEROES.                       
+          05 WS-K595-EOF          PIC X     VALUE 'N'.                          
+          05 WS-K595-FND          PIC X     VALUE 'N'.                          
+                                                                                
+       01 WS-VARIABLES.                                                         
+          05 WS-CDE-HH            PIC X     VALUE SPACE.                        
+                                                                                
+      *01 WS-VARIABLES.                                                         
+                                                                                
+      *-------------------------------------------------------------            
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN.                                                               
+      *-------------------------------------------------------------            
+           PERFORM 1000-OPEN-FILES     THRU 1000-EXIT.                          
+           PERFORM 3000-PROCESS-DATA   THRU 3000-EXIT                           
+             UNTIL FH15-NUM-REGN = HIGH-VALUES.                                 
+           PERFORM 9000-CLOSE-ROUTINE  THRU 9000-EXIT.                          
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       1000-OPEN-FILES.                                                         
+      *-------------------------------------------------------------            
+           OPEN INPUT  BP13FH15                                                 
+                I-O    BP13K595.                                                
+                                                                                
+           IF BP13K595-STATUS  NOT = 00 AND 97                                  
+              DISPLAY 'ERROR OPENING - BP13K595 : ' BP13K595-STATUS             
+              MOVE     BP13K595-STATUS      TO RETURN-CODE                      
+              PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-READ-BP13FH15  THRU 2000-EXIT.                          
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2000-READ-BP13FH15.                                                      
+      *-------------------------------------------------------------            
+           READ BP13FH15 AT END                                                 
+             MOVE HIGH-VALUES TO FH15-NUM-REGN                                  
+             GO TO 2000-EXIT.                                                   
+                                                                                
+           ADD 1              TO WS-FH15-READ.                                  
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3000-PROCESS-DATA.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES          TO  K595-KEY-FLD.                               
+           MOVE FH15-NUM-REGN   TO  K595-NUM-REGN-REF.                          
+                                                                                
+           MOVE 'N'             TO  WS-K595-EOF                                 
+                                    WS-K595-FND.                                
+                                                                                
+           START BP13K595 KEY >= K595-KEY-FLD.                                  
+           EVALUATE BP13K595-STATUS                                             
+           WHEN 00                                                              
+                PERFORM 4000-READNEXT-BP13K595 THRU 4000-EXIT                   
+                   UNTIL K595-NUM-REGN-REF NOT = FH15-NUM-REGN                  
+                      OR WS-K595-EOF = 'Y'                                      
+           WHEN 10                                                              
+           WHEN 23                                                              
+                DISPLAY 'BP13K595 RECORD NOT FOUND  = ' K595-KEY-FLD            
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR START BP13K595, STATUS  '                        
+                        BP13K595-STATUS                                         
+                        ',  REGN ' K595-NUM-REGN-REF                            
+                MOVE BP13K595-STATUS TO RETURN-CODE                             
+                PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+           IF WS-K595-FND = 'Y'                                                 
+              ADD  1       TO WS-FH15-FOUND                                     
+           ELSE                                                                 
+              ADD  1       TO WS-FH15-NOTFND                                    
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-READ-BP13FH15 THRU 2000-EXIT.                           
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4000-READNEXT-BP13K595.                                                  
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13K595 NEXT RECORD                                            
+                AT END MOVE 'Y' TO WS-K595-EOF.                                 
+                                                                                
+           EVALUATE BP13K595-STATUS                                             
+           WHEN 00                                                              
+           WHEN 02                                                              
+                IF K595-NUM-REGN-REF = FH15-NUM-REGN                            
+                   MOVE 'Y'      TO WS-K595-FND                                 
+                   IF (K595-CDE-REQUEST-STATUS NOT = SPACES AND                 
+                                                     LOW-VALUES) AND            
+                      (K595-NUM-NT-FT-QUEUE NOT = SPACES AND LOW-VALUES)        
+                      PERFORM 5000-REWRITE-BP13K595 THRU 5000-EXIT              
+                   END-IF                                                       
+                ELSE                                                            
+                   MOVE 'Y'      TO WS-K595-EOF                                 
+                END-IF                                                          
+           WHEN 10                                                              
+           WHEN 23                                                              
+                MOVE 'Y'         TO WS-K595-EOF                                 
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR READING BP13K595, STATUS '                       
+                        BP13K595-STATUS ',  REGN ' K595-NUM-REGN-REF            
+                MOVE BP13K595-STATUS            TO RETURN-CODE                  
+                PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       5000-REWRITE-BP13K595.                                                   
+      *-------------------------------------------------------------            
+                                                                                
+           IF K595-CDE-BALLOT-HOUSEHOLD = SPACES OR LOW-VALUES                  
+              MOVE K595-CDE-HOUSEHOLD        TO WS-CDE-HH                       
+           ELSE                                                                 
+              MOVE K595-CDE-BALLOT-HOUSEHOLD TO WS-CDE-HH                       
+           END-IF.                                                              
+                                                                                
+           IF FH15-NUM-BOOK = 'N'                                               
+              IF FH15-NUM-ALLOC-TAG = 'NE'                                      
+                 MOVE FH15-NUM-ALLOC-TAG        TO K595-NUM-BOOK-STATUS         
+              ELSE                                                              
+                 IF K595-NUM-BOOK-STATUS NOT = 'NF' AND 'NC' AND                
+                                               'SF' AND 'SC' AND                
+                                               'NV'                             
+                    IF FH15-NUM-BOOK-STATUS = SPACES OR LOW-VALUES              
+                       MOVE FH15-NUM-ALLOC-TAG TO FH15-NUM-BOOK-STATUS          
+                    END-IF                                                      
+      ***   BP139545 STARTS BY JM23   ***                                       
+                    IF FH15-NUM-BOOK-STATUS  = 'LF' OR 'WF' OR 'LS' OR          
+                                               'LG' OR 'WG' OR 'WS' OR          
+                                               'LA' OR 'WA' OR 'LB' OR          
+                                               'WB' OR 'LH' OR 'LI' OR          
+                                               'LJ' OR 'LK' OR 'LL' OR          
+                                               'WH' OR 'WI' OR 'WJ' OR          
+                                               'WK' OR 'WL'                     
+      ***   BP139545 ENDS   BY JM23   ***                                       
+                       MOVE FH15-NUM-BOOK-STATUS TO K595-NUM-BOOK-STATUS        
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           ELSE                                                                 
+              MOVE 'BF'                         TO K595-NUM-BOOK-STATUS         
+           END-IF.                                                              
+                                                                                
+           REWRITE BP13K595-REC.                                                
+                                                                                
+           EVALUATE BP13K595-STATUS                                             
+           WHEN 00                                                              
+               ADD   1      TO WS-K595-UPDATE                                   
+           WHEN OTHER                                                           
+               DISPLAY 'BP13K595 REWRITE ERROR STATUS ' BP13K595-STATUS         
+                       ' KEY IS ' K595-KEY-FLD                                  
+               MOVE BP13K595-STATUS          TO RETURN-CODE                     
+               PERFORM 9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       9000-CLOSE-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           DISPLAY ' BP13CH04 CONTROL TOTAL '.                                  
+           DISPLAY '------------------------------------------'.                
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO OF RECS READ FROM BP13FH15  : ' WS-FH15-READ.            
+           DISPLAY 'NO OF RECS FOUND     BP13FH15  : ' WS-FH15-FOUND.           
+           DISPLAY 'NO OF RECS NOT FOUND BP13FH15  : ' WS-FH15-NOTFND.          
+           DISPLAY 'NO OF RECS UPDATED   BP13K595  : ' WS-K595-UPDATE.          
+                                                                                
+           CLOSE BP13FH15                                                       
+                 BP13K595.                                                      
+                                                                                
+           IF BP13K595-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'ERROR CLOSING - BP13K595 : ' BP13K595-STATUS             
+              MOVE BP13K595-STATUS TO RETURN-CODE.                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

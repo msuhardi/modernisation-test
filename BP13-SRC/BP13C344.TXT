@@ -1,0 +1,533 @@
+      *------------------------*                                                
+       IDENTIFICATION DIVISION.                                                 
+      *------------------------*                                                
+       PROGRAM-ID.   BP13C344.                                                  
+      *AUTHOR.       MCC.                                                       
+      *DTE-WRITTEN.  11 JANUARY 2003.                                           
+                                                                                
+      * ============================================================= *         
+      * SYSTEM OF COMMITMENT  (BP13)                                  *         
+      * ============================================================= *         
+      *    OBJECTIVE  :                                               *         
+      *            PROGRAM TO MATCH ALL BANK LOAN CASES AGAINST       *         
+      *            BP13K440.                                          *         
+      *            TO DETECT CASES WHICH SWITCH TO BANK LOAN AFTER    *         
+      *            ACCEPTANCE OF FLAT.                                *         
+      *                                                               *         
+      *     INPUT FILES:                                              *         
+      *         1. BP13F800 - SOC MASTER                              *         
+      *         2. BP13K440 - S&P FILE                                *         
+      *         2. SY02F001 - DATE FILE                               *         
+      *                                                               *         
+      *     I-O   FILE:                                               *         
+      *         2. BP13K310 - TRANS FILE                              *         
+      *                                                               *         
+      *     OUTPUT FILES:                                             *         
+      *         1. BP13L344 - LISTING OF MISSING CASES                *         
+      *                                                               *         
+      * ------------------------------------------------------------- *         
+      * CHG NO   DATE     BY   DESCRIPTION                            *         
+      * -------  -------- ---  -----------                            *         
+      * BP132249 11012003 MCC  NEW-PROGRAM                            *         
+      * BP13     13052003 MCC  CHECK IF KEYISSUED                     *         
+      * BP132814 18022006 LSB  ADD DBSS FLAT ACCEPTANCE (PREV ONLY BO)*         
+      *                        ONLY BOOKED AFTER 20060410 FOR HDB LOAN*         
+      * BP132841 07082006 LSB  BANK LOAN UPDATED AFTER 20060410       *         
+      * BP133250 14032008 RB12 ADD CHECKING OF CURRENT DATE AGAINST   *         
+      *                        K110 DTE ACCEPTANCE FOR DBSS CASES     *         
+      * BP133508 28032009 LMS1 ADD CHECKING OF CURRENT DATE AGAINST   *         
+      *                        K110 DTE ACCEPTANCE FOR NPL CASES      *         
+      *****************************************************************         
+                                                                                
+      ******************************************************************        
+       ENVIRONMENT DIVISION.                                                    
+      ******************************************************************        
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F800 ASSIGN TO BP13F800.                                  
+                                                                                
+           SELECT SY02F001 ASSIGN TO SY02F001.                                  
+                                                                                
+           SELECT BP13K440 ASSIGN TO BP13K440                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  ACCESS MODE     IS RANDOM                                     
+                  RECORD KEY      IS K440-NUM-REGN                              
+                  FILE STATUS     IS WS-K440-STATUS.                            
+                                                                                
+           SELECT BP13K310 ASSIGN TO BP13K310                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  ACCESS MODE     IS RANDOM                                     
+                  RECORD KEY      IS K310-KEY-FLD                               
+                  FILE STATUS     IS WS-K310-STATUS.                            
+                                                                                
+           SELECT BM06K110 ASSIGN TO BM06K110                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  ACCESS MODE     IS RANDOM                                     
+                  RECORD KEY      IS K110-KEY-FLD                               
+                  FILE STATUS     IS WS-K110-STATUS.                            
+                                                                                
+           SELECT BP13L344 ASSIGN TO BP13L344.                                  
+                                                                                
+                                                                                
+      ******************************************************************        
+       DATA DIVISION.                                                           
+      ******************************************************************        
+       FILE SECTION.                                                            
+                                                                                
+       FD  BP13F800                                                             
+           RECORDING MODE IS F.                                                 
+       COPY BP13F800.                                                           
+                                                                                
+       COPY SY02F001.                                                           
+                                                                                
+       FD  BP13K440.                                                            
+       COPY BP13K440.                                                           
+                                                                                
+       FD  BP13K310.                                                            
+       COPY BP13K310.                                                           
+                                                                                
+       FD  BM06K110.                                                            
+       COPY BM06K110.                                                           
+                                                                                
+       FD  BP13L344                                                             
+           RECORDING MODE IS F                                                  
+           LABEL RECORDS ARE STANDARD.                                          
+       01 BP13L344-REC           PIC X(132).                                    
+                                                                                
+                                                                                
+      ******************************************************************        
+       WORKING-STORAGE SECTION.                                                 
+      ******************************************************************        
+       01  WS-VARIABLES.                                                        
+           05 WS-CURRENT-DATE        PIC X(8) VALUE SPACES.                     
+                                                                                
+       01  WS-FLAGS-AND-FILE-STATUS.                                            
+           05 WS-F800-EOF            PIC X(1) VALUE 'N'.                        
+           05 WS-KEY-ISSUED          PIC X(1) VALUE 'N'.                        
+           05 WS-K440-STATUS         PIC 9(2) VALUE ZEROES.                     
+           05 WS-K310-STATUS         PIC 9(2) VALUE ZEROES.                     
+           05 WS-K110-STATUS         PIC 9(2) VALUE ZEROES.                     
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05 WS-F800-READ           PIC 9(5) VALUE ZEROES.                     
+           05 WS-K440-READ           PIC 9(5) VALUE ZEROES.                     
+           05 WS-K440-NOTFD          PIC 9(5) VALUE ZEROES.                     
+           05 WS-K310-READ           PIC 9(5) VALUE ZEROES.                     
+           05 WS-K310-NOTFD          PIC 9(5) VALUE ZEROES.                     
+           05 WS-K310-WRITE          PIC 9(5) VALUE ZEROES.                     
+           05 WS-K310-REWRITE        PIC 9(5) VALUE ZEROES.                     
+           05 WS-K110-READ           PIC 9(5) VALUE ZEROES.                     
+           05 WS-K110-NOTFD          PIC 9(5) VALUE ZEROES.                     
+           05 WS-L344-PRINT          PIC 9(5) VALUE ZEROES.                     
+           05 WS-SKIP-RECS           PIC 9(5) VALUE ZEROES.                     
+           05 WS-LINE-CNT            PIC 9(5) VALUE 60.                         
+           05 WS-PAGE-CNT            PIC 9(5) VALUE ZEROS.                      
+           05 WS-SNO                 PIC 9(5) VALUE ZEROS.                      
+           05 WS-REC-PRINTED         PIC 9(5) VALUE ZEROS.                      
+           05 WS-KISSUE-RECS       PIC 9(5) VALUE ZEROS.                        
+                                                                                
+                                                                                
+      *============================================================*            
+      *         BP13L344  -  R E P O R T    L A Y O U T            *            
+      *============================================================*            
+                                                                                
+       01  L344-HEADER-01.                                                      
+           05  FILLER              PIC X(08)     VALUE 'BP13L344'.              
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  FILLER              PIC X(08)     VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(25)     VALUE SPACES.                  
+           05  FILLER              PIC X(40)     VALUE                          
+               'S Y S T E M   O F   C O M M I T M E N T '.                      
+           05  FILLER              PIC X(12)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE 'DATE :'.                
+           05  L344-RUN-DATE       PIC X(10)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE 'PAGE : '.               
+           05  L344-PAGE-NO        PIC ZZZZ9 .                                  
+                                                                                
+       01  L344-HEADER-02.                                                      
+           05  FILLER              PIC X(45)     VALUE SPACES.                  
+           05  FILLER              PIC X(43)     VALUE                          
+               'LIST OF BANK LOAN CASES MISSING IN BP13K440'.                   
+           05  FILLER              PIC X(45)     VALUE SPACES.                  
+                                                                                
+       01  L344-HEADER-03.                                                      
+           05  FILLER              PIC X(48)     VALUE  SPACES.                 
+           05  FILLER              PIC X(05)     VALUE 'SNO  '.                 
+           05  FILLER              PIC X(03)     VALUE  SPACES.                 
+           05  FILLER              PIC X(08)     VALUE 'REGN NO'.               
+           05  FILLER              PIC X(03)     VALUE  SPACES.                 
+           05  FILLER              PIC X(14)    VALUE '   SCH ACC    '.         
+           05  FILLER              PIC X(02)     VALUE  SPACES.                 
+           05  FILLER              PIC X(14)    VALUE ' LOAN-TAG     '.         
+                                                                                
+       01  L344-HEADER-04.                                                      
+           05  FILLER              PIC X(48)     VALUE  SPACES.                 
+           05  FILLER              PIC X(33)     VALUE ALL '-'.                 
+                                                                                
+       01  L344-DETAIL.                                                         
+           05  FILLER              PIC X(48)     VALUE  SPACES.                 
+           05  L344-SNO            PIC ZZZZ9.                                   
+           05  FILLER              PIC X(03)     VALUE  SPACES.                 
+           05  L344-REGN           PIC X(08)     VALUE  SPACES.                 
+           05  FILLER              PIC X(03)     VALUE  SPACES.                 
+           05  L344-SCHACC         PIC X(14)     VALUE  SPACES.                 
+           05  FILLER              PIC X(02)     VALUE  SPACES.                 
+           05  L344-LOAN-TAG       PIC X(14)     VALUE  SPACES.                 
+                                                                                
+       01  L344-EMPTY-RPT.                                                      
+           05  FILLER              PIC X(39)     VALUE  SPACES.                 
+           05  FILLER              PIC X(53)     VALUE                          
+               'EMPTY REPORT : NO BANK LOAN CASES MISSING IN BP13K440'.         
+                                                                                
+                                                                                
+      ******************************************************************        
+       PROCEDURE DIVISION.                                                      
+      ******************************************************************        
+                                                                                
+      *---------------*                                                         
+       000-MAIN-LOGIC.                                                          
+      *---------------*                                                         
+            PERFORM 100-OPEN-FILES   THRU 100-EXIT.                             
+            PERFORM 150-READ-F001    THRU 150-EXIT.                             
+            PERFORM 200-READ-F800    THRU 200-EXIT.                             
+            PERFORM 300-PROCESS      THRU 300-EXIT                              
+                    UNTIL WS-F800-EOF = 'Y'.                                    
+            PERFORM 999-CLOSE-FILES  THRU 999-EXIT.                             
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------*                                                         
+       100-OPEN-FILES.                                                          
+      *---------------*                                                         
+           OPEN INPUT  BP13F800                                                 
+                       BP13K440                                                 
+                       BM06K110                                                 
+                       SY02F001                                                 
+                I-O    BP13K310                                                 
+                OUTPUT BP13L344.                                                
+                                                                                
+           IF WS-K440-STATUS NOT = ZEROS AND 97                                 
+              DISPLAY 'OPENING ERROR, K440-STATUS ' WS-K440-STATUS              
+              MOVE WS-K440-STATUS       TO RETURN-CODE.                         
+                                                                                
+           IF WS-K310-STATUS NOT = ZEROS AND 97                                 
+              DISPLAY 'OPENING ERROR, K310-STATUS ' WS-K310-STATUS              
+              MOVE WS-K310-STATUS       TO RETURN-CODE.                         
+                                                                                
+           IF WS-K110-STATUS NOT = ZEROS AND 97                                 
+              DISPLAY 'ERROR OPENING   BM06K110, STATUS ' WS-K110-STATUS        
+              MOVE WS-K110-STATUS       TO RETURN-CODE.                         
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8) TO WS-CURRENT-DATE.                  
+           STRING WS-CURRENT-DATE(7:2) '/' WS-CURRENT-DATE(5:2) '/'             
+                  WS-CURRENT-DATE(1:4)  DELIMITED BY SIZE                       
+                  INTO L344-RUN-DATE.                                           
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *--------------*                                                          
+       150-READ-F001.                                                           
+      *--------------*                                                          
+           READ SY02F001.                                                       
+           DISPLAY 'SY02 F001-DTE-CURRENT: ' F001-DTE-CURRENT.                  
+                                                                                
+       150-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *--------------*                                                          
+       200-READ-F800.                                                           
+      *--------------*                                                          
+           READ BP13F800 AT END                                                 
+           MOVE 'Y'                      TO WS-F800-EOF                         
+           GO TO 200-EXIT.                                                      
+                                                                                
+           ADD 1                         TO WS-F800-READ.                       
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *------------*                                                            
+       300-PROCESS.                                                             
+      *------------*                                                            
+      *----------------------------------------------------*                    
+      * CHECK AGAINST BP13K440. IF FOUND, SKIP RECORD.                          
+      * IF NOT FOUND, CHECK AGAINST TRANS FILE(BP13K310).                       
+      * IF A 'BO' TRANS IS FOUND, REWRITE BP13K310.                             
+      * IF NO 'BO' TRANS FOUND, WRITE BP13K310.                                 
+      *----------------------------------------------------*                    
+           MOVE SPACES           TO BP13K440-REC.                               
+           MOVE F800-NUM-REGN    TO K440-NUM-REGN.                              
+                                                                                
+           READ BP13K440.                                                       
+           IF WS-K440-STATUS = 00                                               
+              ADD 1          TO WS-K440-READ                                    
+              ADD 1          TO WS-SKIP-RECS                                    
+           ELSE                                                                 
+              IF WS-K440-STATUS = 23                                            
+                 ADD 1       TO WS-K440-NOTFD                                   
+                 PERFORM 400-CHECK-K310 THRU 400-EXIT                           
+              ELSE                                                              
+                 DISPLAY 'ERROR READ BP13K440,STATUS ' WS-K440-STATUS           
+                 MOVE WS-K440-STATUS     TO RETURN-CODE                         
+                 GO TO 999-CLOSE-FILES.                                         
+                                                                                
+           PERFORM 200-READ-F800    THRU 200-EXIT.                              
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------*                                                         
+       400-CHECK-K310.                                                          
+      *---------------*                                                         
+           PERFORM 450-READ-BM06K110 THRU 450-EXIT.                             
+           IF (WS-KEY-ISSUED = 'Y') OR                                          
+              (F800-NUM-ALLO-CAT = 'DBS' AND                                    
+               F001-DTE-CURRENT = K110-DTE-ACCEPTANCE) OR                       
+              (F800-NUM-ALLO-CAT = 'NPL' AND                                    
+               F001-DTE-CURRENT = K110-DTE-ACCEPTANCE)                          
+              GO TO 400-EXIT.                                                   
+                                                                                
+           MOVE SPACES           TO BP13K310-TRANS-REC.                         
+           MOVE F800-NUM-REGN    TO K310-REGN-NO.                               
+           MOVE 'BO'             TO K310-CDE-TRANS.                             
+                                                                                
+           READ BP13K310.                                                       
+           IF WS-K310-STATUS = 00                                               
+              ADD 1                     TO   WS-K310-READ                       
+              PERFORM 600-REWRITE-K310  THRU 600-EXIT                           
+           ELSE                                                                 
+              IF WS-K310-STATUS = 23                                            
+                 ADD 1                  TO   WS-K310-NOTFD                      
+                 PERFORM 700-WRITE-K310 THRU 700-EXIT                           
+              ELSE                                                              
+                 DISPLAY 'ERROR READ BP13K310,STATUS ' WS-K310-STATUS           
+                 MOVE WS-K310-STATUS     TO  RETURN-CODE                        
+                 GO TO 999-CLOSE-FILES                                          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 800-PRINT-REPORT THRU 800-EXIT.                              
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *------------------*                                                      
+       450-READ-BM06K110.                                                       
+      *------------------*                                                      
+           MOVE 'N'              TO WS-KEY-ISSUED.                              
+           MOVE F800-NUM-SCH-ACC TO K110-SCH-ACC-NO.                            
+                                                                                
+           READ BM06K110.                                                       
+           IF WS-K110-STATUS = 00                                               
+              ADD 1              TO WS-K110-READ                                
+              IF (K110-DTE-KEY-ISSUED NOT = SPACES AND LOW-VALUES               
+                                        AND ZEROES) OR                          
+              ((K110-DTE-ACCEPTANCE  < '20060410') AND                          
+               (F800-NUM-LOAN-TAG = 'H' OR F800-NUM-LOAN-TAG = 'N' OR           
+                F800-NUM-LOAN-TAG = SPACES))                                    
+                 MOVE 'Y'              TO WS-KEY-ISSUED                         
+                 ADD 01                TO WS-KISSUE-RECS                        
+              END-IF                                                            
+           ELSE                                                                 
+              MOVE SPACES TO K110-REC                                           
+              IF WS-K110-STATUS = 23                                            
+                 ADD 1           TO WS-K110-NOTFD                               
+                 DISPLAY 'REC NOTFD BM06K110 ' WS-K110-STATUS ' '               
+                                               F800-NUM-SCH-ACC                 
+              ELSE                                                              
+                 DISPLAY 'ERROR READING   BM06K110, STATUS '                    
+                                                    WS-K110-STATUS              
+                 MOVE WS-K110-STATUS     TO RETURN-CODE                         
+                 GO TO 999-CLOSE-FILES.                                         
+                                                                                
+       450-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *----------------------*                                                  
+       500-MOVE-DATA-TO-FLDS.                                                   
+      *----------------------*                                                  
+           MOVE SPACES              TO BP13K310-TRANS-REC.                      
+           INITIALIZE                  BP13K310-TRANS-REC.                      
+                                                                                
+           MOVE F800-NUM-REGN       TO K310-REGN-NO.                            
+           MOVE 'BO'                TO K310-CDE-TRANS.                          
+           MOVE 'BP13C344'          TO K310-USERID.                             
+           MOVE F800-NUM-SCH-ACC    TO K310-SCH-ACC.                            
+           MOVE WS-CURRENT-DATE     TO K310-DTE-UPDATE.                         
+           MOVE SPACES              TO K310-DTE-TRANS.                          
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------------*                                                   
+       600-REWRITE-K310.                                                        
+      *---------------------*                                                   
+           PERFORM 500-MOVE-DATA-TO-FLDS THRU 500-EXIT.                         
+                                                                                
+           REWRITE BP13K310-TRANS-REC.                                          
+                                                                                
+           IF WS-K310-STATUS = 00                                               
+              ADD 1               TO WS-K310-REWRITE                            
+           ELSE                                                                 
+              IF WS-K310-STATUS = 23                                            
+                 ADD 1            TO WS-K310-NOTFD                              
+                 DISPLAY 'REC NOTFD BP13K310 ' WS-K310-STATUS ' '               
+                                               F800-NUM-REGN 'BO'               
+              ELSE                                                              
+                 DISPLAY 'ERROR REWRITING BP13K310,STATUS '                     
+                                                   WS-K310-STATUS               
+                 MOVE WS-K310-STATUS     TO RETURN-CODE                         
+                 GO TO 999-CLOSE-FILES.                                         
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *---------------*                                                         
+       700-WRITE-K310.                                                          
+      *---------------*                                                         
+           PERFORM 500-MOVE-DATA-TO-FLDS THRU 500-EXIT.                         
+                                                                                
+           WRITE BP13K310-TRANS-REC.                                            
+                                                                                
+           IF WS-K310-STATUS = 00 OR 02 OR 22                                   
+              ADD 1 TO WS-K310-WRITE                                            
+           ELSE                                                                 
+              DISPLAY 'ERROR WRITING BP13K310,STATUS ' WS-K310-STATUS           
+              MOVE WS-K310-STATUS     TO RETURN-CODE                            
+              GO TO 999-CLOSE-FILES.                                            
+                                                                                
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-----------------*                                                       
+       800-PRINT-REPORT.                                                        
+      *-----------------*                                                       
+           IF WS-LINE-CNT > 50                                                  
+              PERFORM 850-WRITE-HEADING THRU 850-EXIT                           
+           END-IF.                                                              
+                                                                                
+           MOVE SPACES TO L344-DETAIL.                                          
+           INITIALIZE     L344-DETAIL.                                          
+                                                                                
+           ADD 01                     TO WS-SNO.                                
+           MOVE WS-SNO                TO L344-SNO.                              
+                                                                                
+           MOVE F800-NUM-REGN         TO L344-REGN.                             
+                                                                                
+           IF F800-NUM-SCH-ACC NOT = SPACES AND LOW-VALUES                      
+              STRING F800-NUM-SCH-ACC(1:4) '-'                                  
+                     F800-NUM-SCH-ACC(5:4) '-'                                  
+                     F800-NUM-SCH-ACC(9:1) '-'                                  
+                     F800-NUM-SCH-ACC(10:2)                                     
+                     DELIMITED BY SIZE INTO L344-SCHACC.                        
+           MOVE F800-NUM-LOAN-TAG     TO L344-LOAN-TAG.                         
+                                                                                
+           MOVE SPACES TO BP13L344-REC.                                         
+           WRITE BP13L344-REC FROM L344-DETAIL.                                 
+                                                                                
+           ADD 01 TO WS-REC-PRINTED.                                            
+           ADD 01 TO WS-LINE-CNT.                                               
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-----------------------------*                                           
+       850-WRITE-HEADING.                                                       
+      *-----------------------------*                                           
+            MOVE   ZEROS                TO   WS-LINE-CNT.                       
+            ADD    1                    TO   WS-PAGE-CNT.                       
+            MOVE   WS-PAGE-CNT          TO   L344-PAGE-NO.                      
+            MOVE   SPACES TO BP13L344-REC.                                      
+            WRITE  BP13L344-REC         FROM L344-HEADER-01 AFTER PAGE.         
+            MOVE   SPACES TO BP13L344-REC.                                      
+            WRITE  BP13L344-REC         FROM L344-HEADER-02.                    
+            MOVE   SPACES TO BP13L344-REC.                                      
+            WRITE  BP13L344-REC.                                                
+                                                                                
+            WRITE  BP13L344-REC         FROM L344-HEADER-03.                    
+            WRITE  BP13L344-REC         FROM L344-HEADER-04.                    
+            ADD 5                       TO   WS-LINE-CNT.                       
+                                                                                
+       850-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *----------------*                                                        
+       999-CLOSE-FILES.                                                         
+      *----------------*                                                        
+           IF WS-REC-PRINTED = ZEROES                                           
+              PERFORM 850-WRITE-HEADING THRU 850-EXIT                           
+              MOVE   SPACES TO BP13L344-REC                                     
+              WRITE            BP13L344-REC                                     
+              MOVE   SPACES TO BP13L344-REC                                     
+              WRITE  BP13L344-REC FROM L344-EMPTY-RPT                           
+           END-IF.                                                              
+                                                                                
+           DISPLAY ' '.                                                         
+           DISPLAY '*----------------- BP13C344 -------------------'.           
+                                                                                
+           DISPLAY 'NO OF REC READ      BP13F800     = '                        
+                    WS-F800-READ.                                               
+           DISPLAY 'NO OF REC SKIPPED   BP13F800     = '                        
+                    WS-SKIP-RECS.                                               
+           DISPLAY 'NO OF REC READ      BP13K440     = '                        
+                    WS-K440-READ.                                               
+           DISPLAY 'NO OF REC NOTFD     BP13K440     = '                        
+                    WS-K440-NOTFD.                                              
+           DISPLAY 'NO OF REC READ      BP13K310     = '                        
+                    WS-K310-READ.                                               
+           DISPLAY 'NO OF REC NOTFD     BP13K310     = '                        
+                    WS-K310-NOTFD.                                              
+           DISPLAY 'NO OF REC WRITTEN   BP13K310     = '                        
+                    WS-K310-WRITE.                                              
+           DISPLAY 'NO OF REC REWRITTEN BP13K310     = '                        
+                    WS-K310-REWRITE.                                            
+           DISPLAY 'NO OF REC READ      BM06K110     = '                        
+                    WS-K110-READ.                                               
+           DISPLAY 'NO OF REC NOTFD     BM06K110     = '                        
+                    WS-K110-NOTFD.                                              
+           DISPLAY 'NO OF RECS KEY ISSUED            = '                        
+                    WS-KISSUE-RECS.                                             
+           DISPLAY 'NO OF RECS PRINTED IN BP13L344   = '                        
+                    WS-L344-PRINT.                                              
+                                                                                
+           CLOSE BP13F800                                                       
+                 BP13K440                                                       
+                 BP13K310                                                       
+                 BM06K110                                                       
+                 SY02F001                                                       
+                 BP13L344.                                                      
+                                                                                
+           IF WS-K440-STATUS NOT = ZEROS AND 97                                 
+              DISPLAY 'CLOSING ERROR, K440-STATUS ' WS-K440-STATUS              
+              MOVE WS-K440-STATUS       TO RETURN-CODE.                         
+                                                                                
+           IF WS-K310-STATUS NOT = ZEROS AND 97                                 
+              DISPLAY 'CLOSING ERROR, K310-STATUS ' WS-K310-STATUS              
+              MOVE WS-K310-STATUS       TO RETURN-CODE.                         
+                                                                                
+           IF WS-K110-STATUS NOT = ZEROS AND 97                                 
+              DISPLAY 'ERROR CLOSING   BM06K110, STATUS ' WS-K110-STATUS        
+              MOVE WS-K110-STATUS       TO RETURN-CODE.                         
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       999-EXIT.                                                                
+           EXIT.                                                                
+

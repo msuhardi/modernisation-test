@@ -1,0 +1,599 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C066.                                                 
+      *AUTHOR.        SAUL SIO.                                                 
+      *DATE-WRITTEN.  06/07/2006.                                               
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (BP13)                                *            
+      * ========================================================== *            
+      * OBJECTIVE  : EMAIL PROVISIONAL ACCEPTANCE CASES EXPIRED    *            
+      *                                                            *            
+      * INPUT      : BP13TEMP (FROM BP13C065)                      *            
+      *            : BP13CSM  (FROM BP13C065)                      *            
+      * OUTPUT     : BP13MAIL - OUTPUT FILE FOR SENDING EMAIL      *            
+      * ---------------------------------------------------------- *            
+      * CHG REF  DATE     BY    DESCRIPTIONS                       *            
+      * -------- -------- ----- ------------                       *            
+      * BP132798 20060706 SSS2  NEW PROGRAM                        *            
+      * BP132798 20060707 SSS2  SENT ONLY TO AFFECTED CSM          *            
+      * BP133570 20090427 LMS1  TO CHANGE PROV-TAG FROM 'N' TO 'A' *            
+      * BP133738 20091013 DW5   TO remove LN1 and add CCK6         *            
+      * BP135686 20150326 RJB1  TO INCLUDE SAMUEL_TB_ANG AND CHANGE*            
+      *                         FROM NICKNAME TO COMPLETE NAME     *            
+      * BP136477 20161018 RJB1  TO REPLACE KIM HUAT TO YEE MIEN    *            
+      * BP137076 20171201 KAM4  TO REPLACE CHONG HOCK AND TECK KIM *            
+      *                            TO KIA BOON.                    *            
+      * BP137047 20180613 ESA1  TO ADD Milly_YY_LEE@HDB.GOV.SG IN  *            
+      *                         THE CC LIST                        *            
+      * BP138317 20200521 KR13  UPDATE EMAIL LIST.                 *            
+      * BP138579 20210108 KR13  ADD Geraldine_WS_QUEK TO CC LIST.  *            
+      * BP139262 20220725 KAC1  To remove GOH_Li_Li@hdb.gov.sg     *            
+      * BP139262 20220808 KAC1  CHANGE BP13CCNT CALL TO DYNAMIC    *            
+      * BP139652 20230728 KAC1  To remove WONG_Guoyin@hdb.gov.sg   *            
+      * ========================================================== *            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+           SELECT BP13CSM  ASSIGN TO BP13CSM.                                   
+           SELECT BP13TEMP ASSIGN TO BP13TEMP.                                  
+                                                                                
+           SELECT BP13MAIL ASSIGN TO BP13MAIL.                                  
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD   BP13CSM                                                             
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 50 CHARACTERS                                       
+            RECORDING MODE IS F.                                                
+       01   BP13CSM-REC.                                                        
+            05 FILLER                PIC X(8).                                  
+            05 CSM-NUM-OIC           PIC X(5).                                  
+            05 FILLER                PIC X(37).                                 
+                                                                                
+       FD   BP13TEMP                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 50 CHARACTERS                                       
+            RECORDING MODE IS F.                                                
+       01   BP13TEMP-REC.                                                       
+            05 TEMP-NUM-REGN         PIC X(8).                                  
+            05 TEMP-NUM-OIC          PIC X(5).                                  
+            05 TEMP-DTE-ACCEPTANCE   PIC X(8).                                  
+            05 TEMP-DAYS-OS          PIC 9(3).                                  
+            05 TEMP-PROV-REASON-CDE  PIC X(2).                                  
+            05 TEMP-PROV-REASON-DESC PIC X(20).                                 
+            05 FILLER                PIC X(4).                                  
+                                                                                
+       FD  BP13MAIL                                                             
+           RECORD CONTAINS 80 CHARACTERS                                        
+           RECORDING  MODE  IS F.                                               
+       01  MAIL-PRTREC                   PIC X(80).                             
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01 WS-TEMP-EOF                    PIC X     VALUE 'N'.                   
+       01 WS-CSM-EOF                     PIC X     VALUE 'N'.                   
+       01 WS-TEMP-READ                   PIC 9(6)  VALUE ZEROS.                 
+       01 WS-SNO                         PIC 9(4)  VALUE ZEROS.                 
+                                                                                
+       01 WS-DATE                        PIC X(8)  VALUE SPACES.                
+                                                                                
+       01 WS-INDEX                       PIC 9(3)  VALUE ZEROS.                 
+       01 WS-BP13CCNT                    PIC X(8)  VALUE 'BP13CCNT'.            
+                                                                                
+       01  WS-EMAILINGID.                                                       
+           05 WS-EMAIL-RECS OCCURS 200 TIMES INDEXED BY WS-IDX.                 
+              10  WS-MAIL-ID             PIC X(60) VALUE SPACES.                
+                                                                                
+      *---------------------------------------------------------------*         
+      *        LINKAGE FOR BP13CCNT                                   *         
+      *---------------------------------------------------------------*         
+       01  WS-LINK-REC-CCNT.                                                    
+           05  WS-LINK-CNTCT-TYPE        PIC X(3).                              
+           05  WS-LINK-STAFF-NICK        PIC X(6).                              
+           05  WS-LINK-STAFF-NUM         PIC X(6).                              
+           05  WS-LINK-STAFF-CNTCT       PIC X(50).                             
+           05  WS-LINK-SYSERR            PIC 9(4).                              
+                                                                                
+      *-------------------------------------------------------------            
+      * LAYOUT BP13MAIL  -  DATASET FOR EMAIL                                   
+      *-------------------------------------------------------------            
+       01  MAIL-HDR1.                                                           
+           05  FILLER          PIC X(12)  VALUE 'HELO SGPHDB1'.                 
+           05  FILLER          PIC X(68)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-HDR2.                                                           
+           05  FILLER          PIC X(11)  VALUE 'MAIL FROM:<'.                  
+           05  MAIL-SENDID     PIC X(04)  VALUE 'OPCP'.                         
+           05  FILLER          PIC X(09)  VALUE '@SGPHDB1>'.                    
+           05  FILLER          PIC X(56)  VALUE SPACES.                         
+                                                                                
+      *  for testing purpose -------                                            
+      *01  MAIL-HDR1.                                                           
+      *    05  FILLER          PIC X(12)  VALUE 'HELO SGPHDB3'.                 
+      *    05  FILLER          PIC X(68)  VALUE SPACES.                         
+      *                                                                         
+      *01  MAIL-HDR2.                                                           
+      *    05  FILLER          PIC X(11)  VALUE 'MAIL FROM:<'.                  
+      *    05  MAIL-SENDID     PIC X(07)  VALUE 'CSXXXXX'.                      
+      *    05  FILLER          PIC X(09)  VALUE '@SGPHDB3>'.                    
+      *    05  FILLER          PIC X(53)  VALUE SPACES.                         
+      *                                                                         
+       01  MAIL-DTL1.                                                           
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  MAILRCPTTOID    PIC X(60)  VALUE SPACES.                         
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+      *01  MAIL-DTL2.                                                           
+      *    05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+      *    05  FILLER          PIC X(60)  VALUE                                 
+      *        'WONG_Guoyin@hdb.gov.sg>'.                                       
+      *    05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2B.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  FILLER          PIC X(60)  VALUE                                 
+               'TAN_PIAK_HONG@HDB.GOV.SG>'.                                     
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2C.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  FILLER          PIC X(60)  VALUE                                 
+               'LEE_Kia_Boon@HDB.GOV.SG>'.                                      
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2F.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  FILLER          PIC X(60)  VALUE                                 
+               'KHOR_Li_Ting@hdb.gov.sg>'.                                      
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2G.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Patricia_YJ_TAY@hdb.gov.sg>'.                                   
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2H.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  FILLER          PIC X(60)  VALUE                                 
+               'SAMUEL_TB_ANG@HDB.GOV.SG>'.                                     
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2I.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Milly_YY_LEE@HDB.GOV.SG>'.                                      
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2J.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Jerlynn_JJ_MA@hdb.gov.sg>'.                                     
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2K.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Serene_YL_TAN@hdb.gov.sg>'.                                     
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2L.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  FILLER          PIC X(60)  VALUE                                 
+               'NG_Siew_Meng@hdb.gov.sg>'.                                      
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2M.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Soffia_RAPHAY@hdb.gov.sg>'.                                     
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2N.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Geraldine_WS_QUEK@hdb.gov.sg>'.                                 
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL3.                                                           
+           05  FILLER          PIC X(04)  VALUE 'DATA'.                         
+           05  FILLER          PIC X(76)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL4.                                                           
+           05  FILLER          PIC X(05)  VALUE 'FROM:'.                        
+           05  MAIL-SENDMAILID PIC X(26)  VALUE                                 
+               'SOC System - Email Alert'.                                      
+           05  FILLER          PIC X(49)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL5.                                                           
+           05  FILLER          PIC X(04)   VALUE 'TO:<'.                        
+           05  MAILTOID        PIC X(60)  VALUE SPACES.                         
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+      *01  MAIL-DTL6.                                                           
+      *    05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+      *    05  FILLER          PIC X(60)  VALUE                                 
+      *        'WONG_Guoyin@hdb.gov.sg>'.                                       
+      *    05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6B.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  FILLER          PIC X(60)  VALUE                                 
+               'TAN_PIAK_HONG@HDB.GOV.SG>'.                                     
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6C.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  FILLER          PIC X(60)  VALUE                                 
+               'LEE_Kia_Boon@HDB.GOV.SG>'.                                      
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6F.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  FILLER          PIC X(60)  VALUE                                 
+               'KHOR_Li_Ting@hdb.gov.sg>'.                                      
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6G.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Patricia_YJ_TAY@hdb.gov.sg>'.                                   
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6H.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  FILLER          PIC X(60)  VALUE                                 
+               'SAMUEL_TB_ANG@HDB.GOV.SG>'.                                     
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6I.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Milly_YY_LEE@HDB.GOV.SG>'.                                      
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6J.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Jerlynn_JJ_MA@hdb.gov.sg>'.                                     
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6K.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Serene_YL_TAN@hdb.gov.sg>'.                                     
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6L.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  FILLER          PIC X(60)  VALUE                                 
+               'NG_Siew_Meng@hdb.gov.sg>'.                                      
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6M.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Soffia_RAPHAY@hdb.gov.sg>'.                                     
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6N.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  FILLER          PIC X(60)  VALUE                                 
+               'Geraldine_WS_QUEK@hdb.gov.sg>'.                                 
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL7.                                                           
+           05  FILLER          PIC X(10)  VALUE 'SUBJECT : '.                   
+           05  MAIL-SUBJECT    PIC X(40)  VALUE                                 
+               'REPORT ON PROVISIONAL ACCEPTANCE CASES  '.                      
+           05  FILLER          PIC X(30)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-BODY01.                                                         
+           05 FILLER                   PIC X(6)   VALUE 'DATE: '.               
+           05 MAIL-DATE                PIC X(10)  VALUE SPACES.                 
+                                                                                
+       01  MAIL-BODY02.                                                         
+           05 FILLER                   PIC X(50)  VALUE                         
+              '    The following are provisional acceptance cases'.             
+           05 FILLER                   PIC X(30)  VALUE                         
+              ' which have been outstanding  '.                                 
+                                                                                
+       01  MAIL-BODY02B.                                                        
+           05 FILLER                   PIC X(50)  VALUE                         
+              'for at least 14 days. Please go through the cases '.             
+           05 FILLER                   PIC X(30)  VALUE                         
+              'and follow up urgently.       '.                                 
+                                                                                
+       01  MAIL-BODY03.                                                         
+           05 FILLER                   PIC X(50)  VALUE                         
+              'If the outstanding issues have already been resolv'.             
+           05 FILLER                   PIC X(30)  VALUE                         
+              'ed, please update the Prov    '.                                 
+                                                                                
+       01  MAIL-BODY03B.                                                        
+           05 FILLER                   PIC X(50)  VALUE                         
+              'Tag in SOC to "A".                                '.             
+           05 FILLER                   PIC X(30)  VALUE                         
+              '                              '.                                 
+                                                                                
+       01  MAIL-BODY04.                                                         
+           05 FILLER                   PIC X(4)   VALUE SPACES.                 
+           05 FILLER                   PIC X(4)   VALUE 'S/NO'.                 
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 FILLER                   PIC X(8)   VALUE 'REGN    '.             
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 FILLER                   PIC X(5)   VALUE 'OIC  '.                
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 FILLER                   PIC X(10)  VALUE 'DTE ACCEPT'.           
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 FILLER                   PIC X(3)   VALUE 'O/S'.                  
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 FILLER                   PIC X(6)   VALUE 'REASON'.               
+           05 FILLER                   PIC X(11)  VALUE SPACES.                 
+                                                                                
+       01  MAIL-BODY05.                                                         
+           05 FILLER                   PIC X(4)   VALUE SPACES.                 
+           05 FILLER                   PIC X(72)  VALUE ALL '-'.                
+                                                                                
+       01  MAIL-BODY06.                                                         
+           05 FILLER                   PIC X(4)   VALUE SPACES.                 
+           05 MAIL-SNO                 PIC ZZZ9   VALUE ZEROS.                  
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 MAIL-NUM-REGN            PIC X(8)   VALUE SPACES.                 
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 MAIL-NUM-OIC             PIC X(5)   VALUE SPACES.                 
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 MAIL-DTE-ACCEPT          PIC X(10)  VALUE SPACES.                 
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 MAIL-DAYS-OS             PIC ZZ9    VALUE SPACES.                 
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 MAIL-CDE-REASON          PIC X(2)   VALUE SPACES.                 
+           05 FILLER                   PIC X      VALUE SPACES.                 
+           05 MAIL-DESC-REASON         PIC X(20)  VALUE SPACES.                 
+           05 FILLER                   PIC X(5)   VALUE SPACES.                 
+                                                                                
+       01  MAIL-END.                                                            
+           05 FILLER                   PIC X      VALUE '.'.                    
+                                                                                
+       01  MAIL-SPACES.                                                         
+           05 FILLER                   PIC X(80)  VALUE SPACES.                 
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN.                                                               
+      *-------------------------------------------------------------            
+           PERFORM 1000-OPEN-ROUTINE     THRU 1000-EXIT.                        
+           PERFORM 2000-READ-BP13TEMP    THRU 2000-EXIT.                        
+           PERFORM 3000-PROCESS-DETAIL   THRU 3000-EXIT                         
+                   UNTIL WS-TEMP-EOF = 'Y'.                                     
+           PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT.                        
+                                                                                
+       0000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       1000-OPEN-ROUTINE.                                                       
+      *-------------------------------------------------------------            
+            OPEN  INPUT  BP13CSM                                                
+                         BP13TEMP                                               
+                  OUTPUT BP13MAIL.                                              
+                                                                                
+            MOVE FUNCTION CURRENT-DATE(1:8) TO WS-DATE.                         
+            STRING WS-DATE(7:2) '/' WS-DATE(5:2) '/' WS-DATE(1:4)               
+                   DELIMITED BY SIZE INTO MAIL-DATE.                            
+                                                                                
+                                                                                
+       1000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       2000-READ-BP13TEMP.                                                      
+      *-------------------------------------------------------------            
+            READ BP13TEMP                                                       
+                 AT END MOVE 'Y' TO WS-TEMP-EOF                                 
+                 GO TO 2000-EXIT.                                               
+                                                                                
+            ADD 1   TO WS-TEMP-READ.                                            
+                                                                                
+       2000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3000-PROCESS-DETAIL.                                                     
+      *-------------------------------------------------------------            
+           MOVE SPACES          TO   MAIL-BODY06.                               
+                                                                                
+           ADD 1 TO WS-SNO.                                                     
+           MOVE WS-SNO TO MAIL-SNO.                                             
+                                                                                
+           IF WS-SNO = 1                                                        
+              PERFORM 6000-OUTPUT-EMAIL-HEADER THRU 6000-EXIT                   
+           END-IF.                                                              
+                                                                                
+           MOVE TEMP-NUM-REGN  TO MAIL-NUM-REGN.                                
+           MOVE TEMP-NUM-OIC   TO MAIL-NUM-OIC.                                 
+           MOVE TEMP-DAYS-OS   TO MAIL-DAYS-OS.                                 
+           MOVE TEMP-PROV-REASON-CDE TO MAIL-CDE-REASON.                        
+           MOVE TEMP-PROV-REASON-DESC TO MAIL-DESC-REASON.                      
+                                                                                
+           STRING TEMP-DTE-ACCEPTANCE(7:2) '/'                                  
+                  TEMP-DTE-ACCEPTANCE(5:2) '/'                                  
+                  TEMP-DTE-ACCEPTANCE(1:4)                                      
+                  DELIMITED BY SIZE INTO MAIL-DTE-ACCEPT.                       
+                                                                                
+           WRITE MAIL-PRTREC FROM MAIL-BODY06.                                  
+                                                                                
+           PERFORM 2000-READ-BP13TEMP  THRU 2000-EXIT.                          
+                                                                                
+       3000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6000-OUTPUT-EMAIL-HEADER.                                                
+      *-------------------------------------------------------------            
+                                                                                
+           WRITE MAIL-PRTREC FROM MAIL-HDR1                                     
+           WRITE MAIL-PRTREC FROM MAIL-HDR2.                                    
+                                                                                
+           PERFORM 7000-READ-CSM THRU 7000-EXIT.                                
+           PERFORM 7500-WRITE-CSM THRU 7500-EXIT                                
+                   UNTIL WS-CSM-EOF = 'Y'.                                      
+                                                                                
+      *    WRITE MAIL-PRTREC FROM MAIL-DTL2.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL2B.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL2C.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL2F.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL2G.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL2H.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL2I.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL2J.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL2K.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL2L.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL2M.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL2N.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL3.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL4.                                    
+                                                                                
+           SET WS-IDX TO 1.                                                     
+           PERFORM 7800-PRINT-MAILTO THRU 7800-EXIT                             
+              VARYING WS-IDX FROM 1 BY 1                                        
+              UNTIL WS-MAIL-ID(WS-IDX) = SPACES.                                
+                                                                                
+      *    WRITE MAIL-PRTREC FROM MAIL-DTL6.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL6B.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL6C.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL6F.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL6G.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL6H.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL6I.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL6J.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL6K.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL6L.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL6M.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL6N.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL7.                                    
+           WRITE MAIL-PRTREC FROM MAIL-BODY01.                                  
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY02.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY02B.                                 
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY03.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY03B.                                 
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY04.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY05.                                  
+                                                                                
+       6000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       7000-READ-CSM.                                                           
+      *-------------------------------------------------------------            
+            READ BP13CSM                                                        
+                 AT END MOVE 'Y' TO WS-CSM-EOF                                  
+                 GO TO 7000-EXIT.                                               
+                                                                                
+       7000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       7500-WRITE-CSM.                                                          
+      *-------------------------------------------------------------            
+           MOVE SPACES                      TO WS-LINK-REC-CCNT.                
+           MOVE CSM-NUM-OIC                 TO WS-LINK-STAFF-NICK.              
+           MOVE 'EML'                       TO WS-LINK-CNTCT-TYPE.              
+                                                                                
+           CALL WS-BP13CCNT USING  WS-LINK-REC-CCNT.                            
+                                                                                
+           EVALUATE WS-LINK-SYSERR                                              
+               WHEN 000                                                         
+                    CONTINUE                                                    
+               WHEN 100                                                         
+                    DISPLAY 'EMAIL ADDRESS NOT FOUND FOR ' CSM-NUM-OIC          
+                    STRING CSM-NUM-OIC DELIMITED BY SPACE                       
+                          '@HDB.GOV.SG' DELIMITED BY SIZE                       
+                                               INTO WS-LINK-STAFF-CNTCT         
+               WHEN OTHER                                                       
+                    DISPLAY 'BP13CCNT ERROR STATUS : ' WS-LINK-SYSERR           
+                    PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT                 
+           END-EVALUATE.                                                        
+                                                                                
+           MOVE SPACES TO MAILRCPTTOID.                                         
+                                                                                
+           STRING WS-LINK-STAFF-CNTCT                                           
+                  DELIMITED BY SPACES                                           
+                  '>'                                                           
+                  DELIMITED BY SIZE                                             
+                  INTO MAILRCPTTOID.                                            
+                                                                                
+           WRITE MAIL-PRTREC FROM MAIL-DTL1.                                    
+                                                                                
+           ADD 1 TO WS-INDEX.                                                   
+           MOVE MAILRCPTTOID TO WS-MAIL-ID(WS-INDEX).                           
+                                                                                
+           PERFORM 7000-READ-CSM THRU 7000-EXIT.                                
+                                                                                
+       7500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       7800-PRINT-MAILTO.                                                       
+      *-------------------------------------------------------------            
+           MOVE SPACES             TO MAILTOID.                                 
+           IF WS-MAIL-ID(WS-IDX) NOT = SPACES                                   
+              MOVE WS-MAIL-ID(WS-IDX) TO MAILTOID                               
+              WRITE MAIL-PRTREC FROM MAIL-DTL5.                                 
+                                                                                
+       7800-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       8000-OUTPUT-EMAIL-FOOTER.                                                
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-END.                                     
+                                                                                
+       8000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       9000-CLOSE-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+           IF WS-SNO > 0                                                        
+              PERFORM 8000-OUTPUT-EMAIL-FOOTER THRU 8000-EXIT                   
+           END-IF.                                                              
+                                                                                
+           DISPLAY ' '.                                                         
+           DISPLAY '- BP13C066 CONTROL LIST --'                                 
+                   ' DATE : ' MAIL-DATE                                         
+           DISPLAY '----------------------------------------'.                  
+           DISPLAY ' TOT BP13TEMP READ     : ' WS-TEMP-READ.                    
+           DISPLAY ' '.                                                         
+                                                                                
+           CLOSE  BP13CSM                                                       
+                  BP13TEMP                                                      
+                  BP13MAIL.                                                     
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+            EXIT.                                                               
+

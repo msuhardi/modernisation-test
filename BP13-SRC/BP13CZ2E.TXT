@@ -1,0 +1,397 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CZ2E.                                                 
+      *AUTHOR.        IRVIN CHING.                                              
+      *DATE-WRITTEN.  26/06/2013.                                               
+      * =========================================================== *           
+      * SYSTEM OF COMMITMENT (BP13)                                 *           
+      * =========================================================== *           
+      *                                                             *           
+      *  OBJECTIVE  :                                               *           
+      *    1. MATCH THE FILE F00K.FILE WITH F595.CY56 TO GET NEW    *           
+      *       BOOK STATUS                                           *           
+      *    2. IF BP13F00K RECORD NOT FOUND, NRIC POSITIONS ARE      *           
+      *       SWITCED AND WRITTEN TO BP13FOUT FOR RERUNNING         *           
+      * ----------------------------------------------------------- *           
+      * =========================================================== *           
+      * CHG REF  BY   ON      DESCRIPTION                           *           
+      * -------- --   --      -----------                           *           
+      * BP134980 IMC1 260613  NEW PROGRAM                           *           
+      * BP135026 IMC1 270813  REMOVE BP13K595 READ IF NOT MATCH     *           
+      * =========================================================== *           
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+                                                                                
+           SELECT BP13F00K  ASSIGN        TO BP13F00K.                          
+           SELECT BP13F595  ASSIGN        TO BP13F595.                          
+           SELECT BP13K595  ASSIGN        TO BP13K595                           
+                            ORGANIZATION  IS INDEXED                            
+                            ACCESS MODE   IS DYNAMIC                            
+                            RECORD KEY    IS K595-KEY-FLD                       
+                            ALTERNATE KEY IS K595-NUM-NRIC1                     
+                            FILE STATUS   IS WS-K595-STATUS.                    
+                                                                                
+           SELECT BP13F730  ASSIGN        TO BP13F730.                          
+           SELECT BP13FOUT  ASSIGN        TO BP13FOUT.                          
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+                                                                                
+       FD   BP13F00K                                                            
+            RECORD CONTAINS 50 CHARACTERS                                       
+            BLOCK CONTAINS 0 RECORDS                                            
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13F00K.                                                           
+                                                                                
+       FD   BP13F595                                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            BLOCK CONTAINS 0 RECORDS                                            
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13F595.                                                           
+                                                                                
+       FD   BP13K595                                                            
+            RECORD CONTAINS  500 CHARACTERS.                                    
+       COPY BP13K595.                                                           
+                                                                                
+       FD   BP13F730                                                            
+            RECORD CONTAINS  500 CHARACTERS                                     
+            RECORDING MODE IS F.                                                
+       01   BP13F730-REC     PIC X(500).                                        
+                                                                                
+       FD   BP13FOUT                                                            
+            RECORD CONTAINS  50 CHARACTERS                                      
+            RECORDING MODE IS F.                                                
+       01   BP13FOUT-REC     PIC X(50).                                         
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-FILE-STATUS.                                                      
+           05  WS-K595-STATUS   PIC 9(2)    VALUE ZEROES.                       
+                                                                                
+       01  WS-SWITCH.                                                           
+           05  WS-F00K-EOF           PIC X(1)       VALUE 'N'.                  
+           05  WS-F595-EOF           PIC X(1)       VALUE 'N'.                  
+           05  WS-K595-EOF           PIC X(1)       VALUE 'N'.                  
+           05  WS-K828-EOF           PIC X(1)       VALUE 'N'.                  
+           05  WS-K828-FND           PIC X(1)       VALUE 'N'.                  
+                                                                                
+       01  WS-COUNT.                                                            
+           05  WS-MATCH-REG          PIC 9(7)       VALUE ZEROS.                
+           05  WS-MATCH-NRIC         PIC 9(7)       VALUE ZEROS.                
+           05  WS-F595-READ          PIC 9(7)       VALUE ZEROS.                
+           05  WS-F00K-READ          PIC 9(7)       VALUE ZEROS.                
+           05  WS-WRITE-K595         PIC 9(7)       VALUE ZEROS.                
+           05  WS-WRITE-F730         PIC 9(7)       VALUE ZEROS.                
+           05  WS-WRITE-FOUT         PIC 9(7)       VALUE ZEROS.                
+           05  WS-CHG-IV             PIC 9(7)       VALUE ZEROS.                
+           05  WS-CHG-NV             PIC 9(7)       VALUE ZEROS.                
+           05  WS-OLD-IV             PIC 9(7)       VALUE ZEROS.                
+           05  WS-OLD-NV             PIC 9(7)       VALUE ZEROS.                
+           05  WS-OLD-SPACE          PIC 9(7)       VALUE ZEROS.                
+           05  WS-NUM-NRIC-1         PIC X(9)       VALUE SPACES.               
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-CURRENT-DATE       PIC X(8)       VALUE ZEROES.               
+           05  WS-CURRENT-TIME       PIC X(8)       VALUE ZEROES.               
+           05  WS-NUM-NRIC           PIC X(9)       VALUE SPACES.               
+           05  WS-INVITED            PIC X(1)       VALUE SPACES.               
+           05  WS-MATCHED            PIC X(1)       VALUE 'N'.                  
+           05  WS-NUM-REGN           PIC X(8)       VALUE SPACES.               
+           05  WS-PREV-REGN          PIC X(8)       VALUE SPACES.               
+                                                                                
+      *-------------------------------------------------------------            
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN.                                                               
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM 1000-OPENING-ROUTINE THRU 1000-EXIT.                         
+           PERFORM 3000-READ-BP13F00K   THRU 3000-EXIT                          
+           PERFORM 3100-READ-BP13F595   THRU 3100-EXIT.                         
+           PERFORM 3200-PROCESS-NEW     THRU 3200-EXIT                          
+             UNTIL WS-F00K-EOF = 'Y'.                                           
+           PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT.                         
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       1000-OPENING-ROUTINE.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           OPEN INPUT BP13F00K                                                  
+                      BP13F595                                                  
+                      BP13K595                                                  
+               OUTPUT BP13F730                                                  
+                      BP13FOUT.                                                 
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3000-READ-BP13F00K.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13F00K AT END                                                 
+             MOVE 'Y'                TO WS-F00K-EOF                             
+             GO TO 3000-EXIT.                                                   
+                                                                                
+           ADD 1                     TO WS-F00K-READ.                           
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3100-READ-BP13F595.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13F595 AT END                                                 
+             MOVE 'Y'                TO WS-F595-EOF                             
+             GO TO 3100-EXIT.                                                   
+                                                                                
+           ADD 1                     TO WS-F595-READ.                           
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3200-PROCESS-NEW.                                                        
+      *-------------------------------------------------------------            
+                                                                                
+           IF F00K-NUM-NRIC1   = F595-NUM-NRIC1 AND                             
+              F595-DTE-BALLOT <= F00K-DTE-BALLOT                                
+              ADD 1       TO WS-MATCH-NRIC                                      
+              IF F00K-NUM-REGN NOT = WS-PREV-REGN                               
+                 ADD 1       TO WS-MATCH-REG                                    
+                 MOVE F00K-NUM-REGN TO WS-PREV-REGN                             
+              END-IF                                                            
+              IF  F595-NUM-BOOK-STATUS = SPACES OR LOW-VALUES                   
+                  MOVE F595-NUM-REGN             TO WS-NUM-REGN                 
+                  PERFORM 3300-START-BP13K595-REG    THRU 3300-EXIT             
+                  DISPLAY ' REG START ' F595-NUM-REGN ' '                       
+                                        K595-NUM-REGN-REF                       
+                  IF K595-NUM-REGN-REF = F595-NUM-REGN                          
+                     PERFORM 3500-CHECK-BOOK-STAT THRU 3500-EXIT                
+                       UNTIL WS-K595-EOF = 'Y'                                  
+                          OR K595-NUM-REGN-REF NOT = F595-NUM-REGN              
+                  ELSE                                                          
+                     DISPLAY 'K595 NOT REGN FND: ' WS-NUM-REGN                  
+                  END-IF                                                        
+              ELSE                                                              
+                  MOVE F00K-NUM-REGN             TO F595-NUM-REF                
+                  PERFORM 6000-WRITE-BP13F730    THRU 6000-EXIT                 
+                  MOVE 'Y'    TO WS-MATCHED                                     
+              END-IF                                                            
+              PERFORM 3100-READ-BP13F595    THRU 3100-EXIT                      
+           ELSE                                                                 
+              IF F00K-NUM-NRIC1 < F595-NUM-NRIC1                                
+                 IF WS-MATCHED = 'N'                                            
+                    PERFORM 3350-START-BP13K595-NRIC   THRU 3350-EXIT           
+                    DISPLAY ' NRIC START ' F00K-NUM-NRIC1 ' '                   
+                                           K595-NUM-NRIC1                       
+                    IF K595-NUM-NRIC1 = F00K-NUM-NRIC1                          
+                       PERFORM 3550-WRITE-K595     THRU 3550-EXIT               
+                         UNTIL WS-K595-EOF = 'Y'                                
+                            OR K595-NUM-NRIC1 NOT = F00K-NUM-NRIC1              
+                    ELSE                                                        
+                       INITIALIZE WS-NUM-NRIC-1                                 
+                       DISPLAY 'K595 NOT NRIC FND: ' F00K-NUM-NRIC1             
+                       MOVE F00K-NUM-NRIC1   TO WS-NUM-NRIC-1                   
+                       MOVE F00K-NUM-NRIC2   TO F00K-NUM-NRIC1                  
+                       MOVE WS-NUM-NRIC-1    TO F00K-NUM-NRIC2                  
+                       WRITE BP13FOUT-REC    FROM BP13F00K-REC                  
+                       ADD 1                 TO WS-WRITE-FOUT                   
+                    END-IF                                                      
+                 END-IF                                                         
+                                                                                
+                 MOVE F00K-NUM-REGN            TO WS-PREV-REGN                  
+                 PERFORM 3000-READ-BP13F00K    THRU 3000-EXIT                   
+                 MOVE 'N'    TO WS-MATCHED                                      
+              ELSE                                                              
+                 PERFORM 3100-READ-BP13F595    THRU 3100-EXIT                   
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3300-START-BP13K595-REG.                                                 
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                     TO BP13K595-REC.                     
+           INITIALIZE                         BP13K595-REC.                     
+                                                                                
+           MOVE 'N'                        TO WS-K595-EOF.                      
+                                                                                
+           MOVE WS-NUM-REGN                TO K595-NUM-REGN-REF                 
+                                                                                
+           START BP13K595 KEY >= K595-KEY-FLD                                   
+                                                                                
+           EVALUATE WS-K595-STATUS                                              
+               WHEN 00                                                          
+               WHEN 02                                                          
+                    PERFORM 3400-READNEXT-BP13K595 THRU 3400-EXIT               
+               WHEN 20                                                          
+               WHEN 23                                                          
+                    CONTINUE                                                    
+               WHEN OTHER                                                       
+                  DISPLAY 'START ERROR BP13K595 : ' WS-K595-STATUS              
+                          ' NRIC : ' K595-NUM-REGN-REF                          
+                  PERFORM 9999-CLOSE-ROUTINE       THRU 9999-EXIT               
+           END-EVALUATE.                                                        
+                                                                                
+       3300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       3350-START-BP13K595-NRIC.                                                
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                     TO BP13K595-REC.                     
+           INITIALIZE                         BP13K595-REC.                     
+                                                                                
+           MOVE 'N'                        TO WS-K595-EOF.                      
+                                                                                
+           MOVE F00K-NUM-NRIC1             TO K595-NUM-NRIC1                    
+                                                                                
+           START BP13K595 KEY >= K595-NUM-NRIC1                                 
+                                                                                
+           EVALUATE WS-K595-STATUS                                              
+               WHEN 00                                                          
+               WHEN 02                                                          
+                    PERFORM 3400-READNEXT-BP13K595 THRU 3400-EXIT               
+               WHEN 20                                                          
+               WHEN 23                                                          
+                    CONTINUE                                                    
+               WHEN OTHER                                                       
+                  DISPLAY 'START ERROR BP13K595 : ' WS-K595-STATUS              
+                          ' NRIC : ' K595-NUM-NRIC1                             
+                  PERFORM 9999-CLOSE-ROUTINE       THRU 9999-EXIT               
+           END-EVALUATE.                                                        
+                                                                                
+       3350-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3400-READNEXT-BP13K595.                                                  
+      ******************************************************************        
+                                                                                
+           READ BP13K595 NEXT RECORD                                            
+                         AT END MOVE 'Y' TO WS-K595-EOF.                        
+                                                                                
+           EVALUATE WS-K595-STATUS                                              
+               WHEN 00                                                          
+               WHEN 02                                                          
+                    CONTINUE                                                    
+               WHEN 10                                                          
+               WHEN 23                                                          
+                    MOVE 'Y' TO WS-K595-EOF                                     
+               WHEN OTHER                                                       
+                  DISPLAY 'START ERROR BP13K595 : ' WS-K595-STATUS              
+                          ' NRIC : ' K595-NUM-REGN-REF                          
+                  PERFORM 9999-CLOSE-ROUTINE       THRU 9999-EXIT               
+           END-EVALUATE.                                                        
+                                                                                
+       3400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3500-CHECK-BOOK-STAT.                                                    
+      ******************************************************************        
+                                                                                
+           DISPLAY K595-KEY-FLD ' BK ' K595-NUM-BOOK-STATUS                     
+           DISPLAY 'BALLOT ' F595-DTE-BALLOT ' ' K595-DTE-BALLOT                
+           IF (K595-NUM-BOOK-STATUS NOT = SPACES AND LOW-VALUES) AND            
+              (K595-DTE-BALLOT = F595-DTE-BALLOT)                               
+              MOVE K595-NUM-BOOK-STATUS      TO F595-NUM-BOOK-STATUS            
+              MOVE F00K-NUM-REGN             TO F595-NUM-REF                    
+              PERFORM 6000-WRITE-BP13F730    THRU 6000-EXIT                     
+              MOVE 'Y'                       TO WS-K595-EOF                     
+              MOVE 'Y'                       TO WS-MATCHED                      
+           ELSE                                                                 
+              PERFORM 3400-READNEXT-BP13K595 THRU 3400-EXIT                     
+           END-IF.                                                              
+                                                                                
+       3500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3550-WRITE-K595.                                                         
+      ******************************************************************        
+                                                                                
+           DISPLAY K595-KEY-FLD ' NRIC ' K595-NUM-NRIC1                         
+           DISPLAY 'BALLOT ' F00K-DTE-BALLOT ' ' K595-DTE-BALLOT                
+           IF K595-DTE-BALLOT <= F00K-DTE-BALLOT                                
+              PERFORM 6100-WRITE-BP13K595    THRU 6100-EXIT                     
+           END-IF.                                                              
+           PERFORM 3400-READNEXT-BP13K595 THRU 3400-EXIT.                       
+                                                                                
+       3550-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6000-WRITE-BP13F730.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES                        TO BP13F730-REC.                  
+           INITIALIZE                            BP13F730-REC.                  
+                                                                                
+           MOVE BP13F595-REC                  TO BP13F730-REC.                  
+                                                                                
+           WRITE BP13F730-REC.                                                  
+           ADD 1                              TO WS-WRITE-F730.                 
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6100-WRITE-BP13K595.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES                        TO BP13F730-REC.                  
+           INITIALIZE                            BP13F730-REC.                  
+                                                                                
+           MOVE SPACES                        TO K595-NUM-REGN-REF.             
+           MOVE BP13K595-REC                  TO BP13F730-REC.                  
+                                                                                
+           WRITE BP13F730-REC.                                                  
+           ADD 1                              TO WS-WRITE-F730.                 
+                                                                                
+       6100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       9999-CLOSE-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           DISPLAY ' BP13CZ2E CONTROL TOTAL '.                                  
+           DISPLAY '------------------------------------------'.                
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO OF RECS READ F00K         : ' WS-F00K-READ.              
+           DISPLAY 'NO OF RECS READ F595         : ' WS-F595-READ.              
+           DISPLAY 'NO OF RECS MATCHED REGN      : ' WS-MATCH-REG.              
+           DISPLAY 'NO OF RECS MATCHED NRIC      : ' WS-MATCH-NRIC.             
+           DISPLAY 'NO OF RECS WRITTEN TO  F730  : ' WS-WRITE-F730.             
+           DISPLAY 'NO OF RECS WRITTEN TO  FOUT  : ' WS-WRITE-FOUT.             
+                                                                                
+           CLOSE      BP13F595                                                  
+                      BP13K595                                                  
+                      BP13F730                                                  
+                      BP13FOUT.                                                 
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9999-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+

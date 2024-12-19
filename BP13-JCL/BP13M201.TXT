@@ -1,0 +1,538 @@
+//BP13M201 JOB (BP13P),'BP13M201',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//             NOTIFY=CSD0071                                                   
+//JOBLIB   DD  DSN=BP13.BATCH.LOADCOB,DISP=SHR                                  
+//******************************************************************            
+//* CHG-NO   BY   ON      - DESCRIPTION                                         
+//* ---------------------------------                                           
+//* BP130618 SSS 19990319 - READ K555 FROM BP13C277                             
+//* BP130712 SSS 19990928 - ADD NEW PROGRAM BP13C210, BP13S212                  
+//* BP130805 SSS 20000510 - L212 FOR EAAL                                       
+//* BP130883 CLT 27102000 - REMOVE BP13C904 AND CALL BP13C913                   
+//* BP132313 CKK 05032003 - ADD OIC TO P13L121 REPORT                           
+//* BP132546 YCH 11062004 - INCLUDE STORCLAS(PRODRLS) & LOG(NONE)               
+//* BP134135 DW5 10082011 - INCLUDE HOUSEKEEP OF PENDING DOCUMENT               
+//*                         MODULE (BP13KQ10, BP13KP00 & BP13KP01)              
+//* BP134375 DW5 04102011 - INCLUDE MISSING BP13K800 IN STEP07                  
+//* BP134387 DW5 30112011 - INCLUDE REDEFINE BP13KP00                           
+//* BP134513 CK1918042012 - INCLUDE HOUSEKEEP OF PENDING DOCUMENT               
+//*                         MODULE (BP13KQ10, BP13KP00 & BP13KP02)              
+//*                         AND REMOVE HOUSEKEEP OF BP13KP01                    
+//* BP134587 DW5 02072012 - BACKUP BP13KP00 TO TAPE                             
+//* BP134673 LSB 02102012 - EXPAND FILE SIZE                                    
+//* BP135171 RJE 11022014 - TO CATER FOR DB2 UPGRADE                            
+//* BP135053 LSB 11032014 - IMPLEMENT AUDIT REPORT ON BOOKING QUEUE             
+//* BP135404 ESA112032014 - TO REMOVE BP13S212                                  
+//* BP135281 KG1207072014 - TO INCLUDE A27G TRANSACTION                         
+//* BP135991 EL2706092016 - UPDATE REDEFINE OF BP13KQ10 WITH ALT-KEYS           
+//******************************************************************            
+//*-----------------------------------------------------------------            
+//* VERIFY PENDING DOC FILES ARE CLOSED                                         
+//*-----------------------------------------------------------------            
+//STEP00   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//INPUT1   DD DSN=BP13.KQ10.DOC.TBL,DISP=OLD                                    
+//INPUT2   DD DSN=BP13.KP00.DOC,DISP=OLD                                        
+//INPUT3   DD DSN=BP13.KP02.DOCHIST,DISP=OLD                                    
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN   DD *                                                                  
+       VFY FILE(INPUT1)                                                         
+       VFY FILE(INPUT2)                                                         
+       VFY FILE(INPUT3)                                                         
+//*-----------------------------------------------------------------            
+//* SORT OUT CANCELLATION CASES, BUT BOOKING-PAID NOT = ZEROS                   
+//*-----------------------------------------------------------------            
+//STEP01   EXEC  SORT,COND=(0,NE),CYL=30                                        
+//SORTIN   DD  DSN=BP13.K800.APPLN,DISP=SHR,                                    
+//             AMP=('BUFND=23')                                                 
+//SORTOUT  DD  DSN=&&BP13F104,DISP=(,PASS),                                     
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(8,3),RLSE),                                          
+//             DCB=(RECFM=FB,LRECL=30,BLKSIZE=0)                                
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(4,8,A),FORMAT=CH                                                 
+  INCLUDE COND=(1,1,CH,EQ,C'C',AND,325,4,CH,NE,C'0000')                         
+  OUTREC FIELDS=(4,8,22X)                                                       
+//*-----------------------------------------------------------------            
+//*  PRINT REPORT ON CASH RECEIPT FOR THE MONTH ON TEMPORARY FILE               
+//*-----------------------------------------------------------------            
+//STEP02   EXEC  SAS,COND=(0,NE)                                                
+//BP13K104 DD  DSN=&&BP13F104,DISP=(OLD,PASS)                                   
+//BP13K022 DD  DSN=BP13.K022.WISOIC.PATH1,DISP=SHR                              
+//BP13K800 DD  DSN=BP13.K800.APPLN,DISP=SHR,                                    
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//BP13L121 DD  SYSOUT=8,DEST=IOM8                                               
+//SYSIN    DD  DSN=BP13.BATCH.SRC(BP13S121),DISP=SHR                            
+//*-----------------------------------------------------------------            
+//* TO DELETE AND DEFINE BP13K104 - KIV FILE                                    
+//*-----------------------------------------------------------------            
+//STEP03   EXEC  PGM=IDCAMS,COND=(0,NE)                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//INPUT1   DD  DSN=&&BP13F104,DISP=(OLD,PASS)                                   
+//SYSIN    DD  *                                                                
+          DEL (BP13.K104.BOOKFEE) CLUSTER PURGE                                 
+          DEF CLUSTER                                -                          
+              (NAME(BP13.K104.BOOKFEE)               -                          
+              CYL(2 2)                              -                           
+              UNIQUE                                 -                          
+              STORCLAS(PRODRLS)                      -                          
+              LOG(NONE)                              -                          
+              SHR(2 3))                              -                          
+              DATA                                   -                          
+              (NAME(BP13.K104.BOOKFEE.DATA)          -                          
+              KEYS(8 0)                             -                           
+              RECSZ(30 30)                         -                            
+              CISZ(4096)                             -                          
+              FSPC(30 30))                           -                          
+              INDEX                                  -                          
+              (NAME(BP13.K104.BOOKFEE.INDEX)         -                          
+              CISZ(4096))                                                       
+      IF MAXCC = 0  THEN                             -                          
+      REPRO IFILE(INPUT1)                            -                          
+            ODS(BP13.K104.BOOKFEE)                                              
+//*-----------------------------------------------------------------            
+//* INCL COND  CDE-TYP-ACTUSE  = 3, DATE-ALLOCN > 1999906                       
+//*            DATE-ALLOCN(DD) = 01 & DATE-ACCEPTANCE > 199906                  
+//*-----------------------------------------------------------------            
+//STEP05   EXEC  SORT,COND=(0,NE),CYL=30                                        
+//SORTIN   DD  DSN=BM06.F120.FLATINV.PIDB,DISP=SHR                              
+//SORTOUT  DD  DSN=&&F120WIS,DISP=(NEW,PASS),                                   
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(10,2),RLSE),                                         
+//             DCB=(RECFM=FB,LRECL=700)                                         
+//SYSIN    DD  *                                                                
+    SORT FIELDS=(180,7,A),FORMAT=CH                                             
+    INCLUDE COND=(606,2,CH,EQ,C'03',AND,                                        
+                  291,6,CH,GT,C'199906',AND,                                    
+                  297,2,CH,EQ,C'01',AND,                                        
+                  299,6,CH,GT,C'199906')                                        
+//*-----------------------------------------------------------------            
+//* TO CANCEL 3-ROOM APPLICATIONS                                               
+//*-----------------------------------------------------------------            
+//STEP06   EXEC  PGM=BP13C193,COND=(0,NE)                                       
+//BM06F120 DD  DSN=&&F120WIS,DISP=(OLD,PASS)                                    
+//BP13F200 DD  DSN=&&BP13F200,DISP=(NEW,PASS),                                  
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(10,5),RLSE),                                         
+//             DCB=(BLKSIZE=23400,LRECL=300,RECFM=FB)                           
+//BP13F205 DD  DSN=&&BP13F205,DISP=(NEW,PASS),                                  
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(1,1),RLSE),                                          
+//             DCB=(BLKSIZE=23440,LRECL=80,RECFM=FB)                            
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+//*-----------------------------------------------------------------            
+//*   -- TO PRINT ANNEXURE A                                                    
+//*   -- THE SUBMISSION REPORT IS DOWNLOAD TO PC, SO THAT USER                  
+//*      CAN KEY IN THE REMARKS.                                                
+//*-----------------------------------------------------------------            
+//STEP07   EXEC  PGM=IKJEFT01,COND=(0,NE),REGION=4096K,                         
+//             DYNAMNBR=20                                                      
+//BP13F200 DD  DSN=&&BP13F200,DISP=(OLD,PASS)                                   
+//BP13F205 DD  DSN=&&BP13F205,DISP=(OLD,PASS)                                   
+//BM06K110 DD  DSN=BM06.K110.FLATINV,DISP=SHR,                                  
+//             AMP=('BUFND=8','BUFNI=4')                                        
+//BM06K111 DD  DSN=BM06.K110.FLATINV.PATH1,DISP=SHR,                            
+//             AMP=('BUFND=8','BUFNI=4')                                        
+//BP13K060 DD  DSN=BP13.K060.CODETAB,DISP=SHR,                                  
+//             AMP=('BUFNI=8','BUFND=4')                                        
+//BP13K800 DD  DSN=BP13.K800.APPLN,DISP=SHR,                                    
+//             AMP=('BUFNI=8','BUFND=4')                                        
+//P13L232A DD  DSN=BM06.L720A1.SUBMISS.WIS3R,DISP=OLD                           
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSTSPRT DD  SYSOUT=*                                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSTSIN  DD  *                                                                
+  DSN SYSTEM(DSN)                                                               
+  RUN PROGRAM(BP13C232) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+  END                                                                           
+/*                                                                              
+//*-----------------------------------------------------------------            
+//* INCL COND  CDE-TYP-ACTUSE  = 3, DATE-ALLOCN > 1999906                       
+//*            & DATE-ALLOCN(DD) = 01                                           
+//*-----------------------------------------------------------------            
+//STEP08   EXEC  SORT,COND=(0,NE),CYL=30                                        
+//SORTIN   DD  DSN=BM06.F120.FLATINV.PIDB,DISP=SHR                              
+//SORTOUT  DD  DSN=&&F120SUM,DISP=(NEW,PASS),                                   
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(10,2),RLSE),                                         
+//             DCB=(RECFM=FB,LRECL=700)                                         
+//SYSIN    DD  *                                                                
+    SORT FIELDS=(180,7,A),FORMAT=CH                                             
+    INCLUDE COND=(606,2,CH,EQ,C'03',AND,                                        
+                  291,6,CH,GT,C'199906',AND,                                    
+                  297,2,CH,EQ,C'01')                                            
+//*-----------------------------------------------------------------            
+//* SUMMARY REPORT ON ACCEPTED/UNACCEPTED FLATS                                 
+//*-----------------------------------------------------------------            
+//STEP09   EXEC  SAS,COND=(0,NE)                                                
+//BM06F120 DD  DSN=&&F120SUM,DISP=(OLD,PASS)                                    
+//BM06F260 DD  DSN=BM06.F260.DATE,DISP=SHR                                      
+//BP13K060 DD  DSN=BP13.K060.CODETAB,DISP=SHR,                                  
+//             AMP=('BUFNI=8','BUFND=4')                                        
+//BP13L211 DD  DSN=BM06.L720A1.SUBMISS.WIS3R,DISP=MOD                           
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSIN    DD  DSN=BP13.BATCH.SRC(BP13S211),DISP=SHR                            
+//*-----------------------------------------------------------------            
+//STEP12   EXEC  SORT,COND=(0,NE),CYL=30                                        
+//SORTIN   DD  DSN=BP13.K800.APPLN,DISP=SHR,                                    
+//             AMP=('BUFND=23')                                                 
+//SORTOUT  DD  DSN=&&F800WIS,                                                   
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(100,10),RLSE),                                       
+//             DCB=(RECFM=FB,LRECL=2000)                                        
+//SYSIN    DD  *                                                                
+    SORT FIELDS=(4,8,A),FORMAT=CH                                               
+    INCLUDE COND=(1,1,CH,NE,C'C',AND,                                           
+                  22,6,CH,GE,C'199907',AND,                                     
+                  30,1,CH,EQ,C'3',AND,                                          
+                  49,2,CH,EQ,C'3R',AND,                                         
+                  57,3,CH,EQ,C'PA ',AND,                                        
+                  155,9,CH,EQ,C'         ')                                     
+//*-----------------------------------------------------------------            
+//* 3R WIS APPLICANT WHO DID NOT SELECT FLAT IN PREVIOUS MONTH                  
+//*-----------------------------------------------------------------            
+//STEP13   EXEC  PGM=BP13C210,COND=(0,NE)                                       
+//BP13F800 DD  DSN=&&F800WIS,DISP=(OLD,PASS)                                    
+//BP13K060 DD  DSN=BP13.K060.CODETAB,DISP=SHR,                                  
+//             AMP=('BUFND=23')                                                 
+//BP13L210 DD  SYSOUT=8,DEST=IOM8                                               
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+/*                                                                              
+//*-----------------------------------------------------------------            
+//*  PRINT LISTING FROM REJECTION OF OCS FLATS AT BOOKING                       
+//*-----------------------------------------------------------------            
+//STEP14   EXEC  SORT,COND=(0,NE)                                               
+//SYSOUT   DD  SYSOUT=*                                                         
+//SORTIN   DD  DSN=BP13.F310.TRANS.BKUP(0),DISP=SHR                             
+//SORTOUT  DD  DSN=&&F310RK,DISP=(NEW,PASS),                                    
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(2,2,),RLSE),                                         
+//             DCB=(LRECL=150,RECFM=FB),                                        
+//             DSORG=PS                                                         
+//SYSIN    DD  *                                                                
+    SORT FIELDS=(1,8,A),FORMAT=CH                                               
+    INCLUDE COND=(9,2,CH,EQ,C'RK')                                              
+/*                                                                              
+//*-----------------------------------------------------------------            
+//STEP15   EXEC SAS                                                             
+//WORK     DD UNIT=SYSDA,SPACE=(TRK,(500,200),,,ROUND)                          
+//BP13F310 DD DSN=&&F310RK,DISP=(OLD,PASS)                                      
+//BM06K110 DD DSN=BM06.K110.FLATINV,DISP=SHR,                                   
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//FT18F001 DD SYSOUT=8,DEST=IOM8                                                
+//BP13L008 DD DSN=BP13.OUTPUT.EAAL.BP13L008,DISP=OLD                            
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13S008),DISP=SHR                             
+//*-----------------------------------------------------------------            
+//STEP16   EXEC  SORT,COND=(0,NE)                                               
+//SYSOUT   DD  SYSOUT=*                                                         
+//SORTIN   DD  DSN=BP13.F310.TRANS.BKUP(0),DISP=SHR                             
+//SORTOUT  DD  DSN=&&F310RL,DISP=(NEW,PASS),                                    
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(2,2,),RLSE),                                         
+//             DCB=(LRECL=150,RECFM=FB),                                        
+//             DSORG=PS                                                         
+//SYSIN    DD  *                                                                
+    SORT FIELDS=(1,8,A),FORMAT=CH                                               
+    INCLUDE COND=(9,2,CH,EQ,C'RL')                                              
+//*-----------------------------------------------------------------            
+//STEP17   EXEC SAS                                                             
+//WORK     DD UNIT=SYSDA,SPACE=(TRK,(500,200),,,ROUND)                          
+//BP13F310 DD DSN=&&F310RL,DISP=(OLD,PASS)                                      
+//BM06K110 DD DSN=BM06.K110.FLATINV,DISP=SHR,                                   
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//FT18F001 DD SYSOUT=8,DEST=IOM8                                                
+//BP13L009 DD DSN=BP13.OUTPUT.EAAL.BP13L009,DISP=OLD                            
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13S009),DISP=SHR                             
+//*-----------------------------------------------------------------            
+//STEP18   EXEC SAS,SORT=22                                                     
+//WORK     DD UNIT=SYSDA,SPACE=(CYL,(500,200),,,ROUND)                          
+//BM06F120 DD DSN=BM06.F120.FLATINV.PIDB,DISP=SHR                               
+//BM06K100 DD DSN=BM06.K100.BLOCK,DISP=SHR,                                     
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//BM06K110 DD DSN=BM06.K110.FLATINV,DISP=SHR,                                   
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//BM06K510 DD DSN=BM06.K510.ESTCDE,DISP=SHR,                                    
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//BB14K500 DD DSN=BB14.K500.BLKLEASE,DISP=SHR,                                  
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13K800 DD DSN=BP13.K800.APPLN,DISP=SHR,                                     
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//OUTFILE1 DD DSN=BP13.OUTPUT.EAAL.BP13L010,DISP=OLD                            
+//FT18F001 DD SYSOUT=8,DEST=IOM8                                                
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13S010),DISP=SHR                             
+//*--------------------------------------------------------------------*        
+//* START OF PENDING DOC HOUSEKEEP                                              
+//* BACKUP BEFORE HOUSEKEEP                                                     
+//*--------------------------------------------------------------------         
+//STEP19   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.KQ10.DOC.TBL,DISP=SHR                                    
+//OUTPUT1  DD DSN=BP13.FQ10.DOC.TBL.BKUP,DISP=SHR                               
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+//*--------------------------------------------------------------------*        
+//* BACKUP BEFORE HOUSEKEEP                                                     
+//*--------------------------------------------------------------------         
+//STEP20   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD  DSN=BP13.KP00.DOC,                                               
+//             DISP=SHR,                                                        
+//             AMP=('BUFND=13')                                                 
+//OUTPUT1  DD  DSN=BP13.FP00.DOC.DAILY(+1),                                     
+//             DISP=(NEW,CATLG),                                                
+//             UNIT=CART,                                                       
+//             LABEL=(,SL),                                                     
+//             DCB=(BP13.GDG,BLKSIZE=0,LRECL=3800,RECFM=FB)                     
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+//*--------------------------------------------------------------------*        
+//* CHECK FOR CANCELLED CASES AND TP CASES.                                     
+//*--------------------------------------------------------------------         
+//STEP22   EXEC PGM=BP13C21T,COND=(0,NE)                                        
+//BP13KQ10 DD DSN=BP13.KQ10.DOC.TBL,DISP=SHR,                                   
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//BP13K800 DD DSN=BP13.K800.APPLN,DISP=SHR,                                     
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//BP13FQ10 DD DSN=BP13.FQ10.DOC.TBL.DEL,DISP=SHR                                
+//BP13FQ1A DD DSN=BP13.FQ10.DOC.TBL.KEEP,DISP=SHR                               
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*                                                                             
+//*-----------------------------------------------------------------            
+//*   HOUSEKEEP BP13KP00 AND BP13KP02                                           
+//*-----------------------------------------------------------------            
+//STEP23   EXEC PGM=BP13C21E,COND=(0,NE)                                        
+//BP13FQ10 DD DSN=BP13.FQ10.DOC.TBL.DEL,DISP=SHR                                
+//BP13KP00 DD DSN=BP13.KP00.DOC,DISP=SHR                                        
+//BP13KP02 DD DSN=BP13.KP02.DOCHIST,DISP=SHR                                    
+//BP13FP00 DD DSN=BP13.FP00.DOC.DEL,DISP=OLD                                    
+//BP13FP02 DD DSN=BP13.FP02.DOCHIST.DEL,DISP=OLD                                
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*                                                                             
+//*-----------------------------------------------------------------            
+//*   SORT OUT DATA FROM BP13KQ10 (CLOSED CASE)                                 
+//*-----------------------------------------------------------------            
+//STEP24   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.FQ10.DOC.TBL.KEEP,                                       
+//         DISP=SHR                                                             
+//SORTOUT  DD DSN=BP13.FQ10.DOC.TBL.KEEP,                                       
+//         DISP=SHR                                                             
+//SYSIN    DD *                                                                 
+    SORT FIELDS=(1,8,A),FORMAT=CH                                               
+//*---------------------------------------------------------------------        
+//* DEFINE HEADFLAT VSAM FILE BP13KQ10 (ACTIVE CASE ONLY)                       
+//*---------------------------------------------------------------------        
+//STEP25 EXEC    PGM=IDCAMS,COND=(0,NE)                                         
+//INPUT1   DD  DSN=BP13.FQ10.DOC.TBL.KEEP,DISP=SHR                              
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  *                                                                
+          DEL BP13.KQ10.DOC.TBL CL PURGE                                        
+          DEF CLUSTER                                -                          
+              (NAME(BP13.KQ10.DOC.TBL)               -                          
+              CYL(20 10)                             -                          
+              STORCLAS(PRODRLS)                      -                          
+              LOG(NONE)                              -                          
+              UNIQUE                                 -                          
+              SHR(2 3))                              -                          
+              DATA                                   -                          
+              (NAME(BP13.KQ10.DOC.TBL.DATA)          -                          
+              KEYS(8 0)                              -                          
+              RECSZ(400 400)                         -                          
+              CISZ(4096)                             -                          
+              FSPC(10 10))                           -                          
+              INDEX                                  -                          
+              (NAME(BP13.KQ10.DOC.TBL.INDEX)         -                          
+              CISZ(4096))                                                       
+      IF MAXCC = 0  THEN                             -                          
+      REPRO IFILE(INPUT1)                            -                          
+            ODS(BP13.KQ10.DOC.TBL)                   -                          
+            REUSE                                                               
+      IF MAXCC = 0 THEN                              -                          
+         DEF AIX (NAME(BP13.KQ10.DOC.TBL.ALTX1)      -                          
+              REL(BP13.KQ10.DOC.TBL)                 -                          
+              CYL(5  2)                              -                          
+              SHR(2 3)                               -                          
+              UNIQUE                                 -                          
+              KEYS(16 8)                             -                          
+              CISZ(4096)                             -                          
+              RECSZ(29 29))                                                     
+      IF LASTCC = 0 THEN                             -                          
+         DEF PATH(NAME(BP13.KQ10.DOC.TBL.PATH1)      -                          
+             PENT(BP13.KQ10.DOC.TBL.ALTX1))                                     
+      IF LASTCC = 0 THEN                             -                          
+         BIX IDS(BP13.KQ10.DOC.TBL)                  -                          
+             ODS(BP13.KQ10.DOC.TBL.ALTX1)                                       
+      IF MAXCC = 0 THEN                              -                          
+         DEF AIX (NAME(BP13.KQ10.DOC.TBL.ALTX2)     -                           
+              REL(BP13.KQ10.DOC.TBL)                -                           
+              CYL(5  2)                              -                          
+              SHR(2 3)                               -                          
+              UNIQUE                                 -                          
+              KEYS(19 24)                            -                          
+              CISZ(4096)                             -                          
+              RECSZ(32 32))                                                     
+      IF LASTCC = 0 THEN                             -                          
+         DEF PATH(NAME(BP13.KQ10.DOC.TBL.PATH2)      -                          
+             PENT(BP13.KQ10.DOC.TBL.ALTX2))                                     
+      IF LASTCC = 0 THEN                             -                          
+         BIX IDS(BP13.KQ10.DOC.TBL)                  -                          
+             ODS(BP13.KQ10.DOC.TBL.ALTX2)                                       
+      IF MAXCC = 0 THEN                              -                          
+         DEF AIX (NAME(BP13.KQ10.DOC.TBL.ALTX3)      -                          
+              REL(BP13.KQ10.DOC.TBL)                 -                          
+              CYL(5  2)                              -                          
+              SHR(2 3)                               -                          
+              UNIQUE                                 -                          
+              KEYS(14 255)                           -                          
+              CISZ(4096)                             -                          
+              RECSZ(27 27))                                                     
+      IF LASTCC = 0 THEN                             -                          
+         DEF PATH(NAME(BP13.KQ10.DOC.TBL.PATH3)      -                          
+             PENT(BP13.KQ10.DOC.TBL.ALTX3))                                     
+      IF LASTCC = 0 THEN                             -                          
+         BIX IDS(BP13.KQ10.DOC.TBL)                  -                          
+             ODS(BP13.KQ10.DOC.TBL.ALTX3)                                       
+      IF MAXCC = 0 THEN                              -                          
+         DEF AIX (NAME(BP13.KQ10.DOC.TBL.ALTX4)      -                          
+              REL(BP13.KQ10.DOC.TBL)                 -                          
+              CYL(5  2)                              -                          
+              SHR(2 3)                               -                          
+              UNIQUE                                 -                          
+              KEYS(14 269)                           -                          
+              CISZ(4096)                             -                          
+              RECSZ(27 27))                                                     
+      IF LASTCC = 0 THEN                             -                          
+         DEF PATH(NAME(BP13.KQ10.DOC.TBL.PATH4)      -                          
+             PENT(BP13.KQ10.DOC.TBL.ALTX4))                                     
+      IF LASTCC = 0 THEN                             -                          
+         BIX IDS(BP13.KQ10.DOC.TBL)                  -                          
+             ODS(BP13.KQ10.DOC.TBL.ALTX4)                                       
+      IF MAXCC = 0 THEN                              -                          
+         DEF AIX (NAME(BP13.KQ10.DOC.TBL.ALTX5)      -                          
+              REL(BP13.KQ10.DOC.TBL)                 -                          
+              CYL(5  2)                              -                          
+              SHR(2 3)                               -                          
+              UNIQUE                                 -                          
+              KEYS(16 285)                           -                          
+              CISZ(4096)                             -                          
+              RECSZ(29 29))                                                     
+      IF LASTCC = 0 THEN                             -                          
+         DEF PATH(NAME(BP13.KQ10.DOC.TBL.PATH5)      -                          
+             PENT(BP13.KQ10.DOC.TBL.ALTX5))                                     
+      IF LASTCC = 0 THEN                             -                          
+         BIX IDS(BP13.KQ10.DOC.TBL)                  -                          
+             ODS(BP13.KQ10.DOC.TBL.ALTX5)                                       
+//*-----------------------------------------------------------------            
+//*   SORT OUT DATA FROM BP13KP00                                               
+//*-----------------------------------------------------------------            
+//STEP26   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.KP00.DOC,                                                
+//         DISP=SHR                                                             
+//SORTOUT  DD DSN=&&FP00,DISP=(NEW,PASS),                                       
+//         UNIT=(SYSDA,10),                                                     
+//         DCB=(RECFM=FB,LRECL=3800),                                           
+//         SPACE=(CYL,(500,50),RLSE)                                            
+//SYSIN    DD *                                                                 
+    SORT FIELDS=(1,17,A),FORMAT=CH                                              
+//*--------------------------------------------------------------------         
+//* REDEFINE BP13.KP00.DOC                                                      
+//*--------------------------------------------------------------------         
+//STEP27   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT    DD DSN=&&FP00,DISP=(OLD,PASS)                                        
+//SYSIN    DD *                                                                 
+         DEL BP13.KP00.DOC CL PURGE                                             
+         DEF CL (NAME(BP13.KP00.DOC)             -                              
+                 CYL(50 20)                       -                             
+                 UNIQUE                          -                              
+                 DATACLAS(MULTIVOL)              -                              
+                 STORCLAS(PRODRLS)               -                              
+                 LOG(NONE)                       -                              
+                 SHR(2 3))                       -                              
+                 DATA                            -                              
+                 (NAME(BP13.KP00.DOC.DATA)       -                              
+                 KEYS(17 0)                      -                              
+                 RECSZ(3800 3800)                -                              
+                 FSPC(10 10)                     -                              
+                 CISZ(4096))                                                    
+         IF LASTCC = 0 THEN                      -                              
+           REPRO IFILE(INPUT)                    -                              
+                 ODS(BP13.KP00.DOC)                                             
+//*-----------------------------------------------------------------            
+//*   SORT OUT DATA FROM BP13KP02                                               
+//*-----------------------------------------------------------------            
+//STEP28   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.KP02.DOCHIST,                                            
+//         DISP=SHR                                                             
+//SORTOUT  DD DSN=&&FP02,DISP=(NEW,PASS),                                       
+//         UNIT=(SYSDA,10),                                                     
+//         DCB=(RECFM=FB,LRECL=200),                                            
+//         SPACE=(CYL,(400,50),RLSE)                                            
+//SYSIN    DD *                                                                 
+    SORT FIELDS=(1,34,A),FORMAT=CH                                              
+//*--------------------------------------------------------------------         
+//* REDEFINE BP13.KP02.DOC                                                      
+//*--------------------------------------------------------------------         
+//STEP29   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT    DD DSN=&&FP02,DISP=(OLD,PASS)                                        
+//SYSIN    DD *                                                                 
+         DEL BP13.KP02.DOCHIST CL PURGE                                         
+         DEF CL (NAME(BP13.KP02.DOCHIST)        -                               
+                 CYL(450 80)                       -                            
+                 UNIQUE                          -                              
+                 DATACLAS(MULTIVOL)              -                              
+                 STORCLAS(PRODRLS)               -                              
+                 LOG(NONE)                       -                              
+                 SHR(2 3))                       -                              
+                 DATA                            -                              
+                 (NAME(BP13.KP02.DOCHIST.DATA)     -                            
+                 KEYS(34 0)                      -                              
+                 RECSZ(200 200)                  -                              
+                 FSPC(10 10)                     -                              
+                 CISZ(4096))                                                    
+         IF LASTCC = 0 THEN                      -                              
+           REPRO IFILE(INPUT)                    -                              
+                 ODS(BP13.KP02.DOCHIST)                                         
+//*---------------------------------------------------------------------        
+//* SORT OUT UPDATING FROM P13M276 LOG FILE                                     
+//*---------------------------------------------------------------------        
+//STEP30  EXEC SORT,COND=(0,NE)                                                 
+//SORTIN  DD DSN=BP13.F848.BKIMAGE.MONTH(0),DISP=SHR                            
+//SORTOUT DD DSN=&&BP13F848,DISP=(,PASS),                                       
+//        DCB=(RECFM=FB,LRECL=2000),                                            
+//        SPACE=(CYL,(50,10),RLSE)                                              
+//SYSIN     DD  *                                                               
+   SORT FIELDS=(4,8,A,1985,16,A),FORMAT=CH                                      
+   INCLUDE COND=(773,4,CH,EQ,C'A276',OR,                                        
+                 773,4,CH,EQ,C'A27G')                                           
+//*--------------------------------------------------------------------*        
+//* MATCH K595 TO GET THE ORIG QUEUE NO                                         
+//* MATCH K800 TO GET THE UPDATED QUEUE NO                                      
+//*--------------------------------------------------------------------*        
+//STEP31 EXEC  PGM=BP13C93A,COND=(0,NE)                                         
+//BP13F848 DD  DSN=&&BP13F848,DISP=(OLD,PASS)                                   
+//BP13K800 DD  DSN=BP13.K800.APPLN,DISP=SHR,                                    
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//BP13K595 DD  DSN=BP13.K595.BALLOT.LOG,DISP=SHR,                               
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//BP13L93A DD  SYSOUT=8,DEST=IOM8                                               
+//BP13L93B DD  SYSOUT=8,DEST=IOM8                                               
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//*-----------------------------------------------------------------            
+//* END BP13M201                                                                
+//*-----------------------------------------------------------------            
+

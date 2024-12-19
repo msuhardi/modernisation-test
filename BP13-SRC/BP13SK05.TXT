@@ -1,0 +1,234 @@
+  /*==============================================================*/            
+  /* SOC SYSTEM                                                   */            
+  /*==============================================================*/            
+  /* PROGRAM    : BP13SK05                                        */            
+  /* OBJECTIVES : MATCH ON PAYMENT COUPON CASES (BP13K757)        */            
+  /*--------------------------------------------------------------*/            
+  /* CHGE NO  DATE     OIC   DESCRIPTION                          */            
+  /* -------- -------- ----- -----------                          */            
+  /* BP173625 08072012 YCH2  PROGRAM TO GENERATE BTO/SBF LAUNCHES */            
+  /*==============================================================*/            
+                                                                                
+ %GLOBAL DATE USERID;                                                           
+ PROC FORMAT;                                                                   
+   VALUE  $PAYSTAT  "1"="SUCC PAYMENT       "                                   
+                    "2"="PAYMENT ERROR      "                                   
+                    "3"="NO PAYMENT (MGPS)  "                                   
+                    "4"="PAYMENT NOT RECEIVE";                                  
+                                                                                
+ /*-------------------------------*/                                            
+ /*  ACCUMULATED PAYMENT RECEIVED */                                            
+ /*-------------------------------*/                                            
+ DATA AC28F588;                                                                 
+   INFILE AC28F588;                                                             
+      INPUT @1   REGNO                    $CHAR8.                               
+            @9   F588_SALES_MODE          $CHAR3.                               
+            @13  F588_TXN_REF             $CHAR8.                               
+            @21  F588_DTE_TXN             $CHAR8.                               
+            @31  F588_TME_TXN             $CHAR8.                               
+            @39  F588_AMT_TXN             16.2                                  
+            @55  F588_STATUS              $CHAR1.  ;                            
+                                                                                
+ /*-------------------------------*/                                            
+ /*  DATA ENTRY COUPON CASES      */                                            
+ /*-------------------------------*/                                            
+ DATA BP13F76R;                                                                 
+   INFILE BP13F76R;                                                             
+      INPUT @1   REGNO                    $CHAR8.                               
+            @9   F76R_SALES_MODE          $CHAR3.                               
+            @12  F76R_DTE_BALLOT          $CHAR6.                               
+            @69  F76R_USERID              $CHAR8.                               
+            @77  F76R_DTE_APPLN           $CHAR8.                               
+            @85  F76R_DTE_CREATE          $CHAR8.;                              
+                                                                                
+ /*-------------------------------------*/                                      
+ /*  COMBINE ALL PAYMENT TRANSACTIONS   */                                      
+ /*-------------------------------------*/                                      
+ DATA BP13TRAN;                                                                 
+ SET AC28F588 BP13F76R;                                                         
+                                                                                
+ PROC SORT DATA=BP13TRAN; BY REGNO;                                             
+                                                                                
+ /*-------------------------------------*/                                      
+ /*  APPLICATION RECEIVED               */                                      
+ /*-------------------------------------*/                                      
+ DATA BP13F757;                                                                 
+   INFILE BP13F757;                                                             
+      INPUT @1     REGNO               $CHAR8.                                  
+            @2918  SALES_MODE          $CHAR3.                                  
+            @2894  DTE_BALLOT          $CHAR6.                                  
+            @2890  PORT_ELIG           $CHAR1.                                  
+            @2891  CANCEL              $CHAR1.                                  
+            @2892  PAY_MODE            $CHAR2.                                  
+            @2930  REGN_PAIRED         $CHAR8.                                  
+            @2938  MGPS_TYPE           $CHAR1.                                  
+            @2985  DTE_REQUEST         $CHAR8.                                  
+            @2993  TME_REQUEST         $CHAR8. ;                                
+                                                                                
+ PROC SORT; BY REGNO;                                                           
+                                                                                
+ /*---------------------------------------------*/                              
+ /*  MATCH APPLICATION AND PAYMENT TRANSACTIONS */                              
+ /*---------------------------------------------*/                              
+ DATA F757OUT TRANOUT F757ONE;                                                  
+ MERGE BP13F757(IN=F757) BP13TRAN(IN=TRAN); BY REGNO;                           
+                                                                                
+   /*===================================================*/                      
+   /*  CHECK ON MODE OF PAYMENT AND PAYMENT STATUS      */                      
+   /*===================================================*/                      
+                                                                                
+   LENGTH PAYMODE $8.;                                                          
+   LENGTH PAYSTAT $1.;                                                          
+   IF PAY_MODE='VC' OR                                                          
+      PAY_MODE='MC' OR                                                          
+      PAY_MODE='CC' THEN                                                        
+      DO;                                                                       
+         PAYMODE='CARD';                                                        
+         IF F588_STATUS='0' THEN                                                
+            PAYSTAT='1';                /* PAYMENT STATUS OK */                 
+         ELSE                                                                   
+            IF F588_STATUS='1' OR                                               
+               F588_STATUS='2' THEN                                             
+               PAYSTAT='2';             /*PAYMENT STATUS ERROR */               
+            ELSE                                                                
+               IF MGPS_TYPE='C' THEN    /* NO PAYMENT - MGPS */                 
+                  PAYSTAT='3';                                                  
+               ELSE                                                             
+                  PAYSTAT='4';          /*PAYMENT NOT RECEIVE */                
+      END;                                                                      
+   ELSE                                                                         
+      IF PAY_MODE='CS' THEN                                                     
+         DO;                                                                    
+            PAYMODE='COUPON';                                                   
+            IF MGPS_TYPE='C' THEN                                               
+               PAYSTAT='4';                                                     
+         END;                                                                   
+      ELSE                                                                      
+         IF PAY_MODE=' ' THEN                                                   
+            DO;                                                                 
+               IF PORT_ELIG='P' THEN                                            
+                  PAYMODE='PORT';                                               
+               ELSE                                                             
+                  IF F76R_DTE_CREATE^=' ' THEN                                  
+                     PAYMODE='COUPON';                                          
+                  ELSE                                                          
+                     IF REGNO=' ' THEN                                          
+                        PAYMODE='NO REGNO';                                     
+                     ELSE                                                       
+                        PAYMODE='TESTING';                                      
+            END;                                                                
+                                                                                
+   IF F757 AND TRAN THEN                                                        
+      OUTPUT F757OUT;                                                           
+   ELSE                                                                         
+      IF F757 AND ^TRAN THEN                                                    
+         OUTPUT F757ONE;                                                        
+      ELSE                                                                      
+         IF TRAN AND ^F757 THEN                                                 
+            OUTPUT TRANOUT;                                                     
+                                                                                
+ /*--------------------------------------------------*/                         
+ /*  OUTPUT ALL APPLICATION AND PAYMENT TRANSACTIONS */                         
+ /*  FOR AUDIT PURPOSE                               */                         
+ /*--------------------------------------------------*/                         
+ DATA BP13ALL;                                                                  
+ SET F757OUT F757ONE TRANOUT; BY REGNO;                                         
+                                                                                
+   FILE F757TRAN NOTITLES;                                                      
+                                                                                
+   CUR_DATE=TODAY();                                                            
+   IF _N_=1 THEN                                                                
+      DO;                                                                       
+        PAGE1+1;                                                                
+        PUT @1   '        ';                                                    
+        PUT @1   'REPORT ON APPLICATION STATUS DATED : '                        
+            @38  CUR_DATE DDMMYY10.;                                            
+        PUT @1   '        ';                                                    
+        PUT @34  'C';                                                           
+        PUT @34  'A';                                                           
+        PUT @32  'P'                                                            
+            @34  'N'                                                            
+            @49  'M';                                                           
+        PUT @32  'O'                                                            
+            @34  'C'                                                            
+            @49  'G';                                                           
+        PUT @32  'R'                                                            
+            @19  'SALES'                                                        
+            @25  ' DTE  '                                                       
+            @34  'E'                                                            
+            @36  'PAY'                                                          
+            @40  ' PAIRED'                                                      
+            @49  'P'                                                            
+            @125 ' DATE  '                                                      
+            @135 ' DATE  ';                                                     
+        PUT @1   '    SNO '                                                     
+            @10  'REGNO  '                                                      
+            @20  'MOD'                                                          
+            @25  'BALLOT'                                                       
+            @32  'T'                                                            
+            @34  'L'                                                            
+            @36  'MOD'                                                          
+            @40  ' REGNO '                                                      
+            @49  'S'                                                            
+            @51  'DTE REQ'                                                      
+            @60  'TME REQ'                                                      
+            @69  'TXN REF'                                                      
+            @78  'TXN DTE/TME'                                                  
+            @95  'PAYMENT AMOUNT'                                               
+            @113 'ST'                                                           
+            @116 'USERID'                                                       
+            @125 ' APPLN '                                                      
+            @135 ' ENTER ';                                                     
+       PUT @1 '       ';                                                        
+      END;                                                                      
+                                                                                
+      SNO1+1;                                                                   
+      PUT @1   SNO1                     8.                                      
+          @10  REGNO               $CHAR8.                                      
+          @20  SALES_MODE          $CHAR3.                                      
+          @25  DTE_BALLOT          $CHAR6.                                      
+          @32  PORT_ELIG           $CHAR1.                                      
+          @34  CANCEL              $CHAR1.                                      
+          @36  PAY_MODE            $CHAR2.                                      
+          @40  REGN_PAIRED         $CHAR8.                                      
+          @49  MGPS_TYPE           $CHAR1.                                      
+          @51  DTE_REQUEST         $CHAR8.                                      
+          @60  TME_REQUEST         $CHAR8.                                      
+          @69  F588_TXN_REF        $CHAR8.                                      
+          @78  F588_DTE_TXN        $CHAR8.                                      
+          @86  F588_TME_TXN        $CHAR8.                                      
+          @95  F588_AMT_TXN        16.2                                         
+          @113 F588_STATUS         $CHAR1.                                      
+          @116 F76R_USERID         $CHAR8.                                      
+          @125 F76R_DTE_APPLN      $CHAR8.                                      
+          @135 F76R_DTE_CREATE     $CHAR8.;                                     
+                                                                                
+   RETURN;                                                                      
+                                                                                
+ /*-----------------------------------------------------------*/                
+ /*  TABULATE SUMMARY OF APPLICATION AND PAYMENT TRANSACTIONS */                
+ /*  FOR AUDIT PURPOSE                                        */                
+ /*-----------------------------------------------------------*/                
+ OPTIONS PAGESIZE=60 LINESIZE=132 MISSING='0';                                  
+ PROC PRINTTO PRINT=BP13LK05 NEW;                                               
+ PROC TABULATE DATA=BP13ALL FORMAT=7. MISSING;                                  
+                                                                                
+ CLASS  REGNO SALES_MODE DTE_BALLOT                                             
+        PORT_ELIG CANCEL PAYMODE MGPS_TYPE PAYSTAT;                             
+                                                                                
+ KEYLABEL   ALL =  'TOTAL'                                                      
+            N   =  ' ' ;                                                        
+                                                                                
+ FORMAT PAYSTAT   $PAYSTAT.;                                                    
+                                                                                
+ LABEL SALES_MODE="SALES MODE"                                                  
+       PAYMODE   ="PAYMENT MODE"                                                
+       DTE_BALLOT="DATE BALLOT";                                                
+                                                                                
+ TABLE (SALES_MODE*DTE_BALLOT*(CANCEL*(PAYMODE ALL)                             
+        ALL="SUB-TOTAL")) ALL="OVERALL",                                        
+       (PAYSTAT="PAYMENT STATUS" ALL);                                          
+                                                                                
+TITLE1 "SUMMARY OF BTO/SBF APPLICATION AND PAYMENT TRANSACTIONS";               
+                                                                                
+

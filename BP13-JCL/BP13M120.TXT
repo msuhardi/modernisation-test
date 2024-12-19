@@ -1,0 +1,212 @@
+//BP13M120 JOB (BP13P),'SOC',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),                 
+//       NOTIFY=CSD0071                                                         
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//* ============================================================== *            
+//* CHG REF  BY    ON        DESCRIPTION                                        
+//* -------- --    ------    -----------                                        
+//* BP135980 MRN1  17122015  SERS GRANT RECOVERY REPORTS                        
+//* BP136045 MRN1  17122015  REPORT FOR TANGLIN HALT/C'WEALTH DRIVE             
+//* BP137799 IL5   22052019  REMOVE STEPS TO RUN BP13QX01                       
+//* BP137960 SRG1  14082019  INCLUDE STEP TO SORT BY VOUCHER & DROP             
+//*                          OLD VOUCHER RECORD.                                
+//* BP138461 AM25  14092020  ADD FTP STEP TO HDBWINFS1                          
+//* BP139787 EFAQ1 27102023  CHANGE PATH OF THE REPORT FROM                     
+//*                          'GROUP/EAPG/APPS/BP17/SERSOS1'                     
+//* ============================================================== *            
+//* SORT BP13K130 BY REGNO AND NRIC INCLUDE ONLY SRG/SRR CASES                  
+//*---------------------------------------------------------------------        
+//STEP01   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.K130.SOCHIST,DISP=SHR                                    
+//SORTOUT  DD DSN=&&SORTF136,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(TRK,(20,5),RLSE),                               
+//            DCB=(BLKSIZE=27900,LRECL=150,RECFM=FB)                            
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(5,8,A,25,9,A),FORMAT=CH                                          
+  INCLUDE COND=((1,2,CH,EQ,C'60',OR,1,2,CH,EQ,C'97'),AND,                       
+                (99,3,CH,EQ,C'SRG',OR,99,3,CH,EQ,C'SRR'))                       
+//*---------------------------------------------------------------------        
+//* GET THE REGNO + NRIC WITH LATEST DATE POST                                  
+//*---------------------------------------------------------------------        
+//STEP01B  EXEC SAS,COND=(0,NE),OPTIONS='MACRO',REGION=4096K                    
+//BP13F136 DD DSN=&&SORTF136,DISP=(OLD,PASS)                                    
+//OUTPF136 DD DSN=&&BP13F136,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(TRK,(20,5),RLSE),                               
+//            DCB=(BLKSIZE=27900,LRECL=150,RECFM=FB)                            
+//SYSIN    DD *                                                                 
+                                                                                
+ DATA BP13F136;                                                                 
+     INFILE BP13F136;                                                           
+     INPUT @5   REGNO          $CHAR8.                                          
+           @13  DTE_POST       $CHAR8.                                          
+           @25  NUM_NRIC       $CHAR9.                                          
+           @1   F136_REC       $CHAR150.                                        
+           ;                                                                    
+                                                                                
+ PROC SORT; BY REGNO NUM_NRIC DTE_POST;                                         
+                                                                                
+ DATA OUTPF136;                                                                 
+   SET BP13F136 END = EOF;                                                      
+   BY REGNO NUM_NRIC DTE_POST;                                                  
+   OPTIONS PAGESIZE = 80 LS=148;                                                
+   FILE OUTPF136 NOTITLES;                                                      
+   OPTION NODATE;                                                               
+                                                                                
+   IF LAST.NUM_NRIC AND LAST.DTE_POST THEN                                      
+      DO;                                                                       
+        PUT @1 F136_REC 150.;                                                   
+      END;                                                                      
+ RETURN;                                                                        
+//*---------------------------------------------------------------------        
+//* ACCUMULATE BP13FD10 (SRG CASES)                                             
+//*---------------------------------------------------------------------        
+//STEP02   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.FD10.VOUCHOIC.MONTH,DISP=SHR                             
+//         DD DSN=BP13.FD10.VOUCHOIC.PREVMTH,DISP=SHR                           
+//SORTOUT  DD DSN=BP13.FD10.VOUCHOIC.SRG,DISP=MOD                               
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(4,8,A,1,3,A),FORMAT=CH                                           
+  INCLUDE COND=(1,3,CH,EQ,C'SRG',OR,1,3,CH,EQ,C'SRR')                           
+//*---------------------------------------------------------------------        
+//* SORT TO KEEP LATEST VOUCHERS FIRST IF THERE'S ANY DUPLICATES                
+//*---------------------------------------------------------------------        
+//STEP03   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.FD10.VOUCHOIC.SRG,DISP=SHR                               
+//SORTOUT  DD DSN=BP13.FD10.VOUCHOIC.SRG,DISP=OLD                               
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(4,8,A,1,3,A,35,8,D),FORMAT=CH                                    
+//*---------------------------------------------------------------------        
+//* DROP DUPLICATES                                                             
+//*---------------------------------------------------------------------        
+//STEP03A  EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.FD10.VOUCHOIC.SRG,DISP=SHR                               
+//SORTOUT  DD DSN=BP13.FD10.VOUCHOIC.SRG,DISP=OLD                               
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(4,8,A,1,3,A),FORMAT=CH                                           
+  SUM FIELDS=NONE                                                               
+//*---------------------------------------------------------------------        
+//* MATCH FILES TO CREATE REPORT BASE FILES 1, 2, 3, 4, 5, 7                    
+//*---------------------------------------------------------------------        
+//STEP04   EXEC PGM=IKJEFT01,DYNAMNBR=20,COND=(0,NE),REGION=4096K               
+//BP13F136 DD DSN=&&BP13F136,DISP=(OLD,PASS)                                    
+//BP13FD10 DD DSN=BP13.FD10.VOUCHOIC.SRG,DISP=SHR                               
+//BP13K893 DD DSN=BP13.K893.APPLN.HISTORY,DISP=SHR,                             
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K800 DD DSN=BP13.K800.APPLN,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K410 DD DSN=BP13.K410.ACCUMSO,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K130 DD DSN=BP13.K130.SOCHIST,DISP=SHR                                    
+//BP13RPT1 DD DSN=BP13.REPORT1.BP13CB0B,DISP=OLD                                
+//BP13RPT2 DD DSN=BP13.REPORT2.BP13CB0B,DISP=OLD                                
+//BP13RPT3 DD DSN=BP13.REPORT3.BP13CB0B,DISP=OLD                                
+//BP13RPT4 DD DSN=BP13.REPORT4.BP13CB0B,DISP=OLD                                
+//BP13RPT5 DD DSN=BP13.REPORT5.BP13CB0B,DISP=OLD                                
+//BP13RPT7 DD DSN=BP13.REPORT7.BP13CB0B,DISP=OLD                                
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSTSIN  DD *                                                                 
+  DSN SYSTEM(DSN)                                                               
+  RUN PROGRAM(BP13CB0B) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+  END                                                                           
+//*---------------------------------------------------------------------        
+//* SORT BY REGNO, NRIC                                                         
+//*---------------------------------------------------------------------        
+//STEP05   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.REPORT1.BP13CB0B,DISP=SHR                                
+//SORTOUT  DD DSN=BP13.REPORT1.BP13CB0B,DISP=OLD                                
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(18,8,A,26,9,A),FORMAT=CH                                         
+//*---------------------------------------------------------------------        
+//STEP06   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.REPORT2.BP13CB0B,DISP=SHR                                
+//SORTOUT  DD DSN=BP13.REPORT2.BP13CB0B,DISP=OLD                                
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(18,8,A,26,9,A),FORMAT=CH                                         
+//*---------------------------------------------------------------------        
+//STEP07   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.REPORT5.BP13CB0B,DISP=SHR                                
+//SORTOUT  DD DSN=BP13.REPORT5.BP13CB0B,DISP=OLD                                
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(18,8,A,26,9,A),FORMAT=CH                                         
+//*---------------------------------------------------------------------        
+//STEP08   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.REPORT4.BP13CB0B.PREVMTH,DISP=SHR                        
+//SORTOUT  DD DSN=BP13.REPORT4.BP13CB0B.PREVMTH,DISP=OLD                        
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(18,8,A,26,9,A),FORMAT=CH                                         
+//*---------------------------------------------------------------------        
+//STEP09   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.REPORT5.BP13CB0B.PREVMTH,DISP=SHR                        
+//SORTOUT  DD DSN=BP13.REPORT5.BP13CB0B.PREVMTH,DISP=OLD                        
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(18,8,A,26,9,A),FORMAT=CH                                         
+//*---------------------------------------------------------------------        
+//* CREATE REPORTS 2A, 2B, 5A, 5B, 6, 8                                         
+//* -> REPORTS 2A & 2B - MATCH BP13RPT2 WITH PREVRPT5                           
+//* -> REPORTS 5A & 5B - CHECK BP13RPT5 DATE CANCEL                             
+//* -> REPORT 6 - MATCH BP13RPT5 WITH BP13RPT1 AND PREVRPT4                     
+//* -> REPORT 8 - USE BP13RPT5 TO INCLUDE MTH BAL = 0                           
+//*---------------------------------------------------------------------        
+//STEP10   EXEC PGM=BP13CB0F,COND=(0,NE)                                        
+//BP13RPT1 DD DSN=BP13.REPORT1.BP13CB0B,DISP=SHR                                
+//BP13RPT2 DD DSN=BP13.REPORT2.BP13CB0B,DISP=SHR                                
+//BP13RPT5 DD DSN=BP13.REPORT5.BP13CB0B,DISP=SHR                                
+//PREVRPT4 DD DSN=BP13.REPORT4.BP13CB0B.PREVMTH,DISP=SHR                        
+//PREVRPT5 DD DSN=BP13.REPORT5.BP13CB0B.PREVMTH,DISP=SHR                        
+//BP13REPT DD DSN=BP13.REPORT.BP13CB0F,DISP=OLD                                 
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* BRING TOGETHER ALL REPORT BASE FILES IN ONE FILE TO BE USED BY CB0D         
+//* SORT BY GL ACCT, REPORT TYPE, REGNO, NRIC                                   
+//*---------------------------------------------------------------------        
+//STEP11   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.REPORT1.BP13CB0B,DISP=SHR                                
+//         DD DSN=BP13.REPORT3.BP13CB0B,DISP=SHR                                
+//         DD DSN=BP13.REPORT4.BP13CB0B,DISP=SHR                                
+//         DD DSN=BP13.REPORT7.BP13CB0B,DISP=SHR                                
+//         DD DSN=BP13.REPORT.BP13CB0F,DISP=SHR                                 
+//SORTOUT  DD DSN=BP13.REPORT.BASE.SRG,DISP=OLD                                 
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(1,16,A,60,8,A,86,8,A,18,8,A),FORMAT=CH                           
+//*---------------------------------------------------------------------        
+//* USE BASE FILE TO CREATE REPORTS GROUP BY GL ACCT                            
+//*---------------------------------------------------------------------        
+//STEP12   EXEC PGM=BP13CB0D,COND=(0,NE)                                        
+//BP13REPT DD DSN=BP13.REPORT.BASE.SRG,DISP=SHR                                 
+//BP13OUTP DD DSN=BP13.LB0D.REPORT.SRG,DISP=SHR                                 
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* BACKUP REPORT 4 FOR USE NEXT MONTH                                          
+//*---------------------------------------------------------------------        
+//STEP13   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.REPORT4.BP13CB0B,DISP=SHR                                
+//SORTOUT  DD DSN=BP13.REPORT4.BP13CB0B.PREVMTH,DISP=OLD                        
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(18,8,A,26,9,A),FORMAT=CH                                         
+//*---------------------------------------------------------------------        
+//* BACKUP REPORT 5 FOR USE NEXT MONTH                                          
+//*---------------------------------------------------------------------        
+//STEP14   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.REPORT5.BP13CB0B,DISP=SHR                                
+//SORTOUT  DD DSN=BP13.REPORT5.BP13CB0B.PREVMTH,DISP=OLD                        
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(18,8,A,26,9,A),FORMAT=CH                                         
+//*--------------------------------------------------------------------         
+//* FTP FILE TO ISG HDBWINFS1                                                   
+//*--------------------------------------------------------------------         
+//PS0900   EXEC FTP,PARM='HDBWINFS1 (EXIT',COND=(0,NE)                          
+//NETRC    DD DSN=SY08.FTP.NETRC.BP17,DISP=SHR                                  
+//INPUT    DD *                                                                 
+CD /GROUP/SPRG/APPS/BP17/RDPOS1                                                 
+ASCII                                                                           
+PUT 'BP13.LB0D.REPORT.SRG' 'Monthly SERS grant report.txt'                      
+QUIT                                                                            
+

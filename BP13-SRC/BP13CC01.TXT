@@ -1,0 +1,435 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CC01.                                                 
+      *AUTHOR.        CHEE K C.                                                 
+      *DATE-WRITTEN.  04/05/89.                                                 
+      * ======================================================= *               
+      *               SYSTEM OF COMMITMENT  (BP13)              *               
+      * ======================================================= *               
+      *    OBJECTIVE  :                                         *               
+      *        1.  THIS PROGRAMME WILL CHECK THE TOTAL BALANCE  *               
+      *            IN SOC PROGRESS PAYMENT (LUMP SUM) AND LOAN  *               
+      *            BALANCE IN BP13KD00 WITH BALANCING FILE      *               
+      *            (BP13K160). IF KD00 & K160 BALANCE DO NOT    *               
+      *            TALLY, A RETURN CODE OF 99 WILL BE MOVED TO  *               
+      *            THE CONDITION CODE.                          *               
+      *                                                         *               
+      *     INPUT FILES:                                        *               
+      *           1. BP13KD00                                   *               
+      *           2. BP13K160                                   *               
+      *                                                         *               
+      *     OUTPUT FILES:                                       *               
+      *           NONE.                                         *               
+      *                                                         *               
+      *     LISTING:                                            *               
+      *           1. BP13LC01 (REPORT)                          *               
+      *                                                         *               
+      * ======================================================= *               
+      * CHG-NO   BY  ON      DESCRIPTION                        *               
+      * -------- --- ------  -----------                        *               
+      * BP132772 LSB 210306  NEW PGM, SAME AS BP13C106          *               
+      * BP132838 BA3 230107  SUBTRACT LOAN PAID TO LOAN PAID    *               
+      *                      DEVELOPER TOTAL                    *               
+      * BP133091 RB12 171007 EXPAND KD00 LENGTH FR 1200 TO 1600 *               
+      * ======================================================= *               
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+      ******************************************************************        
+      *   BP13KD00 IS READ SEQUENTIALLY FROM THE BEGINNING TO THE END. *        
+      *   THE FIELDS REGN-FEE-PAID,BOOK-FEE-PAID,SOC-DEBTOR AND        *        
+      *   COMMITTMENT-DEPOSIT WILL BE TOTALLED.                        *        
+      ******************************************************************        
+           SELECT BP13KD00 ASSIGN       TO BP13KD00                             
+                           ACCESS MODE  IS SEQUENTIAL                           
+                           ORGANIZATION IS INDEXED                              
+                           RECORD KEY   IS KD00-NUM-REGN                        
+                           FILE STATUS  IS KD00-STATUS.                         
+                                                                                
+                                                                                
+      ****************************************************************          
+      *    FILE BP13K160 IS THE BALANCING FILE. THE FIELD K160-AMT-  *          
+      *    CLOSE FOR THE DIFFERENT PAYMENT TYPES ARE MOVE TO WORKING *          
+      *    STORAGE FOR LATER COMPARISON WITH TOTALS FROM BP13KD00.   *          
+      ****************************************************************          
+           SELECT BP13K160 ASSIGN       TO BP13K160                             
+                           ACCESS MODE  IS SEQUENTIAL                           
+                           ORGANIZATION IS INDEXED                              
+                           RECORD KEY   IS K160-KEY-FLD                         
+                           FILE STATUS  IS K160-STATUS.                         
+                                                                                
+      ****************************************************************          
+      *   BP13LC01 IS THE OUTPUT LISTING GIVING TOTALS FOR THE       *          
+      *   DIFFERENT PAYMENT TYPES EXTRACTED FROM BP13KD00 AND        *          
+      *   BP13K160. A REPORT OF THOSE PAYMENT TYPES THAT DO NOT      *          
+      *   BALANCE IS ALSO LISTED.                                    *          
+      ****************************************************************          
+           SELECT BP13LC01 ASSIGN TO BP13LC01.                                  
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD  BP13KD00                                                             
+           RECORD CONTAINS 1600 CHARACTERS.                                     
+       COPY BP13KD00.                                                           
+                                                                                
+       FD  BP13K160                                                             
+           RECORD CONTAINS 100 CHARACTERS.                                      
+       COPY BP13K160.                                                           
+                                                                                
+       FD  BP13LC01                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           RECORDING MODE  IS  F                                                
+           DATA RECORD     IS  BP13LC01-REPORT.                                 
+       01  BP13LC01-REPORT                PIC X(132).                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-INDICATORS.                                                       
+           05  KD00-STATUS                PIC 99         VALUE ZEROS.           
+           05  K160-STATUS                PIC 99         VALUE ZEROS.           
+           05  WS-KD00-EOF-FLAG           PIC X          VALUE 'N'.             
+           05  WS-K160-EOF-FLAG           PIC X          VALUE 'N'.             
+                                                                                
+       01  WS-TOT-K160-AMT-CLOSE-PP-FEE   PIC S9(10)V99  VALUE ZEROS.           
+       01  WS-TOT-K160-AMT-CLOSE-INS-FEE  PIC S9(10)V99  VALUE ZEROS.           
+       01  WS-TOT-KD00-PP-PAID            PIC S9(10)V99  VALUE ZEROS.           
+       01  WS-PP-PAID                     PIC S9(10)V99  VALUE ZEROS.           
+       01  WS-LOAN-PAID                   PIC S9(10)V99  VALUE ZEROS.           
+       01  WS-LOAN-PAID-TOT               PIC S9(10)V99  VALUE ZEROS.           
+                                                                                
+       01  WS-READ-K160-CLOSE-PP-CNT      PIC 9(5)       VALUE ZEROS.           
+       01  WS-READ-K160-CLOSE-INS-CNT     PIC 9(5)       VALUE ZEROS.           
+       01  WS-READ-KD00-COUNT             PIC 9(5)       VALUE ZEROS.           
+       01  WS-READ-K160-COUNT             PIC 9(5)       VALUE ZEROS.           
+       01  WS-PAGE-COUNT                  PIC 9(5)       VALUE ZEROS.           
+                                                                                
+      ****************************************************************          
+      *    DEFINITION OF SYSTEM DATE.                                *          
+      ****************************************************************          
+       01  WS-CURRENT-DATE.                                                     
+           05  WS-CURRENT-CCYY            PIC 9999.                             
+           05  WS-CURRENT-MM              PIC 99.                               
+           05  WS-CURRENT-DD              PIC 99.                               
+                                                                                
+      ****************************************************************          
+      *    DEFINE THE REPORT TITLES                                  *          
+      ****************************************************************          
+       01  WS-TITLE-1.                                                          
+           05  FILLER                    PIC X(8)   VALUE 'BP13LC01'.           
+           05  FILLER                    PIC X(47)  VALUE SPACES.               
+           05  FILLER                    PIC X(20)  VALUE                       
+               'SYSTEM OF COMMITMENT'.                                          
+           05  FILLER                    PIC X(40)  VALUE SPACES.               
+           05  FILLER                    PIC X(6)   VALUE 'PAGE :'.             
+           05  WS-PAGE                   PIC ZZZZ9 .                            
+           05  FILLER                    PIC X(6)   VALUE SPACES.               
+                                                                                
+       01  WS-TITLE-2.                                                          
+           05  FILLER                    PIC X(29)  VALUE SPACES.               
+           05  FILLER                    PIC X(20)  VALUE SPACES.               
+           05  FILLER                    PIC X(32)  VALUE                       
+               'REPORT OF PROCESS BALANCING FILE'.                              
+           05  FILLER                    PIC X(34)  VALUE SPACES.               
+           05  FILLER                    PIC X(6)   VALUE 'DATE :'.             
+           05  WS-EDITED-DATE.                                                  
+               10  WS-DD                 PIC 99.                                
+               10  FILLER                PIC X      VALUE '/'.                  
+               10  WS-MM                 PIC 99.                                
+               10  FILLER                PIC X      VALUE '/'.                  
+               10  WS-CCYY               PIC 9999.                              
+           05  FILLER                    PIC X(5)   VALUE SPACES.               
+                                                                                
+      ****************************************************************          
+      *    DEFINES THE REPORT LAYOUT FOR THE TOTALS OF ALL PAYMENT   *          
+      *    TYPES READ FROM FILES BP13KD00 AND BP13K160 AND THE       *          
+      *    STATUS.       .                                           *          
+      ****************************************************************          
+       01  WS-HEADER-1.                                                         
+           05  FILLER                    PIC X(34)  VALUE SPACES.               
+           05  FILLER                    PIC X(18)  VALUE                       
+               '  TOTAL IN'.                                                    
+           05  FILLER                    PIC X(5)   VALUE SPACES.               
+           05  FILLER                    PIC X(18)  VALUE                       
+               'CLOSING AMT'.                                                   
+           05  FILLER                    PIC X(40)  VALUE SPACES.               
+                                                                                
+       01  WS-HEADER-2.                                                         
+           05  FILLER                    PIC X(30)  VALUE                       
+               'TYPE OF PAYMENT/FEES          '.                                
+           05  FILLER                    PIC X(4)   VALUE SPACES.               
+           05  FILLER                    PIC X(18)  VALUE                       
+               'BP13KD00     '.                                                 
+           05  FILLER                    PIC X(5)   VALUE SPACES.               
+           05  FILLER                    PIC X(18)  VALUE                       
+               'IN BP13K160'.                                                   
+           05  FILLER                    PIC X(1)   VALUE SPACES.               
+           05  FILLER                    PIC X(6)   VALUE 'STATUS'.             
+           05  FILLER                    PIC X(30)  VALUE SPACES.               
+                                                                                
+       01  WS-DETAIL-LINE-1.                                                    
+           05  FILLER                    PIC X(30)  VALUE                       
+               '1. PROGRESS PAYMENT (LUMP SUM)'.                                
+           05  FILLER                    PIC X(1)   VALUE SPACES.               
+           05  LC01-PP-FEE               PIC Z,ZZZ,ZZZ,ZZ9.99DB.                
+           05  FILLER                    PIC X(5)   VALUE SPACES.               
+           05  LC01-PP-CLOSING           PIC Z,ZZZ,ZZZ,ZZ9.99DB.                
+           05  FILLER                    PIC X(5)   VALUE SPACES.               
+           05  WS-STATUS-1               PIC X(2)   VALUE '**'.                 
+           05  FILLER                    PIC X(32)  VALUE SPACES.               
+                                                                                
+       01  WS-DETAIL-LINE-2.                                                    
+           05  FILLER                    PIC X(30)  VALUE                       
+               '2. PROGRESS PAYMENT (LOAN)    '.                                
+           05  FILLER                    PIC X(1)   VALUE SPACES.               
+           05  LC01-INS-FEE              PIC Z,ZZZ,ZZZ,ZZ9.99DB.                
+           05  FILLER                    PIC X(5)   VALUE SPACES.               
+           05  LC01-INS-CLOSING          PIC Z,ZZZ,ZZZ,ZZ9.99DB.                
+           05  FILLER                    PIC X(5)   VALUE SPACES.               
+           05  WS-STATUS-2               PIC X(2)   VALUE '**'.                 
+           05  FILLER                    PIC X(32)  VALUE SPACES.               
+                                                                                
+       01  WS-FOOTER-LINE-1.                                                    
+           05  FILLER                    PIC X(11)  VALUE SPACES.               
+           05  FILLER                    PIC X(49)  VALUE                       
+               'NOTE : STATUS OF ** IMPLIES THE ACCOUNTS BALANCES'.             
+           05  FILLER                    PIC X(72)  VALUE SPACES.               
+                                                                                
+       01  WS-FOOTER-LINE-2.                                                    
+           05  FILLER                    PIC X(18)  VALUE SPACES.               
+           05  FILLER                    PIC X(48)  VALUE                       
+               'STATUS OF 99 IMPLIES THE ACCOUNTS DO NOT BALANCE'.              
+           05  FILLER                    PIC X(66)  VALUE SPACES.               
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+      ******************************************************************        
+      *        MAIN LINE PROCESS                                       *        
+      ******************************************************************        
+       000-MAIN.                                                                
+           PERFORM 50-OPEN-FILE               THRU 50-EXIT.                     
+           PERFORM 100-SET-READ-KD00-POINTER  THRU 100-EXIT.                    
+           PERFORM 200-READ-KD00              THRU 200-EXIT                     
+                   UNTIL WS-KD00-EOF-FLAG = 'Y'.                                
+           PERFORM 500-SET-READ-K160-POINTER  THRU 500-EXIT.                    
+           PERFORM 600-READ-K160              THRU 600-EXIT                     
+                   UNTIL WS-K160-EOF-FLAG = 'Y'.                                
+           PERFORM 700-PRINT-TITLE            THRU 700-EXIT.                    
+           PERFORM 800-PRINT-HEADER           THRU 800-EXIT.                    
+           PERFORM 900-PRINT-DETAIL-LINE      THRU 900-EXIT.                    
+           PERFORM 1100-CLOSE-ROUTINE         THRU 1100-EXIT.                   
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ***************************************************************           
+      *    OPENING FILES SECTION                                    *           
+      ***************************************************************           
+       50-OPEN-FILE.                                                            
+           OPEN INPUT  BP13KD00                                                 
+                       BP13K160                                                 
+                OUTPUT BP13LC01.                                                
+                                                                                
+           IF KD00-STATUS NOT = 00 AND                                          
+              KD00-STATUS NOT = 97                                              
+              DISPLAY ' OPENING ERROR, BP13KD00 STATUS ' KD00-STATUS            
+              MOVE KD00-STATUS  TO RETURN-CODE                                  
+              PERFORM 1100-CLOSE-ROUTINE.                                       
+                                                                                
+           IF K160-STATUS NOT = 00 AND                                          
+              K160-STATUS NOT = 97                                              
+              DISPLAY ' OPENING ERROR, BP13K160 STATUS ' K160-STATUS            
+              MOVE K160-STATUS  TO RETURN-CODE                                  
+              PERFORM 1100-CLOSE-ROUTINE.                                       
+                                                                                
+       50-EXIT.                                                                 
+           EXIT.                                                                
+                                                                                
+      *****************************************************************         
+      *    SET READ POINTER FOR FILE BP13KD00 TO THE BEGINING         *         
+      *****************************************************************         
+       100-SET-READ-KD00-POINTER.                                               
+                                                                                
+           MOVE LOW-VALUES    TO KD00-NUM-REGN                                  
+           START BP13KD00 KEY >  KD00-NUM-REGN                                  
+           IF KD00-STATUS  NOT = 00                                             
+              DISPLAY 'START ERROR, BP13KD00 STATUS ' KD00-STATUS               
+              MOVE KD00-STATUS   TO RETURN-CODE                                 
+              PERFORM 1100-CLOSE-ROUTINE   THRU  1100-EXIT.                     
+                                                                                
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    READ FILE BP13KD00 AND TOTAL THE DIFFERENT PAYMENT TYPES    *        
+      ******************************************************************        
+       200-READ-KD00.                                                           
+                                                                                
+           READ BP13KD00 NEXT AT END                                            
+                MOVE 'Y' TO WS-KD00-EOF-FLAG                                    
+                GO TO 200-EXIT.                                                 
+                                                                                
+           ADD 1 TO WS-READ-KD00-COUNT.                                         
+                                                                                
+           IF KD00-AMT-PP-LUMPSUM-PAID IS NOT NUMERIC                           
+              MOVE ZEROES TO      KD00-AMT-PP-LUMPSUM-PAID.                     
+                                                                                
+           IF KD00-AMT-PP-PD-DEVLP-TOT IS NOT NUMERIC                           
+              MOVE ZEROES TO      KD00-AMT-PP-PD-DEVLP-TOT.                     
+                                                                                
+           IF KD00-AMT-LOAN-PAID IS NOT NUMERIC                                 
+              MOVE ZEROES TO      KD00-AMT-LOAN-PAID.                           
+                                                                                
+           IF KD00-AMT-LOAN-PD-DEVLP-TOT IS NOT NUMERIC                         
+              MOVE ZEROES TO      KD00-AMT-LOAN-PD-DEVLP-TOT.                   
+                                                                                
+           COMPUTE WS-PP-PAID   = KD00-AMT-PP-LUMPSUM-PAID -                    
+                                  KD00-AMT-PP-PD-DEVLP-TOT.                     
+           ADD WS-PP-PAID TO      WS-TOT-KD00-PP-PAID.                          
+                                                                                
+           COMPUTE WS-LOAN-PAID = KD00-AMT-LOAN-PAID -                          
+                                  KD00-AMT-LOAN-PD-DEVLP-TOT.                   
+           ADD WS-LOAN-PAID TO    WS-LOAN-PAID-TOT.                             
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *************************************************************             
+      *    SET READ POINTER FOR FILE BP13K160 TO THE BEGINING     *             
+      *************************************************************             
+       500-SET-READ-K160-POINTER.                                               
+                                                                                
+           MOVE LOW-VALUES    TO K160-KEY-FLD                                   
+           START BP13K160 KEY >  K160-KEY-FLD                                   
+           IF K160-STATUS  NOT = 00                                             
+               DISPLAY 'START ERROR, BP13K160 STATUS ' K160-STATUS              
+               MOVE K160-STATUS   TO RETURN-CODE                                
+               PERFORM 1100-CLOSE-ROUTINE   THRU 1100-EXIT.                     
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *****************************************************************         
+      *    READ FILE BP13K160 AND MOVE THE DIFFERENT PAYMENT TYPES    *         
+      *    TO WORKING STORAGE FOR COMPARISION.                        *         
+      *    CDE-PAYMENT-TYPE = PP   PROGRESS PAYMENT (LUMP SUM)        *         
+      *                       INS  INSTALMENT FOR PROGRESS PAYMENT    *         
+      *****************************************************************         
+       600-READ-K160.                                                           
+                                                                                
+           READ BP13K160 NEXT AT END                                            
+                MOVE 'Y' TO WS-K160-EOF-FLAG                                    
+                GO TO 600-EXIT.                                                 
+                                                                                
+           ADD 1 TO WS-READ-K160-COUNT.                                         
+                                                                                
+           IF K160-CDE-PAYMENT-TYPE = 'PP '                                     
+              MOVE K160-AMT-CLOSE   TO WS-TOT-K160-AMT-CLOSE-PP-FEE             
+              ADD 1                 TO WS-READ-K160-CLOSE-PP-CNT.               
+                                                                                
+                                                                                
+           IF K160-CDE-PAYMENT-TYPE = 'INS'                                     
+              MOVE K160-AMT-CLOSE   TO WS-TOT-K160-AMT-CLOSE-INS-FEE            
+              ADD 1                 TO WS-READ-K160-CLOSE-INS-CNT.              
+                                                                                
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *****************************************************************         
+      *    PRINT REPORT TITLES                                        *         
+      *****************************************************************         
+       700-PRINT-TITLE.                                                         
+                                                                                
+           MOVE   FUNCTION CURRENT-DATE(1:8)  TO  WS-CURRENT-DATE.              
+           MOVE   WS-CURRENT-CCYY TO   WS-CCYY.                                 
+           MOVE   WS-CURRENT-MM   TO   WS-MM.                                   
+           MOVE   WS-CURRENT-DD   TO   WS-DD.                                   
+           ADD    1               TO   WS-PAGE-COUNT.                           
+           MOVE   WS-PAGE-COUNT   TO   WS-PAGE.                                 
+           WRITE  BP13LC01-REPORT FROM WS-TITLE-1 AFTER PAGE.                   
+           WRITE  BP13LC01-REPORT FROM WS-TITLE-2 AFTER 2.                      
+                                                                                
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *****************************************************************         
+      *    PRINT REPORT FOR TOTALS OF ALL PAYMENT TYPE EXTRACTED FROM *         
+      *    FILES BP13KD00 AND BP13K160.                               *         
+      *****************************************************************         
+       800-PRINT-HEADER.                                                        
+                                                                                
+           MOVE WS-TOT-KD00-PP-PAID             TO LC01-PP-FEE.                 
+           MOVE WS-TOT-K160-AMT-CLOSE-PP-FEE    TO LC01-PP-CLOSING.             
+                                                                                
+           MOVE WS-LOAN-PAID-TOT                TO LC01-INS-FEE.                
+           MOVE WS-TOT-K160-AMT-CLOSE-INS-FEE   TO LC01-INS-CLOSING.            
+                                                                                
+           WRITE BP13LC01-REPORT FROM WS-HEADER-1 AFTER 4.                      
+           WRITE BP13LC01-REPORT FROM WS-HEADER-2.                              
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ************************************************************              
+      *    PRINT BALANCE REPORT FOR THOSE PAYMENT TYPES THAT DO  *              
+      *    BALANCE.                                              *              
+      ************************************************************              
+       900-PRINT-DETAIL-LINE.                                                   
+                                                                                
+                                                                                
+           IF WS-TOT-K160-AMT-CLOSE-PP-FEE NOT = WS-TOT-KD00-PP-PAID            
+              MOVE '99' TO RETURN-CODE WS-STATUS-1.                             
+                                                                                
+           IF WS-TOT-K160-AMT-CLOSE-INS-FEE NOT = WS-LOAN-PAID-TOT              
+              MOVE '99' TO RETURN-CODE WS-STATUS-2.                             
+                                                                                
+                                                                                
+           WRITE BP13LC01-REPORT FROM WS-DETAIL-LINE-1 AFTER 2.                 
+           WRITE BP13LC01-REPORT FROM WS-DETAIL-LINE-2 AFTER 2.                 
+           WRITE BP13LC01-REPORT FROM WS-FOOTER-LINE-1 AFTER 2.                 
+           WRITE BP13LC01-REPORT FROM WS-FOOTER-LINE-2 AFTER 2.                 
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ***************************************************************           
+      *     CLOSE ALL FILES AND STOP RUN.                           *           
+      ***************************************************************           
+       1100-CLOSE-ROUTINE.                                                      
+                                                                                
+           DISPLAY '******  BP13CC01 *************'.                            
+           DISPLAY 'NO OF KD00 READ    :' WS-READ-KD00-COUNT.                   
+           DISPLAY 'NO OF K160 READ    :' WS-READ-K160-COUNT.                   
+           DISPLAY 'NO OF K160 READ-PP :' WS-READ-K160-CLOSE-PP-CNT.            
+           DISPLAY 'NO OF K160 READ-INS:' WS-READ-K160-CLOSE-INS-CNT.           
+                                                                                
+           CLOSE BP13KD00                                                       
+                 BP13K160                                                       
+                 BP13LC01.                                                      
+                                                                                
+           IF KD00-STATUS NOT = 00 AND                                          
+              KD00-STATUS NOT = 97                                              
+              DISPLAY ' CLOSING ERROR, BP13KD00 STATUS ' KD00-STATUS            
+              MOVE KD00-STATUS  TO RETURN-CODE.                                 
+                                                                                
+           IF K160-STATUS NOT = 00 AND                                          
+              K160-STATUS NOT = 97                                              
+              DISPLAY ' CLOSING ERROR, BP13K160 STATUS ' K160-STATUS            
+              MOVE K160-STATUS  TO RETURN-CODE.                                 
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       1100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+

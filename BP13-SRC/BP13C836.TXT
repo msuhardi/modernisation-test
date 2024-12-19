@@ -1,0 +1,917 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.   BP13C836.                                                  
+      *AUTHOR.       YPH.                                                       
+      *DATE-WRITTEN. 15/01/95.                                                  
+      * ======================================================= *               
+      * SYSTEM OF COMMITMENT (BP13)                             *               
+      * ======================================================= *               
+      *                                                         *               
+      * NOTE: PROGRAM ORIGINALLY FROM BP08 - BP08C026           *               
+      *                                                         *               
+      * PURPOSE.                                                *               
+      * 1) THIS PROGRAM MATCHES SALES/RENTAL APPLICATIONS WITH  *               
+      *    PROPERTY TAX RECORD (BR10K010 AND BR10K030).         *               
+      *                                                         *               
+      * 2) EXCLUDE HDB SOLD PROPERTIES:                         *               
+      *           'HLQTR'                                       *               
+      *           'HLUSH'                                       *               
+      *           'HSHSH'                                       *               
+      *                                                         *               
+      * 3) INCLUDE BR10K080 (HISTORY FILE FOR BR10K010)         *               
+      *                                                         *               
+      * CHGE     BY   ON     DESCRIPTION                        *               
+      * -------- ---- ------ -----------                        *               
+      * BP130063 YPH  150195                                    *               
+      * BP130418 IT   181098 - Y2K CHANGE                       *               
+      * BP130551 SRN  101198 PPOS STATUS & DATE OF APPLICATION  *               
+      * BP130627 SRN  290199 CATER FOR STATUS                   *               
+      * BP130630 SSS  030999 USE 9 BYTE F550-NUM-UINFIN         *               
+      *                      REMOVE UFINCNV2                    *               
+      * ======================================================= *               
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3900.                                               
+       OBJECT-COMPUTER. IBM-3900.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT P08F550  ASSIGN TO P08F550                                    
+                  ACCESS MODE     IS SEQUENTIAL.                                
+           SELECT BR10K010 ASSIGN TO BR10K010                                   
+                  ACCESS MODE     IS DYNAMIC                                    
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K010-KEY-FLD                               
+                  FILE STATUS     IS WS-K010-STATUS.                            
+           SELECT BR10K080 ASSIGN TO BR10K080                                   
+                  ACCESS MODE     IS DYNAMIC                                    
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K080-KEY-FLD                               
+                  FILE STATUS     IS WS-K080-STATUS.                            
+           SELECT BR10K030 ASSIGN TO BR10K030                                   
+                  ACCESS MODE     IS RANDOM                                     
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K030-KEY-FLD                               
+                  FILE STATUS     IS WS-K030-STATUS.                            
+           SELECT P13L836  ASSIGN TO P13L836.                                   
+           SELECT P13A836  ASSIGN TO P13A836.                                   
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+       COPY P08F550.                                                            
+                                                                                
+       FD   BR10K010                                                            
+            RECORD CONTAINS 300 CHARACTERS.                                     
+       COPY BR10K010.                                                           
+                                                                                
+       FD   BR10K080                                                            
+            RECORD CONTAINS 300 CHARACTERS.                                     
+       COPY BR10K080.                                                           
+                                                                                
+       FD   BR10K030                                                            
+            RECORD CONTAINS 100 CHARACTERS.                                     
+       COPY BR10K030.                                                           
+                                                                                
+       FD  P13L836                                                              
+           LABEL RECORD IS OMITTED                                              
+           RECORDING MODE IS F.                                                 
+       01  L836-REC                     PIC X(133).                             
+                                                                                
+       FD  P13A836                                                              
+           LABEL RECORD IS OMITTED                                              
+           RECORDING MODE IS F.                                                 
+       01  A836-REC                     PIC X(133).                             
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+       01  WS-K010-STATUS               PIC 9(2).                               
+       01  WS-K080-STATUS               PIC 9(2).                               
+       01  WS-K030-STATUS               PIC 9(2).                               
+       01  WS-RPT-SALES                 PIC X(25)   VALUE                       
+                                        '   (SALES VS PROP TAX)  '.             
+       01  WS-RPT-RENTAL                PIC X(25)   VALUE                       
+                                        '  (RENTAL VS PROP TAX)  '.             
+                                                                                
+       01  WS-REGNO                     PIC X(8)    VALUE SPACES.               
+       01  WS-PREV-PPTX-UIN             PIC X(9)    VALUE SPACES.               
+                                                                                
+       01  WS-CNT-OCCUP                 PIC 9(2)    VALUE 0.                    
+       01  WS-CNT-PPTX                  PIC 9(2)    VALUE 0.                    
+       01  WS-CNT-O                     PIC 9(2)    VALUE 0.                    
+       01  WS-CNT-P                     PIC 9(2)    VALUE 0.                    
+                                                                                
+       01  WS-CNT-APPLN                 PIC 9(6)    VALUE 0.                    
+       01  WS-CNT-APPLN-NOMATCH         PIC 9(6)    VALUE 0.                    
+       01  WS-CNT-APPLN-MATCH           PIC 9(6)    VALUE 0.                    
+       01  WS-CNT-F550                  PIC 9(6)    VALUE 0.                    
+       01  WS-CNT-PPTX-NOMATCH          PIC 9(6)    VALUE 0.                    
+       01  WS-CNT-PPTX-MATCH            PIC 9(6)    VALUE 0.                    
+       01  WS-CNT-PPTX-NOMATCH-HIST     PIC 9(6)    VALUE 0.                    
+       01  WS-CNT-PPTX-MATCH-HIST       PIC 9(6)    VALUE 0.                    
+       01  WS-CNT-PAGE                  PIC 9(6)    VALUE 0.                    
+                                                                                
+       01  WS-EOF-F550                  PIC X.                                  
+           88  EOF-F550                             VALUE 'Y'.                  
+       01  WS-FND-PPTX                  PIC X.                                  
+           88  FND-PPTX                             VALUE 'Y'.                  
+       01  WS-FND-PPTX-HIST             PIC X.                                  
+           88  FND-PPTX-HIST                        VALUE 'Y'.                  
+       01  WS-PRINT-LIST                PIC X.                                  
+           88  PRINT-LIST                           VALUE 'Y'.                  
+       01  WS-FIRST-MATCH               PIC X.                                  
+           88  FIRST-MATCH                          VALUE 'Y'.                  
+       01  WS-ASTERISK                  PIC X(2)    VALUE '**'.                 
+                                                                                
+       01  WS-F550-UIN                  PIC X(9).                               
+       01  WS-DATE                      PIC X(8).                               
+                                                                                
+       01  WS-PRICE.                                                            
+           05  FILLER                   PIC 9(2).                               
+           05  WS-MILLION               PIC 9(9).                               
+           05  WS-CENTS                 PIC 99.                                 
+                                                                                
+       01  WS-PURCHASE.                                                         
+           05  WS-PUR-DD                PIC X(2).                               
+           05  FILLER                   PIC X       VALUE '/'.                  
+           05  WS-PUR-MM                PIC X(2).                               
+           05  FILLER                   PIC X       VALUE '/'.                  
+           05  WS-PUR-YY                PIC X(4).                               
+                                                                                
+       01  WS-REMARK                    PIC X(120)  VALUE                       
+           '******  MORE THAN 20 PRIVATE PROPERTIES !!  ******'.                
+                                                                                
+       01  WS-FLD.                                                              
+           05  WS-FLD1                  PIC 9(4)    VALUE 0.                    
+           05  WS-FLD2                  PIC 9(4)    VALUE 0.                    
+           05  WS-FLD3                  PIC 9(2)    VALUE 0.                    
+                                                                                
+       01  WS-STORE-PRT-REG.                                                    
+           05  WS-STORE-REG-NUM         PIC X(6)    VALUE SPACES.               
+           05  WS-STORE-REG-CDG         PIC X       VALUE SPACES.               
+                                                                                
+                                                                                
+      *---------------------------------------------------------*               
+      * PRINT OCCUPIERS' DETAIL INFO                            *               
+      *---------------------------------------------------------*               
+       01  WS-OCCUP-REC.                                                        
+           05  WS-OCCUP-DTL                OCCURS 20 TIMES.                     
+               10  WS-OCCUP-SER-NO         PIC X(2).                            
+               10  FILLER                  PIC X(2).                            
+               10  WS-OCCUP-AST            PIC X(2).                            
+               10  FILLER                  PIC X(2).                            
+               10  WS-OCCUP-NRIC           PIC X(9).                            
+               10  FILLER                  PIC X(4).                            
+               10  WS-OCCUP-NAME           PIC X(20).                           
+               10  FILLER                  PIC X(5).                            
+               10  WS-OCCUP-SEX            PIC X.                               
+               10  FILLER                  PIC X(4).                            
+               10  WS-OCCUP-RELA-DESC      PIC X(15).                           
+               10  FILLER                  PIC X(10).                           
+               10  WS-OCCUP-MAR-STATUS     PIC X.                               
+               10  FILLER                  PIC X(11).                           
+               10  WS-OCCUP-BIRTH-DATE.                                         
+                   15  WS-OCCUP-BIRTH-DD   PIC X(2).                            
+                   15  WS-OCCUP-SLASH1     PIC X.                               
+                   15  WS-OCCUP-BIRTH-MM   PIC X(2).                            
+                   15  WS-OCCUP-SLASH2     PIC X.                               
+                   15  WS-OCCUP-BIRTH-CC   PIC X(2).                            
+                   15  WS-OCCUP-BIRTH-YY   PIC X(2).                            
+               10  FILLER                  PIC X(28).                           
+                                                                                
+      *---------------------------------------------------------*               
+      * PRINT PROPERTY TAX DETAIL INFO                          *               
+      *---------------------------------------------------------*               
+       01  WS-PROP-TAX-REC.                                                     
+           05  WS-PROP-TAX-DTL             OCCURS 20 TIMES.                     
+               10  WS-NUM-UIN              PIC X(9).                            
+               10  FILLER                  PIC X.                               
+               10  FILLER                  PIC X.                               
+               10  WS-ADDR-DTL.                                                 
+                   15  WS-NUM-BLK-HSE      PIC X(10).                           
+                   15  WS-NUM-LVL          PIC X(3).                            
+                   15  FILLER              PIC X.                               
+                   15  WS-NUM-UNIT         PIC X(5).                            
+                   15  FILLER              PIC X.                               
+                   15  WS-NME-STREET       PIC X(35).                           
+                   15  WS-CDE-POSTAL       PIC X(6).                            
+               10  FILLER                  PIC X.                               
+               10  WS-STATUS               PIC X.                               
+               10  FILLER                  PIC X(2).                            
+               10  WS-DTE-PURCHASE         PIC X(10).                           
+               10  FILLER                  PIC X.                               
+               10  WS-AMT-PURCHASE-PRICE   PIC ZZZ,ZZZ,ZZ9.                     
+               10  FILLER                  PIC X.                               
+               10  WS-CDE-PPTY-TYPE        PIC X(30).                           
+               10  FILLER                  PIC X.                               
+               10  WS-CDE-OCCUP-STATUS     PIC X.                               
+                                                                                
+      *---------------------------------------------------------*               
+      * PRINT LIST HEADING DETAIL INFO                          *               
+      *---------------------------------------------------------*               
+       01  L836-APPLN-HD-1.                                                     
+           05  FILLER                  PIC X(15)   VALUE                        
+                                       '    RUN DATE : '.                       
+           05  L836-DATE               PIC X(10).                               
+           05  FILLER                  PIC X(21)   VALUE SPACES.                
+           05  FILLER                  PIC X(60)   VALUE                        
+               'S Y S T E M   OF    C O M M I T M E N T'.                       
+           05  FILLER                  PIC X(13)   VALUE                        
+                                       'LISTING-ID : '.                         
+           05  L836-ID.                                                         
+               10  FILLER              PIC X(5)    VALUE 'BP13-'.               
+               10  L836-LIST-NO        PIC X(4)    VALUE 'L836'.                
+                                                                                
+       01  L836-APPLN-HD-2.                                                     
+           05  FILLER                  PIC X(34)   VALUE SPACES.                
+           05  FILLER                  PIC X(20)   VALUE                        
+                                       'MULTIPLE APPLICATION'.                  
+           05  L836-RPT-TYPE           PIC X(25)   VALUE SPACES.                
+           05  FILLER                  PIC X(21)   VALUE                        
+                   '- BEFORE SHORTLISTING'.                                     
+           05  FILLER                  PIC X(12)   VALUE SPACES.                
+           05  FILLER                  PIC X(7)    VALUE 'PAGE :'.              
+           05  L836-PAGE               PIC ZZZ,ZZ9.                             
+                                                                                
+       01  L836-APPLN-HD-3.                                                     
+           05  FILLER                  PIC X(4)    VALUE SPACES.                
+           05  FILLER                  PIC X(25)   VALUE                        
+                          'ZONE/FLAT TYPE/REGN NO : '.                          
+           05  L836-ZONE               PIC X(3)    VALUE SPACES.                
+           05  FILLER                  PIC X       VALUE '/'.                   
+           05  L836-ROOM-TYPE          PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X       VALUE '/'.                   
+           05  L836-REGNO              PIC X(8)    VALUE SPACES.                
+           05  FILLER                  PIC X(19)   VALUE SPACES.                
+           05  FILLER                  PIC X(16)   VALUE                        
+                                       '       SCHEME : '.                      
+           05  L836-SCHEMES.                                                    
+               10  L836-SCH-1          PIC X(3)    VALUE SPACES.                
+               10  FILLER              PIC X       VALUE SPACES.                
+               10  L836-SCH-2          PIC X(3)    VALUE SPACES.                
+               10  FILLER              PIC X       VALUE SPACES.                
+               10  L836-SCH-3          PIC X(3)    VALUE SPACES.                
+               10  FILLER              PIC X       VALUE SPACES.                
+               10  L836-SCH-4          PIC X(3)    VALUE SPACES.                
+               10  FILLER              PIC X       VALUE SPACES.                
+               10  L836-SCH-5          PIC X(3)    VALUE SPACES.                
+           05  FILLER                  PIC X(3)    VALUE SPACES.                
+           05  L836-FROM-IDP           PIC X(14)   VALUE SPACES.                
+           05  FILLER                  PIC X(24)   VALUE SPACES.                
+                                                                                
+       01  L836-APPLN-HD-4.                                                     
+           05  FILLER                  PIC X(4)    VALUE SPACES.                
+           05  FILLER                  PIC X(22)   VALUE                        
+                                       'DATE OF APPLICATION :'.                 
+           05  L836-APPLN-DATE.                                                 
+               10  L836-APPLN-MM       PIC 9(2).                                
+               10  FILLER              PIC X       VALUE '/'.                   
+               10  L836-APPLN-CC       PIC 9(2).                                
+               10  L836-APPLN-YY       PIC 9(2).                                
+           05  FILLER                  PIC X(08)   VALUE SPACES.                
+           05  FILLER                  PIC X(23)   VALUE                        
+                                       'ADDRESS OF APPLICANT :'.                
+           05  L836-ADDR.                                                       
+               10  FILLER              PIC X(8)    VALUE 'APT BLK '.            
+               10  L836-BLK-NO         PIC X(4).                                
+               10  FILLER              PIC X(2)    VALUE SPACES.                
+               10  L836-HSE-NO         PIC X(11).                               
+               10  FILLER              PIC X(2)    VALUE SPACES.                
+               10  L836-STREET-NAME    PIC X(16).                               
+               10  FILLER              PIC X(2)    VALUE SPACES.                
+               10  L836-PD             PIC X(6).                                
+           05  FILLER                  PIC X(17)   VALUE SPACES.                
+                                                                                
+       01  L836-APPLN-HD-5.                                                     
+           05  FILLER                  PIC X(4)    VALUE SPACES.                
+           05  FILLER                  PIC X(27)   VALUE                        
+                                       'NAMES LISTED IN APPLICATION'.           
+           05  FILLER                  PIC X(102)  VALUE SPACES.                
+                                                                                
+       01  L836-APPLN-HD-6.                                                     
+           05 FILLER                   PIC X(74)   VALUE SPACES.                
+           05 FILLER                   PIC X(7)    VALUE 'MARITAL'.             
+           05 FILLER                   PIC X(44)   VALUE SPACES.                
+                                                                                
+       01  L836-APPLN-HD-7.                                                     
+           05  FILLER                  PIC X(03)   VALUE 'S/N'.                 
+           05  FILLER                  PIC X(05)   VALUE SPACES.                
+           05  FILLER                  PIC X(09)   VALUE 'NRIC'.                
+           05  FILLER                  PIC X(04)   VALUE SPACES.                
+           05  FILLER                  PIC X(20)   VALUE 'NAME'.                
+           05  FILLER                  PIC X(04)   VALUE SPACES.                
+           05  FILLER                  PIC X(03)   VALUE 'SEX'.                 
+           05  FILLER                  PIC X(03)   VALUE SPACES.                
+           05  FILLER                  PIC X(18)   VALUE                        
+                                       'RELATIONSHIP'.                          
+           05  FILLER                  PIC X(05)   VALUE SPACES.                
+           05  FILLER                  PIC X(08)   VALUE 'STATUS'.              
+           05  FILLER                  PIC X(06)   VALUE SPACES.                
+           05  FILLER                  PIC X(40)   VALUE 'BIRTHDATE'.           
+                                                                                
+       01  L836-APPLN-HD-8.                                                     
+           05  FILLER                  PIC X(03)   VALUE '---'.                 
+           05  FILLER                  PIC X(05)   VALUE SPACES.                
+           05  FILLER                  PIC X(09)   VALUE '---------'.           
+           05  FILLER                  PIC X(04)   VALUE SPACES.                
+           05  FILLER                  PIC X(20)   VALUE                        
+                                       '--------------------'.                  
+           05  FILLER                  PIC X(04)   VALUE SPACES.                
+           05  FILLER                  PIC X(03)   VALUE '---'.                 
+           05  FILLER                  PIC X(03)   VALUE SPACES.                
+           05  FILLER                  PIC X(18)   VALUE                        
+                                       '------------'.                          
+           05  FILLER                  PIC X(05)   VALUE SPACES.                
+           05  FILLER                  PIC X(08)   VALUE '------'.              
+           05  FILLER                  PIC X(06)   VALUE SPACES.                
+           05  FILLER                  PIC X(40)   VALUE '---------'.           
+                                                                                
+      *---------------------------------------------------------*               
+      * PRINT PROPERTY TAX DETAIL HEADER                        *               
+      *---------------------------------------------------------*               
+       01  L836-PPTX-HD-1.                                                      
+           05  FILLER                  PIC X(4)    VALUE SPACES.                
+           05  FILLER                  PIC X(38)   VALUE                        
+                             'PERSONS LISTED IN THE APPLICATION WHO '.          
+           05  FILLER                  PIC X(36)   VALUE                        
+                             'ARE PAYING PROPERTY TAX FOR PRIVATE '.            
+           05  FILLER                  PIC X(55)   VALUE                        
+                             'PROPERTIES :-'.                                   
+                                                                                
+       01  L836-PPTX-HD-2.                                                      
+           05  FILLER                  PIC X(10)   VALUE SPACES.                
+           05  FILLER                  PIC X(66)   VALUE SPACES.                
+           05  FILLER                  PIC X(10)   VALUE 'DTE-PRCH'.            
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(11)   VALUE ' PURCHASE'.           
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(25)   VALUE 'PPTY'.                
+           05  FILLER                  PIC X(4)    VALUE SPACES.                
+           05  FILLER                  PIC X(03)   VALUE 'US-'.                 
+                                                                                
+       01  L836-PPTX-HD-3.                                                      
+           05  FILLER                  PIC X(09)   VALUE 'UIN'.                 
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(10)   VALUE 'BLK-HSE'.             
+           05  FILLER                  PIC X(03)   VALUE 'LVL'.                 
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(05)   VALUE 'UNIT'.                
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(35)   VALUE 'STREET NAME'.         
+           05  FILLER                  PIC X(06)   VALUE 'POSTAL'.              
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(02)   VALUE 'ST'.                  
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(10)   VALUE '(D/M/Y)'.             
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(11)   VALUE ' PRICE ($)'.          
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(25)   VALUE 'TYPE'.                
+           05  FILLER                  PIC X(04)   VALUE SPACES.                
+           05  FILLER                  PIC X(03)   VALUE 'AGE'.                 
+                                                                                
+       01  L836-PPTX-HD-4.                                                      
+           05  FILLER                  PIC X(09)   VALUE '---------'.           
+           05  FILLER                  PIC X(2)    VALUE SPACES.                
+           05  FILLER                  PIC X(10)   VALUE '-------'.             
+           05  FILLER                  PIC X(03)   VALUE '---'.                 
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(05)   VALUE '-----'.               
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(35)   VALUE '-----------'.         
+           05  FILLER                  PIC X(06)   VALUE '------'.              
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(02)   VALUE '--'.                  
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(10)   VALUE '----------'.          
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(11)   VALUE '-----------'.         
+           05  FILLER                  PIC X       VALUE SPACES.                
+           05  FILLER                  PIC X(25)   VALUE '-----'.               
+           05  FILLER                  PIC X(04)   VALUE SPACES.                
+           05  FILLER                  PIC X(03)   VALUE '---'.                 
+                                                                                
+       01  L836-PPTX-REMARK.                                                    
+           05  FILLER                  PIC X(15)   VALUE SPACES.                
+           05  L836-REMARK             PIC X(120).                              
+                                                                                
+      *---------------------------------------------------------*               
+      * PRINT CONTROL LISTING INFO                              *               
+      *---------------------------------------------------------*               
+       01  A836-HDG.                                                            
+           05  FILLER              PIC X(58) VALUE SPACES.                      
+           05  FILLER              PIC X(75) VALUE 'CONTROL TOTALS'.            
+                                                                                
+       01  A836-LN1.                                                            
+           05  FILLER                   PIC X(41)   VALUE SPACES.               
+           05  FILLER                   PIC X(44)   VALUE                       
+                            'NO. OF APPLICATIONS TO BE CHECKED'.                
+           05  A836-CNT-INPUT           PIC ZZZ,ZZ9.                            
+           05  FILLER                   PIC X(41)   VALUE SPACES.               
+                                                                                
+       01  A836-LN2.                                                            
+           05  FILLER                   PIC X(41)   VALUE SPACES.               
+           05  FILLER                   PIC X(44)   VALUE                       
+                      'NO. OF APPLICATIONS OWNING OTHER PROPERTY'.              
+           05  A836-CNT-PPTX-MATCH      PIC ZZZ,ZZ9.                            
+           05  FILLER                   PIC X(41)   VALUE SPACES.               
+                                                                                
+       01  A836-LN3.                                                            
+           05  FILLER                   PIC X(41)   VALUE SPACES.               
+           05  FILLER                   PIC X(44)   VALUE                       
+                     'NO. OF APPLICATIONS NOT OWNING PROPERTY'.                 
+           05  A836-CNT-PPTX-NOMATCH    PIC ZZZ,ZZ9.                            
+           05  FILLER                   PIC X(41)   VALUE SPACES.               
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAINLINE.                                                           
+      *-------------------------------------------------------------            
+           PERFORM 0200-OPEN       THRU 0200-EXIT.                              
+           PERFORM 0300-READ-F550  THRU 0300-EXIT.                              
+           PERFORM 0400-PROCESS    THRU 0400-EXIT                               
+             UNTIL EOF-F550 AND PRINT-LIST.                                     
+           PERFORM 9000-CLOSE      THRU 9000-EXIT.                              
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       0200-OPEN.                                                               
+      *-------------------------------------------------------------            
+           OPEN INPUT P08F550                                                   
+                      BR10K010                                                  
+                      BR10K080                                                  
+                      BR10K030                                                  
+               OUTPUT P13L836                                                   
+                      P13A836.                                                  
+                                                                                
+           IF WS-K010-STATUS NOT = 0 AND 97                                     
+              DISPLAY 'OPEN FILE ERROR BR10K010, STATUS= '                      
+                                 WS-K010-STATUS                                 
+              MOVE WS-K010-STATUS TO RETURN-CODE                                
+              STOP RUN.                                                         
+                                                                                
+           IF WS-K080-STATUS NOT = 0 AND 97                                     
+              DISPLAY 'OPEN FILE ERROR BR10K080, STATUS= '                      
+                                 WS-K080-STATUS                                 
+              MOVE WS-K080-STATUS TO RETURN-CODE                                
+              STOP RUN.                                                         
+                                                                                
+           IF WS-K030-STATUS NOT = 0 AND 97                                     
+              DISPLAY 'OPEN FILE ERROR BR10K030, STATUS= '                      
+                                 WS-K030-STATUS                                 
+              MOVE WS-K030-STATUS TO RETURN-CODE                                
+              STOP RUN.                                                         
+                                                                                
+           MOVE FUNCTION CURRENT-DATE TO WS-DATE.                               
+           STRING WS-DATE(7:2) '/' WS-DATE(5:2) '/' WS-DATE(1:4)                
+                  DELIMITED BY SIZE INTO L836-DATE.                             
+                                                                                
+           MOVE 'N'            TO   WS-FND-PPTX WS-PRINT-LIST.                  
+           MOVE WS-RPT-SALES   TO   L836-RPT-TYPE.                              
+                                                                                
+       0200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       0300-READ-F550.                                                          
+      *-------------------------------------------------------------            
+           READ P08F550                                                         
+                AT END MOVE 'Y'         TO WS-EOF-F550                          
+                       MOVE HIGH-VALUES TO WS-REGNO.                            
+       0300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       0400-PROCESS.                                                            
+      *-------------------------------------------------------------            
+           IF EOF-F550                                                          
+              IF FND-PPTX                                                       
+                 PERFORM 0700-OUTPUT-LIST                                       
+                    THRU 0700-EXIT                                              
+              ELSE                                                              
+                 ADD 1          TO   WS-CNT-APPLN-NOMATCH                       
+              END-IF                                                            
+                                                                                
+              SUBTRACT 1        FROM WS-CNT-APPLN-NOMATCH                       
+              MOVE 'Y'          TO   WS-PRINT-LIST                              
+              GO TO 0400-EXIT                                                   
+                                                                                
+           ELSE                                                                 
+           IF F550-NUM-REGNO NOT = WS-REGNO                                     
+                                                                                
+              IF FND-PPTX                                                       
+                 PERFORM 0700-OUTPUT-LIST                                       
+                    THRU 0700-EXIT                                              
+              ELSE                                                              
+                 ADD 1            TO WS-CNT-APPLN-NOMATCH                       
+              END-IF                                                            
+                                                                                
+              ADD 1               TO WS-CNT-APPLN                               
+              MOVE F550-NUM-REGNO TO WS-REGNO                                   
+              MOVE ZERO           TO WS-CNT-OCCUP                               
+                                     WS-CNT-PPTX                                
+              MOVE SPACES         TO WS-OCCUP-REC                               
+                                     WS-PROP-TAX-REC                            
+                                     WS-FND-PPTX                                
+                                     WS-PREV-PPTX-UIN                           
+                                                                                
+              PERFORM 0410-UPDATE-APPLN-DETAIL                                  
+                 THRU 0410-EXIT                                                 
+                                                                                
+              GO TO 0400-READNEXT                                               
+                                                                                
+      *                                                                         
+      * TO HANDLE DUPLICATE HEADER RECORD                                       
+      *                                                                         
+           ELSE                                                                 
+           IF F550-RELA-COD = '##'                                              
+              GO TO 0400-READNEXT.                                              
+                                                                                
+           ADD  1               TO WS-CNT-OCCUP                                 
+                                   WS-CNT-F550.                                 
+           MOVE WS-CNT-OCCUP    TO WS-OCCUP-SER-NO    (WS-CNT-OCCUP).           
+           MOVE F550-NAME       TO WS-OCCUP-NAME      (WS-CNT-OCCUP).           
+           MOVE SPACES          TO WS-OCCUP-AST       (WS-CNT-OCCUP).           
+           MOVE F550-NUM-UINFIN TO WS-OCCUP-NRIC      (WS-CNT-OCCUP).           
+           MOVE F550-SEX        TO WS-OCCUP-SEX       (WS-CNT-OCCUP).           
+           MOVE F550-RELA-DESC  TO WS-OCCUP-RELA-DESC (WS-CNT-OCCUP).   .       
+           MOVE F550-MAR-STATUS TO WS-OCCUP-MAR-STATUS(WS-CNT-OCCUP).           
+           MOVE F550-BIRTH-MM   TO WS-OCCUP-BIRTH-DD  (WS-CNT-OCCUP).           
+           MOVE '/'             TO WS-OCCUP-SLASH1    (WS-CNT-OCCUP).           
+           MOVE F550-BIRTH-MM   TO WS-OCCUP-BIRTH-MM  (WS-CNT-OCCUP).           
+           MOVE '/'             TO WS-OCCUP-SLASH2    (WS-CNT-OCCUP).           
+           MOVE F550-BIRTH-YY   TO WS-OCCUP-BIRTH-YY  (WS-CNT-OCCUP).           
+           MOVE F550-BIRTH-CC   TO WS-OCCUP-BIRTH-CC  (WS-CNT-OCCUP).           
+                                                                                
+           PERFORM 0600-CHECK-PROP-TAX                                          
+              THRU 0600-EXIT.                                                   
+                                                                                
+       0400-READNEXT.                                                           
+      *-------------------------------------------------------------            
+           PERFORM 0300-READ-F550                                               
+              THRU 0300-EXIT.                                                   
+       0400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       0410-UPDATE-APPLN-DETAIL.                                                
+      *-------------------------------------------------------------            
+           MOVE F550-NUM-REGNO         TO L836-REGNO.                           
+           MOVE F550-ROOM              TO L836-ROOM-TYPE.                       
+           MOVE F550-NEWTOWN           TO L836-ZONE.                            
+                                                                                
+           IF F550-DIFF-SCH = '1'                                               
+              MOVE '(IDP SCHEMES)'     TO L836-FROM-IDP                         
+              MOVE F550-IDP-SCH        TO L836-SCH-1                            
+              MOVE F550-ALLOC-SCH      TO L836-SCH-2                            
+              MOVE F550-ELIG-SCH       TO L836-SCH-3                            
+              MOVE SPACE               TO L836-SCH-5                            
+                                                                                
+              IF F550-LESSEE = '1'                                              
+                 MOVE 'LSE'            TO L836-SCH-4                            
+              ELSE                                                              
+                 MOVE SPACE            TO L836-SCH-4                            
+           ELSE                                                                 
+              MOVE '(LIVE SCHEMES)'    TO L836-FROM-IDP                         
+              PERFORM 0420-USE-LIVE-SCHEME                                      
+                 THRU 0420-EXIT.                                                
+                                                                                
+           MOVE F550-APPLN-MM          TO L836-APPLN-MM.                        
+           MOVE F550-APPLN-YY          TO L836-APPLN-YY.                        
+           MOVE F550-APPLN-CC          TO L836-APPLN-CC.                        
+           MOVE F550-BLK-NO            TO L836-BLK-NO.                          
+           MOVE F550-HSE-NO            TO L836-HSE-NO.                          
+           MOVE F550-STREET            TO L836-STREET-NAME.                     
+           MOVE F550-PD                TO L836-PD.                              
+                                                                                
+       0410-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       0420-USE-LIVE-SCHEME.                                                    
+      *-------------------------------------------------------------            
+           IF F550-LESSEE = '1'                                                 
+              MOVE 'LSE'        TO L836-SCH-1                                   
+           ELSE                                                                 
+              MOVE SPACES       TO L836-SCH-1.                                  
+                                                                                
+           IF F550-ASC    = '1'                                                 
+              MOVE 'ASC'        TO L836-SCH-2                                   
+           ELSE                                                                 
+              MOVE SPACES       TO L836-SCH-2.                                  
+                                                                                
+           IF F550-ORPHAN = '1'                                                 
+              MOVE 'ORP'        TO L836-SCH-3                                   
+           ELSE                                                                 
+              MOVE SPACES       TO L836-SCH-3.                                  
+                                                                                
+           IF F550-CGO    = '1'                                                 
+              MOVE 'CGO'        TO L836-SCH-4                                   
+           ELSE                                                                 
+              MOVE SPACES       TO L836-SCH-4.                                  
+                                                                                
+           IF F550-RESETTLEMENT  = '1'                                          
+              MOVE 'RST'        TO L836-SCH-5                                   
+           ELSE                                                                 
+              MOVE SPACES       TO L836-SCH-5.                                  
+                                                                                
+       0420-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       0600-CHECK-PROP-TAX.                                                     
+      *-------------------------------------------------------------            
+           MOVE SPACES          TO BR10K010-REC.                                
+           MOVE 'Y'             TO WS-FIRST-MATCH.                              
+                                                                                
+           MOVE F550-NUM-UINFIN TO WS-F550-UIN.                                 
+           MOVE WS-F550-UIN     TO K010-NUM-UIN.                                
+                                                                                
+           MOVE  SPACES         TO BR10K080-REC.                                
+           MOVE  K010-KEY-FLD   TO K080-KEY-FLD.                                
+                                                                                
+           START BR10K010 KEY > K010-KEY-FLD.                                   
+           EVALUATE WS-K010-STATUS                                              
+              WHEN  00                                                          
+              WHEN  02                                                          
+                    PERFORM 0610-RETRIEVE-PROP-TAX THRU 0610-EXIT               
+                      UNTIL K010-NUM-UIN NOT = WS-F550-UIN                      
+              WHEN  10                                                          
+              WHEN  23                                                          
+                    CONTINUE                                                    
+              WHEN  OTHER                                                       
+                    DISPLAY 'START BR10K010 ERR ' WS-K010-STATUS                
+                    MOVE WS-K010-STATUS TO RETURN-CODE                          
+                    PERFORM 9000-CLOSE THRU 9000-EXIT                           
+           END-EVALUATE.                                                        
+                                                                                
+           IF FIRST-MATCH                                                       
+              ADD 1             TO WS-CNT-PPTX-NOMATCH.                         
+                                                                                
+      *----------------> PROCESS HISTORY FILE                                   
+                                                                                
+           MOVE 'Y'             TO WS-FIRST-MATCH.                              
+                                                                                
+           START BR10K080 KEY > K080-KEY-FLD.                                   
+           EVALUATE WS-K080-STATUS                                              
+           WHEN  00                                                             
+           WHEN  02                                                             
+                 PERFORM 0650-RETRIEVE-PROP-TAX-HIST THRU 0650-EXIT             
+                   UNTIL K080-NUM-UIN NOT = WS-F550-UIN                         
+           WHEN  10                                                             
+           WHEN  23                                                             
+                 CONTINUE                                                       
+           WHEN OTHER                                                           
+                 DISPLAY 'BR10K080 START ERROR ' WS-K080-STATUS                 
+                 DISPLAY 'BR10K080 RECORD KEY IS ' K080-KEY-FLD                 
+                 MOVE WS-K080-STATUS TO RETURN-CODE                             
+                 PERFORM 9000-CLOSE THRU 9000-EXIT                              
+           END-EVALUATE.                                                        
+                                                                                
+           IF FIRST-MATCH                                                       
+              ADD 1             TO WS-CNT-PPTX-NOMATCH-HIST.                    
+                                                                                
+       0600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       0610-RETRIEVE-PROP-TAX.                                                  
+      *-------------------------------------------------------------            
+           READ BR10K010 NEXT RECORD                                            
+                AT END MOVE HIGH-VALUES TO K010-NUM-UIN.                        
+                                                                                
+           IF K010-NUM-UIN NOT = WS-F550-UIN                                    
+              GO TO 0610-EXIT                                                   
+           ELSE                                                                 
+           IF K010-CDE-PPTY-TYPE = 'HLQTR' OR                                   
+                                   'HLUSH' OR                                   
+                                   'HSHSH'                                      
+              GO TO 0610-EXIT                                                   
+           ELSE                                                                 
+           IF FIRST-MATCH                                                       
+              DISPLAY '--------------------------'                              
+              MOVE 'N'          TO WS-FIRST-MATCH                               
+              MOVE 'Y'          TO WS-FND-PPTX                                  
+              ADD 1             TO WS-CNT-PPTX-MATCH.                           
+                                                                                
+           MOVE WS-ASTERISK     TO WS-OCCUP-AST         (WS-CNT-OCCUP).         
+                                                                                
+           ADD 1 TO WS-CNT-PPTX.                                                
+           IF WS-CNT-PPTX  < 21                                                 
+              MOVE SPACES       TO L836-REMARK                                  
+                                                                                
+           ELSE                                                                 
+              MOVE WS-REMARK    TO L836-REMARK                                  
+              MOVE HIGH-VALUES  TO K010-NUM-UIN                                 
+              GO TO 0610-EXIT.                                                  
+                                                                                
+           IF K010-NUM-UIN = WS-PREV-PPTX-UIN                                   
+               MOVE SPACES      TO WS-NUM-UIN           (WS-CNT-PPTX)           
+           ELSE                                                                 
+              MOVE K010-NUM-UIN TO WS-PREV-PPTX-UIN                             
+                                   WS-NUM-UIN           (WS-CNT-PPTX).          
+                                                                                
+           MOVE  'C'       TO WS-STATUS     (WS-CNT-PPTX).                      
+                                                                                
+           MOVE K010-DTE-PURCHASE(1:4) TO WS-PUR-YY.                            
+           MOVE K010-DTE-PURCHASE(5:2) TO WS-PUR-MM.                            
+           MOVE K010-DTE-PURCHASE(7:2) TO WS-PUR-DD.                            
+           MOVE WS-PURCHASE     TO WS-DTE-PURCHASE      (WS-CNT-PPTX).          
+                                                                                
+           MOVE K010-AMT-PURCHASE-PRICE TO WS-PRICE.                            
+           MOVE WS-MILLION      TO WS-AMT-PURCHASE-PRICE(WS-CNT-PPTX).          
+                                                                                
+           MOVE K010-NUM-BLK-HSE                                                
+                                TO WS-NUM-BLK-HSE       (WS-CNT-PPTX).          
+           MOVE K010-NUM-LVL    TO WS-NUM-LVL           (WS-CNT-PPTX).          
+           MOVE K010-NUM-UNIT   TO WS-NUM-UNIT          (WS-CNT-PPTX).          
+           MOVE K010-NME-STREET TO WS-NME-STREET        (WS-CNT-PPTX).          
+           MOVE K010-CDE-POSTAL TO WS-CDE-POSTAL        (WS-CNT-PPTX).          
+                                                                                
+           IF K010-CDE-OCCUP-STATUS = SPACES OR LOW-VALUES                      
+              MOVE '?'          TO WS-CDE-OCCUP-STATUS  (WS-CNT-PPTX)           
+           ELSE                                                                 
+              MOVE K010-CDE-OCCUP-STATUS                                        
+                                TO WS-CDE-OCCUP-STATUS  (WS-CNT-PPTX).          
+                                                                                
+           MOVE SPACES             TO BR10K030-REC.                             
+           MOVE 'PT'               TO K030-CDE-SERIAL.                          
+           MOVE K010-CDE-PPTY-TYPE TO K030-CDE-VALID.                           
+                                                                                
+           READ BR10K030.                                                       
+           MOVE K030-TXT-DESC   TO WS-CDE-PPTY-TYPE     (WS-CNT-PPTX).          
+                                                                                
+       0610-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       0650-RETRIEVE-PROP-TAX-HIST.                                             
+      *-------------------------------------------------------------            
+           READ BR10K080 NEXT RECORD                                            
+                AT END MOVE HIGH-VALUES TO K080-NUM-UIN.                        
+                                                                                
+           IF K080-NUM-UIN NOT = WS-F550-UIN                                    
+              GO TO 0650-EXIT                                                   
+           ELSE                                                                 
+           IF K080-CDE-PPTY-TYPE = 'HLQTR' OR                                   
+                                   'HLUSH' OR                                   
+                                   'HSHSH'                                      
+              GO TO 0650-EXIT                                                   
+           ELSE                                                                 
+           IF FIRST-MATCH                                                       
+              DISPLAY 'FIRST-MATCH-FOR-K080------'                              
+              MOVE 'N'          TO WS-FIRST-MATCH                               
+              MOVE 'Y'          TO WS-FND-PPTX                                  
+              ADD   1           TO WS-CNT-PPTX-MATCH-HIST.                      
+                                                                                
+           MOVE WS-ASTERISK     TO WS-OCCUP-AST         (WS-CNT-OCCUP).         
+                                                                                
+           ADD 1 TO WS-CNT-PPTX.                                                
+           IF WS-CNT-PPTX  < 21                                                 
+              MOVE SPACES       TO L836-REMARK                                  
+                                                                                
+           ELSE                                                                 
+              MOVE WS-REMARK    TO L836-REMARK                                  
+              MOVE HIGH-VALUES  TO K080-NUM-UIN                                 
+              GO TO 0650-EXIT.                                                  
+                                                                                
+           MOVE 'H'                        TO WS-STATUS (WS-CNT-PPTX)           
+                                                                                
+           IF K080-NUM-UIN = WS-PREV-PPTX-UIN                                   
+               MOVE SPACES      TO WS-NUM-UIN           (WS-CNT-PPTX)           
+           ELSE                                                                 
+              MOVE K080-NUM-UIN TO WS-PREV-PPTX-UIN                             
+                                   WS-NUM-UIN           (WS-CNT-PPTX).          
+                                                                                
+           MOVE K080-DTE-PURCHASE(1:4) TO WS-PUR-YY.                            
+           MOVE K080-DTE-PURCHASE(5:2) TO WS-PUR-MM.                            
+           MOVE K080-DTE-PURCHASE(7:2) TO WS-PUR-DD.                            
+           MOVE WS-PURCHASE     TO WS-DTE-PURCHASE      (WS-CNT-PPTX).          
+                                                                                
+           MOVE K080-AMT-PURCHASE-PRICE TO WS-PRICE.                            
+           MOVE WS-MILLION      TO WS-AMT-PURCHASE-PRICE(WS-CNT-PPTX).          
+                                                                                
+           MOVE K080-NUM-BLK-HSE                                                
+                                TO WS-NUM-BLK-HSE       (WS-CNT-PPTX).          
+           MOVE K080-NUM-LVL    TO WS-NUM-LVL           (WS-CNT-PPTX).          
+           MOVE K080-NUM-UNIT   TO WS-NUM-UNIT          (WS-CNT-PPTX).          
+           MOVE K080-NME-STREET TO WS-NME-STREET        (WS-CNT-PPTX).          
+           MOVE K080-CDE-POSTAL TO WS-CDE-POSTAL        (WS-CNT-PPTX).          
+                                                                                
+           IF K080-CDE-OCCUP-STATUS = SPACES OR LOW-VALUES                      
+              MOVE '?'          TO WS-CDE-OCCUP-STATUS  (WS-CNT-PPTX)           
+           ELSE                                                                 
+              MOVE K080-CDE-OCCUP-STATUS                                        
+                                TO WS-CDE-OCCUP-STATUS  (WS-CNT-PPTX).          
+                                                                                
+           MOVE SPACES             TO BR10K030-REC.                             
+           MOVE 'PT'               TO K030-CDE-SERIAL.                          
+           MOVE K080-CDE-PPTY-TYPE TO K030-CDE-VALID.                           
+                                                                                
+           READ BR10K030.                                                       
+           MOVE K030-TXT-DESC   TO WS-CDE-PPTY-TYPE     (WS-CNT-PPTX).          
+                                                                                
+       0650-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       0700-OUTPUT-LIST.                                                        
+      *-------------------------------------------------------------            
+           ADD  1               TO   WS-CNT-PAGE                                
+                                     WS-CNT-APPLN-MATCH.                        
+           MOVE WS-CNT-PAGE     TO   L836-PAGE.                                 
+                                                                                
+           WRITE L836-REC       FROM L836-APPLN-HD-1 AFTER PAGE.                
+           WRITE L836-REC       FROM L836-APPLN-HD-2 AFTER 1.                   
+           WRITE L836-REC       FROM L836-APPLN-HD-3 AFTER 2.                   
+           WRITE L836-REC       FROM L836-APPLN-HD-4 AFTER 2.                   
+           WRITE L836-REC       FROM L836-APPLN-HD-5 AFTER 2.                   
+           WRITE L836-REC       FROM L836-APPLN-HD-6 AFTER 1.                   
+           WRITE L836-REC       FROM L836-APPLN-HD-7 AFTER 1.                   
+           WRITE L836-REC       FROM L836-APPLN-HD-8 AFTER 1.                   
+                                                                                
+           PERFORM 0710-WRITE-OCCUP-DETAIL                                      
+              THRU 0710-EXIT                                                    
+           VARYING WS-CNT-O FROM 1 BY 1                                         
+             UNTIL WS-CNT-O > 20.                                               
+                                                                                
+           WRITE L836-REC       FROM L836-PPTX-HD-1  AFTER 2.                   
+           WRITE L836-REC       FROM L836-PPTX-HD-2  AFTER 2.                   
+           WRITE L836-REC       FROM L836-PPTX-HD-3  AFTER 1.                   
+           WRITE L836-REC       FROM L836-PPTX-HD-4  AFTER 1.                   
+                                                                                
+           PERFORM 0720-WRITE-PPTX-DETAIL                                       
+              THRU 0720-EXIT                                                    
+           VARYING WS-CNT-P FROM 1 BY 1                                         
+             UNTIL WS-CNT-P > 20.                                               
+                                                                                
+           WRITE L836-REC       FROM L836-PPTX-REMARK AFTER 2.                  
+                                                                                
+       0700-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       0710-WRITE-OCCUP-DETAIL.                                                 
+      *-------------------------------------------------------------            
+            WRITE L836-REC  FROM WS-OCCUP-DTL   (WS-CNT-O) AFTER 1.             
+       0710-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       0720-WRITE-PPTX-DETAIL.                                                  
+      *-------------------------------------------------------------            
+            WRITE L836-REC  FROM WS-PROP-TAX-DTL(WS-CNT-P) AFTER 1.             
+       0720-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       9000-CLOSE.                                                              
+      *-------------------------------------------------------------            
+           ADD  1                   TO   WS-CNT-PAGE.                           
+           MOVE WS-CNT-PAGE         TO   L836-PAGE.                             
+           MOVE 'A836'              TO   L836-LIST-NO.                          
+                                                                                
+           WRITE A836-REC           FROM L836-APPLN-HD-1 AFTER PAGE.            
+           WRITE A836-REC           FROM L836-APPLN-HD-2 AFTER 1.               
+           WRITE A836-REC           FROM A836-HDG        AFTER 2.               
+                                                                                
+           MOVE WS-CNT-APPLN         TO  A836-CNT-INPUT.                        
+           MOVE WS-CNT-APPLN-MATCH   TO  A836-CNT-PPTX-MATCH.                   
+           MOVE WS-CNT-APPLN-NOMATCH TO  A836-CNT-PPTX-NOMATCH.                 
+                                                                                
+           WRITE A836-REC           FROM A836-LN1        AFTER 3.               
+           WRITE A836-REC           FROM A836-LN2        AFTER 1.               
+           WRITE A836-REC           FROM A836-LN3        AFTER 1.               
+                                                                                
+           DISPLAY ' '.                                                         
+           DISPLAY '* BP13C836 CONTROL TOTAL *************'.                    
+           DISPLAY 'NO. OF P08F550-REC READ   = ' WS-CNT-F550.                  
+           DISPLAY 'NO. OF MATCHED PPTX-UIN   = ' WS-CNT-PPTX-MATCH.            
+           DISPLAY 'NO. OF UNMATCHED PPTX-UIN = ' WS-CNT-PPTX-NOMATCH.          
+           DISPLAY ' '.                                                         
+           DISPLAY 'NO. OF MATCHED PPTX-UIN   FROM HIST (K080) = '              
+                                   WS-CNT-PPTX-MATCH-HIST.                      
+           DISPLAY 'NO. OF UNMATCHED PPTX-UIN FROM HIST (K080) = '              
+                                   WS-CNT-PPTX-NOMATCH-HIST.                    
+           DISPLAY ' '.                                                         
+           DISPLAY 'NO. OF APPLICATIONS       = ' WS-CNT-APPLN.                 
+           DISPLAY 'NO. OF MATCHED APPLN      = ' WS-CNT-APPLN-MATCH.           
+           DISPLAY 'NO. OF UNMATCHED APPLN    = ' WS-CNT-APPLN-NOMATCH.         
+                                                                                
+           CLOSE P08F550                                                        
+                 BR10K010                                                       
+                 BR10K080                                                       
+                 BR10K030                                                       
+                 P13L836                                                        
+                 P13A836.                                                       
+                                                                                
+           IF WS-K010-STATUS NOT = 0 AND 97                                     
+              DISPLAY 'CLOSE FILE ERROR BR10K010 ' WS-K010-STATUS               
+              MOVE WS-K010-STATUS TO RETURN-CODE.                               
+                                                                                
+           IF WS-K030-STATUS NOT = 0 AND 97                                     
+              DISPLAY 'CLOSE FILE ERROR BR10K030 ' WS-K030-STATUS               
+              MOVE WS-K030-STATUS TO RETURN-CODE.                               
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

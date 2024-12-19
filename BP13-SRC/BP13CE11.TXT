@@ -1,0 +1,859 @@
+      *===============================================================*         
+       IDENTIFICATION DIVISION.                                                 
+      *===============================================================*         
+       PROGRAM-ID.    BP13CE11.                                                 
+       AUTHOR.        MRN1.                                                     
+       DATE-WRITTEN.  05072012.                                                 
+      *===============================================================*         
+      *   OBJECTIVE:  REPORT 1: DISBURSEMENT & RECOVERY OF AHG AND SHG*         
+      *                         FOR DP FLATS                          *         
+      *===============================================================*         
+      *                                                               *         
+      *     INPUT FILE :                                              *         
+      *                  1. BP13F800                                  *         
+      *                  2. GRANT_ASMNT AND GRANT_ASMNT_PERSON TABLES *         
+      *     REPORT FILE:                                              *         
+      *                  1. P13LE11A                                  *         
+      *                  2. P13LE11B                                  *         
+      *===============================================================*         
+      * REF NO   DATE       BY   AMENDMENTS/ENHANCEMENTS              *         
+      * -------- ---------- ---- -----------------------              *         
+      * BP134970 05/07/2012 MRN1 NEW PROGRAM.                         *         
+      * BP135812 02/03/2017 KSJ3 INCL GRANT RECOVERY, REM AMT INTEREST*         
+      * BP136694 05/04/2017 PCL4 TO CATER FOR BP13FC80                *         
+      * BP136254 06/12/2017 MRN1 REPLACE BP13KD05 WITH READ FROM TABLE*         
+      *                          BY CALLING BP13CB4A SUBROUTINE       *         
+      * BP137168 25/05/2018 PCL4 TO CATER FOR CSM AND READ BP13K022   *         
+      * BP137700 25/03/2019 MRN1 FIXED ISSUE WHEN RETRIEVING GRANTS FOR         
+      *                          OCCUPIERS                            *         
+      * BP137804 02/04/2019 MRN1 INITIALIZE NUM-NEXT-GRANT            *         
+      *===============================================================*         
+                                                                                
+                                                                                
+      **********************                                                    
+       ENVIRONMENT DIVISION.                                                    
+      **********************                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT  BP13F800  ASSIGN        TO BP13F800.                         
+           SELECT  BP13FC80  ASSIGN        TO BP13FC80.                         
+                                                                                
+           SELECT BP13K022  ASSIGN        TO BP13K022                           
+                            ACCESS MODE   IS RANDOM                             
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K022-KEY-FLD                       
+                            ALTERNATE KEY IS K022-NUM-REGN                      
+                            FILE STATUS   IS WS-K022-STAT.                      
+                                                                                
+           SELECT BP13K024  ASSIGN        TO BP13K024                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K024-KEY-FLD                       
+                            FILE STATUS   IS WS-K024-STAT.                      
+                                                                                
+           SELECT BP13K096  ASSIGN        TO BP13K096                           
+                            ORGANIZATION  IS INDEXED                            
+                            ACCESS MODE   IS RANDOM                             
+                            RECORD KEY    IS K096-NUM-KEY                       
+                            FILE STATUS   IS WS-K096-STAT.                      
+                                                                                
+                                                                                
+           SELECT  P13LE11A  ASSIGN        TO P13LE11A.                         
+           SELECT  P13LE11B  ASSIGN        TO P13LE11B.                         
+                                                                                
+      ***************                                                           
+       DATA DIVISION.                                                           
+      ***************                                                           
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F800                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13F800.                                                           
+                                                                                
+       FD   BP13FC80                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13FC80.                                                           
+                                                                                
+       FD  BP13K024                                                             
+           RECORD CONTAINS 100 CHARACTERS.                                      
+       COPY BP13K024.                                                           
+                                                                                
+       FD   BP13K022                                                            
+            RECORD CONTAINS 100 CHARACTERS.                                     
+       COPY BP13K022.                                                           
+                                                                                
+       FD  BP13K096                                                             
+           RECORD CONTAINS  200 CHARACTERS.                                     
+           COPY BP13K096.                                                       
+                                                                                
+                                                                                
+       FD  P13LE11A                                                             
+           RECORD CONTAINS 133 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+       01  P13LE11A-REC                  PIC X(133).                            
+                                                                                
+       FD  P13LE11B                                                             
+           RECORD CONTAINS 133 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+       01  P13LE11B-REC                  PIC X(133).                            
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+      *-------------------------------------------------------------            
+      *    LINKAGE FOR SUB-PROGRAM BP13CCNT                                     
+      *-------------------------------------------------------------            
+       01  WS-BP13CCNT-LINK.                                                    
+           05  LINK-CNTCT-TYPE           PIC X(3)   VALUE SPACES.               
+           05  LINK-STAFF-NICK           PIC X(6)   VALUE SPACES.               
+           05  LINK-STAFF-NUM            PIC X(6)   VALUE SPACES.               
+           05  LINK-STAFF-CNTCT          PIC X(50)  VALUE SPACES.               
+           05  LINK-SYSERR               PIC 9(4)   VALUE ZEROES.               
+                                                                                
+                                                                                
+      ******************************************************************        
+      *                   WORKING-STORAGE AREA                         *        
+      ******************************************************************        
+       01  FILE-VARIABLES.                                                      
+           05  WS-F800-EOF             PIC X(1)  VALUE 'N'.                     
+           05  WS-K024-FND             PIC X(1)  VALUE 'N'.                     
+           05  WS-K096-FND             PIC X(1)  VALUE 'N'.                     
+           05  WS-K022-STAT            PIC 99    VALUE ZEROES.                  
+           05  WS-K024-STAT            PIC 99    VALUE ZEROES.                  
+           05  WS-K096-STAT            PIC 99    VALUE ZEROES.                  
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F800-READ            PIC 9(8)  VALUE ZEROES.                  
+           05  WS-FC80-WRITE           PIC 9(8)  VALUE ZEROES.                  
+           05  WS-SNO-A                PIC 9(7)  VALUE ZEROES.                  
+           05  WS-SNO-B                PIC 9(7)  VALUE ZEROES.                  
+           05  WS-NUM-CASES            PIC 9(7)  VALUE ZEROES.                  
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05 WS-CURR-DATE.                                                     
+              10 WS-CURR-YY            PIC 9(04)    VALUE ZEROES.               
+              10 WS-CURR-MM            PIC 9(02)    VALUE ZEROES.               
+              10 WS-CURR-DD            PIC 9(02)    VALUE ZEROES.               
+           05 WS-DTE-CANCEL-PREV       PIC X(08)    VALUE SPACES.               
+           05 WS-DTE-CANCEL.                                                    
+              10 WS-DTE-CAN-YY         PIC 9(04)    VALUE ZEROES.               
+              10 WS-DTE-CAN-MM         PIC 9(02)    VALUE ZEROES.               
+              10 WS-DTE-CAN-DD         PIC 9(02)    VALUE ZEROES.               
+           05 WS-MONTHS-OUT            PIC 9(03)    VALUE ZEROES.               
+           05 WS-AMOUNT-OUT            PIC 9(08)    VALUE ZEROES.               
+           05 WS-TOTAL-AMOUNT-OUT      PIC 9(08)    VALUE ZEROES.               
+           05 WS-GRANT-SUM             PIC 9(08)    VALUE ZEROES.               
+           05 WS-RECOVER-SUM           PIC 9(08)    VALUE ZEROES.               
+           05 WS-YY-DIFF               PIC 9(04)    VALUE ZEROES.               
+           05 WS-MM-DIFF               PIC 9(02)    VALUE ZEROES.               
+           05 WS-LE11A-WRITE           PIC 9(08)    VALUE ZEROES.               
+           05 WS-LE11B-WRITE           PIC 9(08)    VALUE ZEROES.               
+           05 WS-NRIC-FND              PIC 9(08)    VALUE ZEROES.               
+           05 WS-NFND-K022             PIC 9(08)    VALUE ZEROES.               
+           05 WS-BYPASS                PIC 9(08)    VALUE ZEROES.               
+           05 WS-CTR                   PIC 9(02)    VALUE ZEROES.               
+           05 WS-CNT                   PIC 9(02)    VALUE ZEROES.               
+           05 WS-NO-MORE-ROWS          PIC X(1)  VALUE 'N'.                     
+           05 WS-NRIC-CTR              PIC 9(02)    VALUE ZEROES.               
+           05 WS-TEMP-STORAGE          OCCURS 10 TIMES.                         
+              10 WS-NRIC               PIC X(09)    VALUE SPACES.               
+              10 WS-AHG-GRANT          PIC 9(08)    VALUE ZEROES.               
+              10 WS-AHG-RECOVER        PIC 9(08)    VALUE ZEROES.               
+              10 WS-SHG-GRANT          PIC 9(08)    VALUE ZEROES.               
+              10 WS-SHG-RECOVER        PIC 9(08)    VALUE ZEROES.               
+              10 WS-RECOVER-INT        PIC 9(08)    VALUE ZEROES.               
+                                                                                
+       01  WS-PERSON.                                                           
+           05  WS-PERSON-DTL               OCCURS 10 TIMES.                     
+               10 WS-NUM-NRIC              PIC X(09).                           
+               10 WS-AMT-AHG-GRANT         PIC 9(06)V99 VALUE ZEROES.           
+               10 WS-AMT-EX-AHG-GRANT      PIC 9(06)V99 VALUE ZEROES.           
+               10 WS-AMT-HSGNT             PIC 9(06)V99 VALUE ZEROES.           
+               10 WS-AMT-EX-HSGNT          PIC 9(06)V99 VALUE ZEROES.           
+               10 WS-AMT-AHG-RCVRY         PIC 9(06)V99 VALUE ZEROES.           
+               10 WS-AMT-SHG-RCVRY         PIC 9(06)V99 VALUE ZEROES.           
+               10 WS-AMT-AHG-RCVRY-INT     PIC 9(06)V99 VALUE ZEROES.           
+               10 WS-AMT-SHG-RCVRY-INT     PIC 9(06)V99 VALUE ZEROES.           
+                                                                                
+       01  WS-CB4A-VARS.                                                        
+           05 WS-GRANT-FND            PIC X(01) VALUE 'N'.                      
+           05 WS-G                    PIC 9(02) VALUE ZEROES.                   
+           05 WS-P                    PIC 9(02) VALUE ZEROES.                   
+           05 WS-PRSN                 PIC 9(02) VALUE ZEROES.                   
+           05 WS-STORED               PIC X(01) VALUE 'N'.                      
+           05 WS-NUM-NEXT-NUM-GRANT   PIC X(06) VALUE SPACES.                   
+                                                                                
+       01  WS-HEADER-LINE1A.                                                    
+           05  FILLER                 PIC X(50) VALUE                           
+               '  S/N   MONTHS-OUTSTANDING    NO. OF CASES    AMOU'.            
+           05  FILLER                 PIC X(14) VALUE                           
+               'NT-OUTSTANDING'.                                                
+                                                                                
+       01  WS-HEADER-LINE2A.                                                    
+           05  FILLER                 PIC X(50) VALUE                           
+               '------  ------------------    ------------    ----'.            
+           05  FILLER                 PIC X(14) VALUE                           
+               '--------------'.                                                
+                                                                                
+       01  WS-LE11A-DETAIL.                                                     
+           05 WS-LE11A-SNO                  PIC ZZZZZ9.                         
+           05 FILLER                        PIC X(09) VALUE SPACES.             
+           05 WS-LE11A-MONTHS-OUT           PIC X(03).                          
+           05 FILLER                        PIC X(13) VALUE SPACES.             
+           05 WS-LE11A-NUM-CASES            PIC ZZZZZ9.                         
+           05 FILLER                        PIC X(13) VALUE SPACES.             
+           05 WS-LE11A-AMT-OUT              PIC Z,ZZZ,ZZ9.99.                   
+           05 FILLER                        PIC X(04) VALUE SPACES.             
+                                                                                
+       01  WS-HEADER-LINE1B.                                                    
+           05  FILLER                 PIC X(133) VALUE                          
+               '  S/N  MTH-OUT  REGNO   SUBTRANSFER   NRIC    DTE-CANCEL        
+      -        '   AMT-OUT   OIC   AHG-GRANT AHG-RECOVR SHG-GRANT  SHG-R        
+      -        'ECOVR'.                                                         
+                                                                                
+       01  WS-HEADER-LINE2B.                                                    
+           05  FILLER                 PIC X(133) VALUE                          
+               '------ ------- -------- ----------- --------- ----------        
+      -        ' ---------- ----- ---------- ---------- ---------- -----        
+      -        '-----'.                                                         
+                                                                                
+       01  WS-LE11B-DETAIL.                                                     
+           05 WS-LE11B-SNO                  PIC ZZZZZ9.                         
+           05 FILLER                        PIC X(03) VALUE SPACES.             
+           05 WS-LE11B-MONTHS-OUT           PIC X(03).                          
+           05 FILLER                        PIC X(03) VALUE SPACES.             
+           05 WS-LE11B-REGNO                PIC X(08).                          
+           05 FILLER                        PIC X(06) VALUE SPACES.             
+           05 WS-LE11B-GRNT-RECOVERY-SUBTR  PIC X(01).                          
+           05 FILLER                        PIC X(06) VALUE SPACES.             
+           05 WS-LE11B-NRIC                 PIC X(09).                          
+           05 FILLER                        PIC X(02) VALUE SPACES.             
+           05 WS-LE11B-DTE-CANCEL           PIC X(08).                          
+           05 FILLER                        PIC X(02) VALUE SPACES.             
+           05 WS-LE11B-AMT-OUT              PIC ZZZ,ZZ9.99.                     
+           05 FILLER                        PIC X(01) VALUE SPACES.             
+           05 WS-LE11B-OIC                  PIC X(05).                          
+           05 FILLER                        PIC X(01) VALUE SPACES.             
+           05 WS-LE11B-AHG-GRANT            PIC ZZZ,ZZ9.99.                     
+           05 FILLER                        PIC X(01) VALUE SPACES.             
+           05 WS-LE11B-AHG-RECOVER          PIC ZZZ,ZZ9.99.                     
+           05 FILLER                        PIC X(01) VALUE SPACES.             
+           05 WS-LE11B-SHG-GRANT            PIC ZZZ,ZZ9.99.                     
+           05 FILLER                        PIC X(01) VALUE SPACES.             
+           05 WS-LE11B-SHG-RECOVER          PIC ZZZ,ZZ9.99.                     
+                                                                                
+       COPY P13COM73.                                                           
+                                                                                
+      ******************************************************************        
+      *                   P R O G R A M     B O D Y                    *        
+      ******************************************************************        
+                                                                                
+      ********************                                                      
+       PROCEDURE DIVISION.                                                      
+      ********************                                                      
+                                                                                
+      ******************************************************************        
+       0000-MAIN.                                                               
+      ******************************************************************        
+                                                                                
+           PERFORM 1000-OPEN-ROUTINE       THRU 1000-EXIT.                      
+           PERFORM 2000-READ-BP13F800      THRU 2000-EXIT.                      
+           MOVE F800-DTE-CANCEL            TO WS-DTE-CANCEL-PREV.               
+           PERFORM 3000-PROCESS-RECORDS    THRU 3000-EXIT                       
+             UNTIL WS-F800-EOF = 'Y'.                                           
+           PERFORM 9999-CLOSE-ROUTINE      THRU 9999-EXIT.                      
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       1000-OPEN-ROUTINE.                                                       
+      ******************************************************************        
+                                                                                
+           OPEN INPUT  BP13F800                                                 
+                       BP13K022                                                 
+                       BP13K024                                                 
+                       BP13K096                                                 
+               OUTPUT  P13LE11A                                                 
+                       P13LE11B                                                 
+                       BP13FC80.                                                
+                                                                                
+           IF WS-K096-STAT NOT = 00 AND 97                                      
+              DISPLAY 'BP13K096 - ERROR OPENING : ' WS-K096-STAT                
+              PERFORM  9999-CLOSE-ROUTINE  THRU 9999-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF WS-K022-STAT NOT  = 00 AND 97                                     
+              DISPLAY 'ERROR READING BP13K022 - STAT ' WS-K022-STAT             
+              PERFORM 9999-CLOSE-ROUTINE  THRU 9999-EXIT                        
+           END-IF.                                                              
+                                                                                
+           IF WS-K024-STAT NOT  = 00 AND 97                                     
+              DISPLAY 'ERROR READING BP13K024 - STAT ' WS-K024-STAT             
+              PERFORM 9999-CLOSE-ROUTINE  THRU 9999-EXIT                        
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8)   TO WS-CURR-DATE.                   
+                                                                                
+           WRITE P13LE11A-REC FROM WS-HEADER-LINE1A.                            
+           WRITE P13LE11A-REC FROM WS-HEADER-LINE2A.                            
+                                                                                
+           WRITE P13LE11B-REC FROM WS-HEADER-LINE1B.                            
+           WRITE P13LE11B-REC FROM WS-HEADER-LINE2B.                            
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       2000-READ-BP13F800.                                                      
+      ******************************************************************        
+                                                                                
+           READ BP13F800           AT END                                       
+                MOVE 'Y'           TO WS-F800-EOF                               
+                                                                                
+                IF WS-NUM-CASES NOT = ZEROES                                    
+                   PERFORM 4500-MOVE-SUMMARY THRU 4500-EXIT                     
+                   ADD 1 TO WS-SNO-A                                            
+                   MOVE WS-SNO-A                 TO WS-LE11A-SNO                
+                   WRITE P13LE11A-REC FROM WS-LE11A-DETAIL                      
+                   ADD 1 TO WS-LE11A-WRITE                                      
+                   MOVE ZEROES TO WS-NUM-CASES, WS-TOTAL-AMOUNT-OUT             
+                END-IF                                                          
+                GO                 TO 2000-EXIT.                                
+                                                                                
+           IF F800-NUM-REGN = SPACES OR LOW-VALUES                              
+              GO TO 2000-READ-BP13F800.                                         
+                                                                                
+           ADD  1                  TO WS-F800-READ.                             
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3000-PROCESS-RECORDS.                                                    
+      ******************************************************************        
+                                                                                
+           PERFORM 3400-RETRIEVE-GRANT-ASMNT THRU 3400-EXIT.                    
+                                                                                
+           IF WS-NUM-CASES NOT = ZEROES                                         
+              IF F800-DTE-CANCEL(1:6) NOT = WS-DTE-CANCEL-PREV(1:6)             
+                 PERFORM 4500-MOVE-SUMMARY THRU 4500-EXIT                       
+                 ADD 1 TO WS-SNO-A                                              
+                 MOVE WS-SNO-A                 TO WS-LE11A-SNO                  
+                 WRITE P13LE11A-REC FROM WS-LE11A-DETAIL                        
+                 ADD 1 TO WS-LE11A-WRITE                                        
+                 MOVE ZEROES TO WS-NUM-CASES, WS-TOTAL-AMOUNT-OUT               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-GRANT-FND = 'Y'                                                
+              IF WS-NUM-CASES = ZEROES                                          
+                 PERFORM 3600-COMPUTE-MONTHS-OUT THRU 3600-EXIT                 
+              END-IF                                                            
+                                                                                
+              PERFORM 3800-GET-OIC               THRU 3800-EXIT                 
+                                                                                
+              IF WS-GRANT-SUM > WS-RECOVER-SUM                                  
+                PERFORM VARYING WS-CTR FROM 1 BY 1                              
+                                       UNTIL WS-CTR > WS-NRIC-CTR               
+                  PERFORM 3700-COMPUTE-AMOUNT-OUT THRU 3700-EXIT                
+                  PERFORM 4000-MOVE-DETAIL THRU 4000-EXIT                       
+                  ADD 1 TO WS-SNO-B, WS-NUM-CASES                               
+                  MOVE WS-SNO-B                 TO WS-LE11B-SNO                 
+                  WRITE P13LE11B-REC FROM WS-LE11B-DETAIL                       
+                  ADD 1 TO WS-LE11B-WRITE                                       
+                                                                                
+                  PERFORM 5000-WRITE-BP13FC80   THRU 5000-EXIT                  
+                                                                                
+                END-PERFORM                                                     
+              ELSE                                                              
+                ADD 1 TO WS-BYPASS                                              
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           MOVE F800-DTE-CANCEL TO WS-DTE-CANCEL-PREV                           
+           PERFORM 2000-READ-BP13F800 THRU 2000-EXIT.                           
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3400-RETRIEVE-GRANT-ASMNT.                                               
+      ******************************************************************        
+                                                                                
+           INITIALIZE COM73-COMMAREA.                                           
+           MOVE SPACES TO WS-NUM-NEXT-NUM-GRANT.                                
+                                                                                
+           PERFORM VARYING WS-CNT FROM 1 BY 1 UNTIL WS-CNT > 10                 
+              INITIALIZE WS-PERSON-DTL(WS-CNT)                                  
+              INITIALIZE WS-TEMP-STORAGE(WS-CNT)                                
+           END-PERFORM.                                                         
+                                                                                
+           PERFORM 3420-CALL-BP13CB4A THRU 3420-EXIT.                           
+           MOVE ZEROES TO WS-CNT.                                               
+                                                                                
+           PERFORM 3430-PROCESS-GRANT-ASMNT THRU 3430-EXIT                      
+                   VARYING WS-G FROM 1 BY 1                                     
+                   UNTIL WS-G > 5 OR                                            
+                      COM73-NUM-GRANT-TYPE(WS-G) = SPACES OR LOW-VALUES.        
+                                                                                
+           PERFORM UNTIL COM73-NUM-NEXT-NUM-GRANT = SPACES OR LOW-VALUES        
+              MOVE COM73-NUM-NEXT-NUM-GRANT TO WS-NUM-NEXT-NUM-GRANT            
+              PERFORM 3420-CALL-BP13CB4A THRU 3420-EXIT                         
+              PERFORM 3430-PROCESS-GRANT-ASMNT THRU 3430-EXIT                   
+                      VARYING WS-G FROM 1 BY 1                                  
+                      UNTIL WS-G > 5 OR                                         
+                      COM73-NUM-GRANT-TYPE(WS-G) = SPACES OR LOW-VALUES         
+           END-PERFORM.                                                         
+                                                                                
+           MOVE ZEROES                  TO WS-NRIC-CTR                          
+                                           WS-GRANT-SUM                         
+                                           WS-RECOVER-SUM.                      
+                                                                                
+           PERFORM VARYING WS-CTR FROM 1 BY 1  UNTIL WS-CTR > 10                
+               MOVE ZEROES TO         WS-AHG-GRANT(WS-CTR)                      
+                                      WS-AHG-RECOVER(WS-CTR)                    
+                                      WS-SHG-GRANT(WS-CTR)                      
+                                      WS-SHG-RECOVER(WS-CTR)                    
+                                      WS-RECOVER-INT(WS-CTR)                    
+               MOVE SPACES TO         WS-NRIC(WS-CTR)                           
+           END-PERFORM.                                                         
+                                                                                
+           MOVE 'N' TO WS-NO-MORE-ROWS.                                         
+                                                                                
+           PERFORM 3460-PROCESS-GRANT THRU 3460-EXIT                            
+                VARYING WS-CNT FROM 1 BY 1                                      
+                UNTIL WS-CNT > 10 OR WS-NO-MORE-ROWS = 'Y'.                     
+                                                                                
+       3400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3420-CALL-BP13CB4A.                                                      
+      ******************************************************************        
+           INITIALIZE COM73-COMMAREA.                                           
+                                                                                
+           MOVE 'A'                       TO COM73-NUM-CALL-ACTION.             
+           MOVE F800-NUM-REGN             TO COM73-NUM-RGSTRN-INPUT.            
+           MOVE WS-NUM-NEXT-NUM-GRANT     TO COM73-NUM-NEXT-NUM-GRANT.          
+                                                                                
+           CALL 'BP13CB4A' USING COM73-COMMAREA.                                
+                                                                                
+           IF COM73-CDE-ERROR = SPACES OR ZEROES                                
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              MOVE SPACES                TO COM73-COMMAREA                      
+              INITIALIZE                    COM73-COMMAREA                      
+           END-IF.                                                              
+                                                                                
+       3420-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3430-PROCESS-GRANT-ASMNT.                                                
+      ******************************************************************        
+                                                                                
+           MOVE 0 TO WS-CNT.                                                    
+                                                                                
+            PERFORM VARYING WS-P FROM 1 BY 1 UNTIL WS-P > 10                    
+              IF (COM73-IDNTY-NO(WS-G WS-P) NOT = SPACES AND LOW-VALUES)        
+                 MOVE 'N' TO WS-STORED                                          
+                 PERFORM VARYING WS-PRSN FROM 1 BY 1 UNTIL WS-PRSN > 4          
+                                                OR WS-STORED = 'Y'              
+                  IF WS-NRIC(WS-PRSN) = SPACES OR                               
+                     WS-NRIC(WS-PRSN) = COM73-IDNTY-NO(WS-G WS-P)               
+                     MOVE COM73-IDNTY-NO(WS-G WS-P)                             
+                                              TO WS-NUM-NRIC(WS-PRSN)           
+                     MOVE 'Y' TO WS-STORED                                      
+                     IF COM73-NUM-GRANT-TYPE(WS-G) = 'AHG   '                   
+                        ADD COM73-AMT-GRANT(WS-G WS-P)                          
+                                      TO WS-AMT-AHG-GRANT(WS-PRSN)              
+                        ADD COM73-AMT-EX-GRANT(WS-G WS-P)                       
+                                      TO WS-AMT-EX-AHG-GRANT(WS-PRSN)           
+                        ADD COM73-AMT-RCVRY(WS-G WS-P)                          
+                                      TO WS-AMT-AHG-RCVRY(WS-PRSN)              
+                        ADD COM73-AMT-RCVRY-INTRST(WS-G WS-P)                   
+                                      TO WS-AMT-AHG-RCVRY-INT(WS-PRSN)          
+                     ELSE                                                       
+                        IF COM73-NUM-GRANT-TYPE(WS-G) = 'SHG   '                
+                           ADD COM73-AMT-GRANT(WS-G WS-P)                       
+                                             TO WS-AMT-HSGNT(WS-PRSN)           
+                           ADD COM73-AMT-EX-GRANT(WS-G WS-P)                    
+                                             TO WS-AMT-EX-HSGNT(WS-PRSN)        
+                           ADD COM73-AMT-RCVRY(WS-G WS-P)                       
+                                      TO WS-AMT-SHG-RCVRY(WS-PRSN)              
+                           ADD COM73-AMT-RCVRY-INTRST(WS-G WS-P)                
+                                      TO WS-AMT-SHG-RCVRY-INT(WS-PRSN)          
+                        END-IF                                                  
+                     END-IF                                                     
+                  END-IF                                                        
+                 END-PERFORM                                                    
+              END-IF                                                            
+            END-PERFORM.                                                        
+                                                                                
+       3430-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3460-PROCESS-GRANT.                                                      
+      ******************************************************************        
+           IF WS-NUM-NRIC(WS-CNT) = SPACES OR LOW-VALUES                        
+              MOVE 'Y' TO WS-NO-MORE-ROWS                                       
+              GO TO 3460-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           MOVE 'Y' TO WS-GRANT-FND                                             
+           ADD 1 TO WS-NRIC-CTR                                                 
+                    WS-NRIC-FND                                                 
+           PERFORM 3500-CHECK-NON-NUMERIC  THRU 3500-EXIT                       
+                                                                                
+           MOVE WS-NUM-NRIC(WS-CNT)  TO WS-NRIC(WS-NRIC-CTR).                   
+           COMPUTE WS-AHG-GRANT(WS-NRIC-CTR) = WS-AMT-AHG-GRANT(WS-CNT)         
+                                          + WS-AMT-EX-AHG-GRANT(WS-CNT).        
+           MOVE WS-AMT-AHG-RCVRY(WS-CNT)                                        
+                                     TO WS-AHG-RECOVER(WS-NRIC-CTR).            
+           COMPUTE WS-SHG-GRANT(WS-NRIC-CTR) = WS-AMT-HSGNT(WS-CNT)             
+                                          + WS-AMT-EX-HSGNT(WS-CNT).            
+           MOVE WS-AMT-SHG-RCVRY(WS-CNT)                                        
+                                     TO WS-SHG-RECOVER(WS-NRIC-CTR).            
+           MOVE WS-AMT-AHG-RCVRY-INT(WS-CNT)                                    
+                                     TO WS-RECOVER-INT(WS-NRIC-CTR).            
+                                                                                
+           COMPUTE WS-GRANT-SUM   = WS-GRANT-SUM +                              
+                                    WS-AMT-AHG-GRANT(WS-CNT) +                  
+                                    WS-AMT-EX-AHG-GRANT(WS-CNT) +               
+                                    WS-AMT-HSGNT(WS-CNT) +                      
+                                    WS-AMT-EX-HSGNT(WS-CNT).                    
+           COMPUTE WS-RECOVER-SUM = WS-RECOVER-SUM +                            
+                                    WS-AMT-AHG-RCVRY(WS-CNT) +                  
+                                    WS-AMT-SHG-RCVRY(WS-CNT).                   
+                                                                                
+       3460-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3500-CHECK-NON-NUMERIC.                                                  
+      ******************************************************************        
+           IF WS-AMT-AHG-GRANT(WS-CNT) IS NOT NUMERIC                           
+              MOVE ZEROES TO WS-AMT-AHG-GRANT(WS-CNT)                           
+           END-IF.                                                              
+                                                                                
+           IF WS-AMT-EX-AHG-GRANT(WS-CNT) IS NOT NUMERIC                        
+              MOVE ZEROES TO WS-AMT-EX-AHG-GRANT(WS-CNT)                        
+           END-IF.                                                              
+                                                                                
+           IF WS-AMT-AHG-RCVRY(WS-CNT) IS NOT NUMERIC                           
+              MOVE ZEROES TO WS-AMT-AHG-RCVRY(WS-CNT)                           
+           END-IF.                                                              
+                                                                                
+           IF WS-AMT-HSGNT(WS-CNT) IS NOT NUMERIC                               
+              MOVE ZEROES TO WS-AMT-HSGNT(WS-CNT)                               
+           END-IF.                                                              
+                                                                                
+           IF WS-AMT-EX-HSGNT(WS-CNT) IS NOT NUMERIC                            
+              MOVE ZEROES TO WS-AMT-EX-HSGNT(WS-CNT)                            
+           END-IF.                                                              
+                                                                                
+           IF WS-AMT-SHG-RCVRY(WS-CNT) IS NOT NUMERIC                           
+              MOVE ZEROES TO WS-AMT-SHG-RCVRY(WS-CNT)                           
+           END-IF.                                                              
+                                                                                
+           IF WS-AMT-AHG-RCVRY-INT(WS-CNT) IS NOT NUMERIC                       
+              MOVE ZEROES TO WS-AMT-AHG-RCVRY-INT(WS-CNT)                       
+           END-IF.                                                              
+                                                                                
+       3500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3600-COMPUTE-MONTHS-OUT.                                                 
+      ******************************************************************        
+           MOVE F800-DTE-CANCEL            TO WS-DTE-CANCEL.                    
+           MOVE ZEROES                     TO WS-MONTHS-OUT.                    
+                                                                                
+           IF WS-CURR-DATE > WS-DTE-CANCEL                                      
+              IF WS-CURR-MM >= WS-DTE-CAN-MM                                    
+                 COMPUTE WS-YY-DIFF = WS-CURR-YY - WS-DTE-CAN-YY                
+                 COMPUTE WS-MM-DIFF = WS-CURR-MM - WS-DTE-CAN-MM                
+              ELSE                                                              
+                 COMPUTE WS-YY-DIFF = (WS-CURR-YY - 1)  - WS-DTE-CAN-YY         
+                 COMPUTE WS-MM-DIFF = (WS-CURR-MM + 12) - WS-DTE-CAN-MM         
+              END-IF                                                            
+              COMPUTE WS-MONTHS-OUT = (WS-YY-DIFF * 12) + WS-MM-DIFF            
+           END-IF.                                                              
+                                                                                
+       3600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3700-COMPUTE-AMOUNT-OUT.                                                 
+      ******************************************************************        
+           MOVE ZEROES TO WS-AMOUNT-OUT.                                        
+                                                                                
+           COMPUTE WS-AMOUNT-OUT =                                              
+                  (WS-AHG-GRANT(WS-CTR) - WS-AHG-RECOVER(WS-CTR)) +             
+                  (WS-SHG-GRANT(WS-CTR) - WS-SHG-RECOVER(WS-CTR))               
+                                                                                
+           ADD WS-AMOUNT-OUT TO WS-TOTAL-AMOUNT-OUT.                            
+                                                                                
+       3700-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3800-GET-OIC.                                                            
+      ******************************************************************        
+                                                                                
+           MOVE SPACES               TO BP13K022-REC.                           
+           MOVE F800-NUM-REGN        TO K022-NUM-REGN.                          
+                                                                                
+           READ BP13K022 KEY IS K022-NUM-REGN                                   
+             EVALUATE WS-K022-STAT                                              
+                WHEN 00                                                         
+                WHEN 02                                                         
+                  CONTINUE                                                      
+                WHEN 23                                                         
+                  ADD 1 TO WS-NFND-K022                                         
+                  DISPLAY 'K022 RECORD NOT FOUND - ' K022-NUM-REGN              
+                WHEN OTHER                                                      
+                  DISPLAY 'ERROR READING BP13K022 - STAT ' WS-K022-STAT         
+                  PERFORM 9999-CLOSE-ROUTINE THRU 9999-EXIT                     
+             END-EVALUATE.                                                      
+                                                                                
+       3800-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4000-MOVE-DETAIL.                                                        
+      ******************************************************************        
+           INITIALIZE     WS-LE11B-DETAIL.                                      
+           MOVE SPACES TO WS-LE11B-DETAIL.                                      
+                                                                                
+           MOVE WS-MONTHS-OUT             TO WS-LE11B-MONTHS-OUT.               
+           MOVE F800-NUM-REGN             TO WS-LE11B-REGNO.                    
+           MOVE WS-AMOUNT-OUT             TO WS-LE11B-AMT-OUT.                  
+                                                                                
+           IF K022-NUM-OIC = SPACES OR LOW-VALUES                               
+              MOVE 'TJM1'                 TO K022-NUM-OIC                       
+           END-IF.                                                              
+                                                                                
+           MOVE K022-NUM-OIC              TO WS-LE11B-OIC.                      
+           MOVE WS-NRIC(WS-CTR)           TO WS-LE11B-NRIC.                     
+           MOVE WS-AHG-GRANT(WS-CTR)      TO WS-LE11B-AHG-GRANT.                
+           MOVE WS-AHG-RECOVER(WS-CTR)    TO WS-LE11B-AHG-RECOVER.              
+           MOVE WS-SHG-GRANT(WS-CTR)      TO WS-LE11B-SHG-GRANT.                
+           MOVE WS-SHG-RECOVER(WS-CTR)    TO WS-LE11B-SHG-RECOVER.              
+           MOVE F800-DTE-CANCEL           TO WS-LE11B-DTE-CANCEL.               
+           MOVE F800-NUM-GRNT-RECOVERY-SUBTR                                    
+                                       TO WS-LE11B-GRNT-RECOVERY-SUBTR.         
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4100-BP13K024-READ.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                     TO   BP13K024-REC.                   
+           MOVE K022-NUM-OIC               TO   K024-NUM-OIC.                   
+           MOVE SPACES                     TO   WS-K024-FND.                    
+                                                                                
+           READ BP13K024.                                                       
+                                                                                
+           EVALUATE WS-K024-STAT                                                
+               WHEN 00                                                          
+                    IF K024-CDE-TEAM = 0                                        
+                       PERFORM 4200-GET-OIC-TEAM  THRU 4200-EXIT                
+                    END-IF                                                      
+                                                                                
+               WHEN 10                                                          
+               WHEN 23                                                          
+                    MOVE '1'                        TO   K024-CDE-TEAM          
+                                                                                
+               WHEN OTHER                                                       
+                  DISPLAY 'ERROR READING BP13K024 - STAT ' WS-K024-STAT         
+                  PERFORM 9999-CLOSE-ROUTINE THRU 9999-EXIT                     
+           END-EVALUATE.                                                        
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4200-GET-OIC-TEAM.                                                       
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                      TO WS-BP13CCNT-LINK.                
+           MOVE K022-NUM-OIC                TO LINK-STAFF-NICK.                 
+                                                                                
+           PERFORM 4300-CALL-BP13CCNT     THRU 4300-EXIT.                       
+                                                                                
+           IF LINK-STAFF-NUM NOT = SPACES AND LOW-VALUES                        
+              MOVE SPACES                 TO BP13K096-REC                       
+              MOVE LINK-STAFF-NUM         TO K096-NUM-USERID                    
+                                                                                
+              PERFORM 4400-BP13K096-READ  THRU 4400-EXIT                        
+                                                                                
+              EVALUATE K096-NUM-OFFICE                                          
+                  WHEN 'AGR'                                                    
+                       MOVE 'A'             TO K024-CDE-TEAM                    
+                  WHEN 'RST'                                                    
+                       MOVE 'R'             TO K024-CDE-TEAM                    
+                  WHEN OTHER                                                    
+                       MOVE '1'             TO K024-CDE-TEAM                    
+              END-EVALUATE                                                      
+           ELSE                                                                 
+              MOVE '1'                      TO K024-CDE-TEAM                    
+           END-IF.                                                              
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4300-CALL-BP13CCNT.                                                      
+      ******************************************************************        
+                                                                                
+           CALL 'BP13CCNT' USING WS-BP13CCNT-LINK.                              
+                                                                                
+           EVALUATE LINK-SYSERR                                                 
+           WHEN ZEROES                                                          
+           WHEN 100                                                             
+              CONTINUE                                                          
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'CALL BP13CCNT ERROR '                                    
+                       LINK-STAFF-NICK LINK-SYSERR                              
+              MOVE    '99'                 TO   RETURN-CODE                     
+              PERFORM 9999-CLOSE-ROUTINE THRU 9999-EXIT                         
+           END-EVALUATE.                                                        
+                                                                                
+       4300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *=============================================================            
+       4400-BP13K096-READ.                                                      
+      *=============================================================            
+                                                                                
+           READ BP13K096.                                                       
+                                                                                
+           EVALUATE WS-K096-STAT                                                
+           WHEN 00                                                              
+           WHEN 04                                                              
+              MOVE 'Y'                     TO   WS-K096-FND                     
+                                                                                
+           WHEN 10                                                              
+           WHEN 23                                                              
+              MOVE 'N'                     TO   WS-K096-FND                     
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'READ BP13K096 ERROR '    WS-K096-STAT                    
+              MOVE    WS-K096-STAT         TO   RETURN-CODE                     
+              PERFORM 9999-CLOSE-ROUTINE THRU 9999-EXIT                         
+           END-EVALUATE.                                                        
+                                                                                
+       4400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       4500-MOVE-SUMMARY.                                                       
+      ******************************************************************        
+           INITIALIZE WS-LE11A-DETAIL.                                          
+                                                                                
+           MOVE WS-MONTHS-OUT             TO WS-LE11A-MONTHS-OUT.               
+           MOVE WS-NUM-CASES              TO WS-LE11A-NUM-CASES.                
+           MOVE WS-TOTAL-AMOUNT-OUT       TO WS-LE11A-AMT-OUT.                  
+                                                                                
+       4500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5000-WRITE-BP13FC80.                                                     
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                    TO BP13FC80-REC.                      
+           INITIALIZE                        BP13FC80-REC.                      
+                                                                                
+           PERFORM 4100-BP13K024-READ   THRU 4100-EXIT.                         
+                                                                                
+           MOVE F800-DTE-CANCEL           TO FC80-DTE-START.                    
+                                                                                
+           MOVE K024-CDE-TEAM             TO FC80-CDE-TEAM.                     
+                                                                                
+           MOVE K022-NUM-OIC              TO FC80-NUM-OIC                       
+                                             FC80-NUM-OIC2.                     
+                                                                                
+           MOVE F800-NUM-LOAN-TAG         TO FC80-NUM-LOAN-TAG.                 
+           MOVE F800-NUM-REGN             TO FC80-NUM-REGN                      
+                                             FC80-NUM-REGN2.                    
+                                                                                
+           MOVE WS-NRIC(WS-CTR)           TO FC80-NUM-NRIC.                     
+                                                                                
+           MOVE WS-AHG-GRANT(WS-CTR)      TO FC80-AHG-GRANT.                    
+           MOVE WS-AHG-RECOVER(WS-CTR)    TO FC80-AHG-RECOVR.                   
+           MOVE WS-SHG-GRANT(WS-CTR)      TO FC80-SHG-GRANT.                    
+           MOVE WS-SHG-RECOVER(WS-CTR)    TO FC80-SHG-RECOVR.                   
+           MOVE WS-MONTHS-OUT             TO FC80-NUM-MTH-OUT.                  
+           MOVE WS-AMOUNT-OUT             TO FC80-AMT-OUT.                      
+                                                                                
+           WRITE BP13FC80-REC.                                                  
+           ADD 1 TO WS-FC80-WRITE.                                              
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       9999-CLOSE-ROUTINE.                                                      
+      ******************************************************************        
+                                                                                
+           DISPLAY '*************** CONTROL    TOTALS ***************'.         
+           DISPLAY 'PROGRAM-ID : BP13CE11'.                                     
+           DISPLAY '-------------------------------------------------'.         
+           DISPLAY '(1) NO OF BP13F800 RECORDS READ............. : '            
+                    WS-F800-READ.                                               
+           DISPLAY '(2) NO OF DETAIL WRITTEN.................... : '            
+                    WS-LE11B-WRITE.                                             
+           DISPLAY '(3) NO OF SUMMARY WRITTEN................... : '            
+                    WS-LE11A-WRITE.                                             
+           DISPLAY '(4) NO OF NRIC FOUND IN GRANT TABLE......... : '            
+                    WS-NRIC-FND.                                                
+           DISPLAY '(5) NO OF INVALID CASES BYPASSED............ : '            
+                    WS-BYPASS.                                                  
+           DISPLAY '(6) NO OF BP13FC80 WRITTEN ................. : '            
+                    WS-FC80-WRITE.                                              
+                                                                                
+           CLOSE    BP13F800                                                    
+                    BP13K022                                                    
+                    BP13K024                                                    
+                    BP13K096                                                    
+                    BP13FC80                                                    
+                    P13LE11A                                                    
+                    P13LE11B.                                                   
+                                                                                
+           IF WS-K022-STAT NOT  = 00 AND 97                                     
+              DISPLAY 'ERROR CLOSING BP13K022 - STAT ' WS-K022-STAT             
+           END-IF.                                                              
+                                                                                
+           IF WS-K024-STAT NOT  = 00 AND 97                                     
+              DISPLAY 'ERROR CLOSING BP13K024 - STAT ' WS-K024-STAT             
+           END-IF.                                                              
+                                                                                
+           IF WS-K096-STAT NOT  = 00 AND 97                                     
+              DISPLAY 'ERROR CLOSING BP13K096 - STAT ' WS-K096-STAT             
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9999-EXIT.                                                               
+           EXIT.                                                                
+

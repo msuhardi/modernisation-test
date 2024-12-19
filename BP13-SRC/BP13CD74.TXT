@@ -1,0 +1,589 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CD74.                                                 
+      *AUTHOR.        KARL MAGALONA CABUG.                                      
+      *DATE-WRITTEN.  21 JAN 2013.                                              
+      *============================================================*            
+      * BP13 - SYSTEM OF COMMITMENT                                *            
+      *============================================================*            
+      * OBJECTIVE :  TO CREATE F305.CANCEL FILE                    *            
+      * INPUT     :  BP13F800  -  SOC MASTER FILE                  *            
+      *           :  BP13K820  -  SOC OCCUPIER FILE                *            
+      *           :  BP13K830  -  MAIL ADDRESS FILE                *            
+      *           :  BP13K857  -  EMAIL ADDRESS FILE               *            
+      *                                                            *            
+      * OUTPUT    :  BP13F305  -  F305.CANCEL FILE                 *            
+      *              BP13F30C  -  UNMATCH LOG FILE                 *            
+      *                                                            *            
+      *----------------------------------------------------------- *            
+      * CHG REF  DATE     BY     DESCRIPTION                       *            
+      * -------- -------- ----   ------------------------------    *            
+      * BP134727 20130121 KAM4   NEW PROGRAM                       *            
+      * BP134727 20130403 CCC5   INCLUDE K800-DTE-REGN             *            
+      * BP135018 20130729 KAM4   INCLUDE K800-NUM-ELIG-SCHEME      *            
+      * BP13XXXX 20130916 KAM4   INCLUDE VALIDATION OF NUM-HOUSEHOLD            
+      * BP135528 20141016 CCC5   REMOVE CHECK FOR                               
+      *                          K800-DTE-AGRMT-FOR-LEASE                       
+      * BP137788 20200702 CCC5   TO INCLUDE OBF AND ROF CASES                   
+      * BP138710 20210708 CCC5   UPDATE NUM-NTNLTY TO 'SG' FOR OBF *            
+      *                          APPLICANT/ OCCUPIERS WHO ARE SG   *            
+      * BP139795 20240312 EL27   NEW COND FOR FT2T, 2T D/W PARENT, *            
+      *                          SINGLE UNMARRIED                  *            
+      *============================================================*            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+      *-------------------------------------------------------------            
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+                                                                                
+           SELECT BP13F800  ASSIGN       TO BP13F800.                           
+                                                                                
+           SELECT BP13K820  ASSIGN       TO BP13K820                            
+                            ORGANIZATION IS INDEXED                             
+                            ACCESS MODE  IS DYNAMIC                             
+                            RECORD KEY   IS K820-KEY-FLD                        
+                            FILE STATUS  IS BP13K820-STATUS.                    
+                                                                                
+           SELECT BP13K830  ASSIGN       TO BP13K830                            
+                            ORGANIZATION IS INDEXED                             
+                            ACCESS MODE  IS RANDOM                              
+                            RECORD KEY   IS K830-KEY-FLD                        
+                            FILE STATUS  IS BP13K830-STATUS.                    
+                                                                                
+           SELECT BP13K857 ASSIGN TO BP13K857                                   
+                           ACCESS MODE   IS RANDOM                              
+                           ORGANIZATION  IS INDEXED                             
+                           RECORD KEY    IS K857-KEY-FLD                        
+                           FILE STATUS   IS BP13K857-STATUS.                    
+                                                                                
+           SELECT BP13F305 ASSIGN        TO BP13F305.                           
+           SELECT BP13F30C ASSIGN        TO BP13F30C.                           
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+                                                                                
+       FD  BP13F800                                                             
+           RECORDING  MODE  IS F                                                
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 2000 CHARACTERS                                      
+           LABEL  RECORDS  ARE  STANDARD.                                       
+       COPY BP13K800.                                                           
+                                                                                
+       FD   BP13K820                                                            
+            RECORD     CONTAINS 400 CHARACTERS.                                 
+       COPY BP13K820.                                                           
+                                                                                
+       FD   BP13K830                                                            
+            RECORD     CONTAINS 250 CHARACTERS.                                 
+       COPY BP13K830.                                                           
+                                                                                
+       FD   BP13K857                                                            
+            RECORD CONTAINS  200 CHARACTERS.                                    
+       COPY BP13K857.                                                           
+                                                                                
+       FD  BP13F305                                                             
+           RECORDING  MODE  IS F                                                
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 3000 CHARACTERS                                      
+           LABEL  RECORDS  ARE  STANDARD.                                       
+       COPY BP13F305.                                                           
+                                                                                
+       FD  BP13F30C                                                             
+           RECORDING  MODE  IS F                                                
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 50 CHARACTERS                                        
+           LABEL RECORD ARE STANDARD.                                           
+       01  BP13F30C-REC.                                                        
+           05 F30C-REGN                 PIC X(08).                              
+           05 F30C-ERROR-TXT            PIC X(42).                              
+                                                                                
+      *------------------------------------------------------------*            
+       WORKING-STORAGE SECTION.                                                 
+      *------------------------------------------------------------*            
+                                                                                
+       01  WS-OTHER-VARIABLES.                                                  
+           05  WS-CURRENT-DATE          PIC X(8) VALUE SPACES.                  
+           05  WS-SUBTRANS-DTE-NOTCURRRENT   PIC 9(06) VALUE 0.                 
+                                                                                
+       01  WS-COUNTER.                                                          
+           05  WS-CTR                    PIC 9(02)  VALUE ZEROES.               
+           05  WS-READ-F800              PIC 9(06)  VALUE ZEROES.               
+           05  WS-WRITE-F305             PIC 9(06)  VALUE ZEROES.               
+           05  WS-K820-REGN-CTR          PIC 9(06)  VALUE ZEROES.               
+           05  WS-K820-NOMATCH           PIC 9(06)  VALUE ZEROES.               
+           05  WS-K820-MATCH             PIC 9(06)  VALUE ZEROES.               
+           05  WS-K830-MATCH-CTR         PIC 9(06)  VALUE ZEROES.               
+           05  WS-K830-NOMATCH-CTR       PIC 9(06)  VALUE ZEROES.               
+           05  WS-K857-MATCH             PIC 9(06)  VALUE ZEROES.               
+           05  WS-K857-NOMATCH           PIC 9(06)  VALUE ZEROES.               
+           05  WS-HA-CTR                 PIC 9(01)  VALUE ZEROES.               
+           05  WS-OCC-CTR                PIC 9(02)  VALUE ZEROES.               
+           05  WS-DTE-AGRM-NOT-BLNK      PIC 9(06)  VALUE ZEROES.               
+           05  WS-STATUS-NOT-C           PIC 9(06)  VALUE ZEROES.               
+           05  WS-STATUS-EQ-C            PIC 9(06)  VALUE ZEROES.               
+           05  WS-HH-TYPE-G              PIC 9(06)  VALUE ZEROES.               
+           05  WS-HH-TYPE-FT2T           PIC 9(06)  VALUE ZEROES.               
+           05  WS-HH-TYPE-DW2T           PIC 9(06)  VALUE ZEROES.               
+           05  WS-HH-TYPE-SUP            PIC 9(06)  VALUE ZEROES.               
+                                                                                
+       01  WS-STATUS.                                                           
+           05  BP13K820-STATUS           PIC 9(02)  VALUE ZEROES.               
+           05  BP13K800-STATUS           PIC 9(02)  VALUE ZEROES.               
+           05  BP13K830-STATUS           PIC 9(02)  VALUE ZEROES.               
+           05  BP13K857-STATUS           PIC 9(02)  VALUE ZEROES.               
+                                                                                
+       01  WS-SWITCH.                                                           
+           05  WS-F800-END               PIC X(01)   VALUE 'N'.                 
+               88 F800-EOF                           VALUE 'Y'.                 
+           05  WS-NO-MATCH               PIC X(01)   VALUE 'N'.                 
+               88 WS-NOMORE-MATCH                    VALUE 'Y'.                 
+                                                                                
+      *------------------------------------------------------------*            
+       PROCEDURE DIVISION.                                                      
+      *------------------------------------------------------------*            
+       0000-MAIN.                                                               
+      *------------------------------------------------------------*            
+           PERFORM 1000-INIT-ROUTINE  THRU 1000-EXIT.                           
+           PERFORM 2000-READ-BP13F800 THRU 2000-EXIT.                           
+           PERFORM 3000-MAIN-PROCESS  THRU 3000-EXIT                            
+                   UNTIL F800-EOF.                                              
+           PERFORM 9000-CLOSE-FILES.                                            
+                                                                                
+       0000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       1000-INIT-ROUTINE.                                                       
+      *-------------------------------------------------------------            
+           OPEN INPUT BP13F800                                                  
+                      BP13K820                                                  
+                      BP13K830                                                  
+                      BP13K857                                                  
+               OUTPUT BP13F305                                                  
+                      BP13F30C.                                                 
+                                                                                
+           IF BP13K820-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'OPENING BP13K820 ERROR ' BP13K820-STATUS                 
+              MOVE     BP13K820-STATUS       TO RETURN-CODE                     
+              PERFORM  9000-CLOSE-FILES    THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF BP13K830-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'OPENING BP13K830 ERROR ' BP13K830-STATUS                 
+              MOVE     BP13K830-STATUS       TO RETURN-CODE                     
+              PERFORM  9000-CLOSE-FILES    THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF BP13K857-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'OPENING BP13K857 ERROR ' BP13K857-STATUS                 
+              MOVE     BP13K857-STATUS       TO RETURN-CODE                     
+              PERFORM  9000-CLOSE-FILES    THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8)  TO WS-CURRENT-DATE.                 
+           DISPLAY 'CURRENT-DATE : ' WS-CURRENT-DATE.                           
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2000-READ-BP13F800.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13F800 AT END                                                 
+               MOVE 'Y'  TO WS-F800-END                                         
+               GO TO 2000-EXIT.                                                 
+                                                                                
+           ADD 1  TO WS-READ-F800.                                              
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------------------------------------------*            
+       3000-MAIN-PROCESS.                                                       
+      *------------------------------------------------------------*            
+           IF K800-NUM-STATUS = 'C'                                             
+              ADD  1                       TO WS-STATUS-EQ-C                    
+              PERFORM 3500-PROCESS-RECORD  THRU 3500-EXIT                       
+           ELSE                                                                 
+              ADD 1 TO WS-STATUS-NOT-C                                          
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-READ-BP13F800         THRU 2000-EXIT.                   
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *------------------------------------------------------------*            
+       3500-PROCESS-RECORD.                                                     
+      *------------------------------------------------------------*            
+           MOVE SPACES                    TO BP13F305-REC.                      
+           INITIALIZE                        BP13F305-REC.                      
+                                                                                
+           MOVE K800-NUM-REGN             TO F305-NUM-REGN.                     
+           MOVE K800-NUM-SCH-ACC          TO F305-NUM-SCH-ACC.                  
+           MOVE K800-NUM-ALLO-CAT         TO F305-NUM-ALLO-CAT.                 
+           MOVE K800-DTE-REGN             TO F305-DTE-APPLN.                    
+           MOVE K800-NUM-ELIG-SCHEME      TO F305-NUM-ELIG-SCHEME.              
+                                                                                
+           PERFORM 4000-READ-BP13K820   THRU 4000-EXIT.                         
+           IF WS-K820-REGN-CTR < 1                                              
+              ADD  1                      TO WS-K820-NOMATCH                    
+              MOVE SPACES                 TO BP13F30C-REC                       
+              INITIALIZE                     BP13F30C-REC                       
+              MOVE K800-NUM-REGN          TO F30C-REGN                          
+              MOVE ' - NO REGN MATCH IN K820' TO F30C-ERROR-TXT                 
+              WRITE BP13F30C-REC                                                
+           ELSE                                                                 
+              ADD 1                       TO WS-K820-MATCH                      
+           END-IF.                                                              
+                                                                                
+           MOVE ZEROES                    TO WS-K820-REGN-CTR                   
+                                                                                
+           PERFORM 4500-GET-EMAIL       THRU 4500-EXIT.                         
+           PERFORM 5000-READ-BP13K830   THRU 5000-EXIT.                         
+                                                                                
+           IF K800-NUM-ALLO-CAT = 'BTO' OR 'SBF' OR 'OBF' OR 'ROF'              
+              IF K800-NUM-ELIG-SCHEME NOT = 'OR ' AND 'SMP' AND                 
+                                            'SSC' AND 'NCP' AND                 
+                                            'PAA' AND 'PAS' AND                 
+                                            'SS ' AND 'SI ' AND                 
+                                            'SM ' AND 'SOL'                     
+                 IF K800-NUM-HOUSEHOLD NOT = 'G'                                
+                    PERFORM 6000-WRITE-BP13F305  THRU 6000-EXIT                 
+                 ELSE                                                           
+                    ADD 1   TO WS-HH-TYPE-G                                     
+                    IF K800-NUM-FT2T = 'Y'                                      
+                       ADD 1   TO WS-HH-TYPE-FT2T                               
+                       PERFORM 6000-WRITE-BP13F305  THRU 6000-EXIT              
+                    ELSE                                                        
+                    IF K800-NUM-ELIG-SCHEME = 'PAC' OR 'PAS'                    
+                       ADD 1   TO WS-HH-TYPE-SUP                                
+                       PERFORM 6000-WRITE-BP13F305  THRU 6000-EXIT              
+                    ELSE                                                        
+                    IF K800-NUM-ELIG-SCHEME = 'PA ' AND                         
+                      (F305-HA-NUM-MAR-STAT(1) = '3' OR '4'                     
+                                              OR 'W' OR 'D') AND                
+                     ((F305-HA-NUM-RLTSHP(2) = '41' OR '51') OR                 
+                      (F305-HA-NUM-RLTSHP(3) = '41' OR '51') OR                 
+                      (F305-HA-NUM-RLTSHP(4) = '41' OR '51') OR                 
+                      (F305-OCC-NUM-RLTSHP(1) = '41' OR '51') OR                
+                      (F305-OCC-NUM-RLTSHP(2) = '41' OR '51') OR                
+                      (F305-OCC-NUM-RLTSHP(3) = '41' OR '51') OR                
+                      (F305-OCC-NUM-RLTSHP(4) = '41' OR '51') OR                
+                      (F305-OCC-NUM-RLTSHP(5) = '41' OR '51') OR                
+                      (F305-OCC-NUM-RLTSHP(6) = '41' OR '51'))                  
+                       ADD 1   TO WS-HH-TYPE-DW2T                               
+                       PERFORM 6000-WRITE-BP13F305  THRU 6000-EXIT              
+                    ELSE                                                        
+                    IF K800-NUM-ELIG-SCHEME = 'PA ' AND                         
+                    (((F305-HA-NUM-MAR-STAT(2) = '3' OR '4'                     
+                                              OR 'W' OR 'D') AND                
+                      (F305-HA-NUM-RLTSHP(2) = '02' OR '12' OR '52')) OR        
+                     ((F305-HA-NUM-MAR-STAT(3) = '3' OR '4'                     
+                                              OR 'W' OR 'D') AND                
+                      (F305-HA-NUM-RLTSHP(3) = '02' OR '12' OR '52')) OR        
+                     ((F305-HA-NUM-MAR-STAT(4) = '3' OR '4'                     
+                                              OR 'W' OR 'D') AND                
+                      (F305-HA-NUM-RLTSHP(4) = '02' OR '12' OR '52')))          
+                       ADD 1   TO WS-HH-TYPE-DW2T                               
+                       PERFORM 6000-WRITE-BP13F305  THRU 6000-EXIT              
+                    END-IF                                                      
+                    END-IF                                                      
+                    END-IF                                                      
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-----------------------------------------------------------*             
+       4000-READ-BP13K820.                                                      
+      *-----------------------------------------------------------*             
+           MOVE SPACES   TO BP13K820-REC.                                       
+           INITIALIZE       BP13K820-REC.                                       
+           MOVE 'N'      TO WS-NO-MATCH.                                        
+           MOVE ZEROES   TO WS-HA-CTR.                                          
+           MOVE ZEROES   TO WS-OCC-CTR.                                         
+                                                                                
+           MOVE K800-NUM-REGN   TO K820-NUM-REGN                                
+           START BP13K820 KEY >= K820-KEY-FLD                                   
+                                                                                
+           IF BP13K820-STATUS = 00 OR 02                                        
+              PERFORM VARYING WS-CTR FROM 1 BY 1                                
+                 UNTIL WS-NOMORE-MATCH OR WS-CTR = 16                           
+                   PERFORM 4100-READNEXT-BP13K820   THRU 4100-EXIT              
+              END-PERFORM                                                       
+           ELSE                                                                 
+           IF BP13K820-STATUS = 23                                              
+              DISPLAY 'BP13K820: NO REC FOUND FOR ' K820-NUM-REGN               
+           ELSE                                                                 
+              DISPLAY 'BP13K820 - ERROR STARTING : ' BP13K820-STATUS            
+              MOVE BP13K820-STATUS  TO RETURN-CODE                              
+              GO TO  9000-CLOSE-FILES                                           
+           END-IF.                                                              
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-----------------------------------------------------------*             
+       4100-READNEXT-BP13K820.                                                  
+      *-----------------------------------------------------------*             
+           MOVE 'N'      TO WS-NO-MATCH.                                        
+                                                                                
+           READ BP13K820 NEXT RECORD                                            
+             AT END                                                             
+                MOVE 'Y'         TO WS-NO-MATCH                                 
+                GO  TO 4100-EXIT                                                
+           END-READ.                                                            
+                                                                                
+           IF BP13K820-STATUS = 00 OR 02                                        
+              IF K820-NUM-REGN = K800-NUM-REGN                                  
+                 ADD   1 TO WS-K820-REGN-CTR                                    
+                 PERFORM 4200-CHECK-APPOCC   THRU 4200-EXIT                     
+              END-IF                                                            
+           ELSE                                                                 
+           IF BP13K820-STATUS = 23 OR 10                                        
+              MOVE 'Y'   TO WS-NO-MATCH                                         
+           ELSE                                                                 
+              DISPLAY 'K800-NUM-REGN : ' K800-NUM-REGN                          
+              DISPLAY 'BP13K820: READNEXT ERROR : ' BP13K820-STATUS             
+              GO TO 9000-CLOSE-FILES                                            
+           END-IF.                                                              
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-----------------------------------------------------------*             
+       4200-CHECK-APPOCC.                                                       
+      *-----------------------------------------------------------*             
+                                                                                
+           IF K800-NUM-NRIC1 = K820-NUM-NRIC                                    
+              MOVE  1                TO WS-HA-CTR                               
+              MOVE 'H'               TO F305-HA-NUM-ROLE-TAG(WS-HA-CTR)         
+              MOVE  1                TO F305-HA-NUM-ROLE(WS-HA-CTR)             
+              MOVE K800-NUM-NRIC1    TO F305-HA-UIN(1)                          
+              PERFORM 4300-MOVE-APP-DTLS  THRU 4300-EXIT                        
+           ELSE                                                                 
+           IF K800-NUM-NRIC2 = K820-NUM-NRIC                                    
+              MOVE  2                TO WS-HA-CTR                               
+              MOVE 'H'               TO F305-HA-NUM-ROLE-TAG(WS-HA-CTR)         
+              MOVE  2                TO F305-HA-NUM-ROLE(WS-HA-CTR)             
+              MOVE K800-NUM-NRIC2    TO F305-HA-UIN(2)                          
+              PERFORM 4300-MOVE-APP-DTLS  THRU 4300-EXIT                        
+           ELSE                                                                 
+           IF K800-NUM-NRIC3 = K820-NUM-NRIC                                    
+              MOVE  3                TO WS-HA-CTR                               
+              MOVE 'H'               TO F305-HA-NUM-ROLE-TAG(WS-HA-CTR)         
+              MOVE  3                TO F305-HA-NUM-ROLE(WS-HA-CTR)             
+              MOVE K800-NUM-NRIC3    TO F305-HA-UIN(3)                          
+              PERFORM 4300-MOVE-APP-DTLS  THRU 4300-EXIT                        
+           ELSE                                                                 
+           IF K800-NUM-NRIC4 = K820-NUM-NRIC                                    
+              MOVE  4                TO WS-HA-CTR                               
+              MOVE 'H'               TO F305-HA-NUM-ROLE-TAG(WS-HA-CTR)         
+              MOVE  4                TO F305-HA-NUM-ROLE(WS-HA-CTR)             
+              MOVE K800-NUM-NRIC4    TO F305-HA-UIN(4)                          
+              PERFORM 4300-MOVE-APP-DTLS  THRU 4300-EXIT                        
+           ELSE                                                                 
+              ADD  1               TO WS-OCC-CTR                                
+              MOVE 'O'             TO F305-OCC-NUM-ROLE-TAG(WS-OCC-CTR)         
+              MOVE WS-OCC-CTR      TO F305-OCC-NUM-ROLE(WS-OCC-CTR)             
+              PERFORM 4400-MOVE-OCC-DTLS  THRU 4400-EXIT                        
+           END-IF.                                                              
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-----------------------------------------------------------*             
+       4300-MOVE-APP-DTLS.                                                      
+      *-----------------------------------------------------------*             
+           MOVE K820-AMT-INCOME     TO F305-HA-AMT-INCOME(WS-HA-CTR).           
+           MOVE K820-DTE-BIRTH      TO F305-HA-DTE-BIRTH(WS-HA-CTR).            
+           MOVE K820-NME-OCCP       TO F305-HA-NME-OCCP(WS-HA-CTR).             
+           MOVE K820-NUM-ETHNIC     TO F305-HA-NUM-ETHNIC(WS-HA-CTR).           
+           MOVE K820-NUM-SEX        TO F305-HA-NUM-SEX(WS-HA-CTR).              
+           MOVE K820-NUM-MARITAL-STATUS                                         
+                                    TO F305-HA-NUM-MAR-STAT(WS-HA-CTR).         
+           MOVE K820-NUM-HP-PGR     TO F305-HA-NUM-PHONE(WS-HA-CTR).            
+           MOVE K820-NUM-PHONE      TO F305-HA-NUM-MOBILE(WS-HA-CTR).           
+           MOVE K820-NUM-PHONE-OFF  TO F305-HA-NUM-PHONE-OFF(WS-HA-CTR).        
+           MOVE K820-NUM-NATIONALITY   TO F305-HA-NUM-NTNLTY(WS-HA-CTR).        
+                                                                                
+           IF K820-NUM-NATIONALITY = '  '                                       
+              MOVE 'UN'             TO F305-HA-NUM-NTNLTY(WS-HA-CTR)            
+              IF (K800-NUM-ALLO-CAT = 'OBF' AND                                 
+                  K820-NUM-CITIZENSHIP = '10')                                  
+                  MOVE 'SG'         TO F305-HA-NUM-NTNLTY(WS-HA-CTR)            
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF K820-NUM-CITIZENSHIP = '20'                                       
+              MOVE 'Y'              TO F305-HA-NUM-PR-STAT(WS-HA-CTR)           
+           ELSE                                                                 
+              MOVE 'N'              TO F305-HA-NUM-PR-STAT(WS-HA-CTR)           
+           END-IF.                                                              
+                                                                                
+           MOVE K820-NUM-RELATIONSHIP  TO F305-HA-NUM-RLTSHP(WS-HA-CTR).        
+                                                                                
+       4300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-----------------------------------------------------------*             
+       4400-MOVE-OCC-DTLS.                                                      
+      *-----------------------------------------------------------*             
+           MOVE K820-NUM-NRIC       TO F305-OCC-UIN(WS-OCC-CTR)                 
+           MOVE K820-AMT-INCOME     TO F305-OCC-AMT-INCOME(WS-OCC-CTR)          
+           MOVE K820-DTE-BIRTH      TO F305-OCC-DTE-BIRTH(WS-OCC-CTR)           
+           MOVE K820-NME-OCCP       TO F305-OCC-NME-OCCP(WS-OCC-CTR)            
+           MOVE K820-NUM-ETHNIC     TO F305-OCC-NUM-ETHNIC(WS-OCC-CTR)          
+           MOVE K820-NUM-SEX        TO F305-OCC-NUM-SEX(WS-OCC-CTR)             
+           MOVE K820-NUM-MARITAL-STATUS                                         
+                                    TO F305-OCC-NUM-MAR-STAT(WS-OCC-CTR)        
+           MOVE K820-NUM-HP-PGR     TO F305-OCC-NUM-PHONE(WS-OCC-CTR)           
+           MOVE K820-NUM-PHONE      TO F305-OCC-NUM-MOBILE(WS-OCC-CTR)          
+           MOVE K820-NUM-PHONE-OFF  TO F305-OCC-NUM-OFF-TEL(WS-OCC-CTR)         
+                                                                                
+           MOVE K820-NUM-NATIONALITY TO F305-OCC-NUM-NTNLTY(WS-OCC-CTR)         
+                                                                                
+           IF K820-NUM-NATIONALITY = '  '                                       
+              MOVE 'UN'             TO F305-OCC-NUM-NTNLTY(WS-OCC-CTR)          
+           END-IF.                                                              
+                                                                                
+           IF K820-NUM-CITIZENSHIP = '20'                                       
+              MOVE 'Y'              TO F305-OCC-NUM-PR-STAT(WS-OCC-CTR)         
+           ELSE                                                                 
+              MOVE 'N'              TO F305-OCC-NUM-PR-STAT(WS-OCC-CTR)         
+           END-IF.                                                              
+                                                                                
+           MOVE K820-NUM-RELATIONSHIP TO                                        
+                                       F305-OCC-NUM-RLTSHP(WS-OCC-CTR).         
+       4400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-----------------------------------------------------------*             
+       4500-GET-EMAIL.                                                          
+      *-----------------------------------------------------------*             
+           MOVE SPACES                 TO BP13K857-REC.                         
+           MOVE K800-NUM-REGN          TO K857-NUM-REGN.                        
+                                                                                
+           READ BP13K857 KEY IS K857-KEY-FLD.                                   
+                                                                                
+           IF BP13K857-STATUS = 00                                              
+              ADD  1                   TO WS-K857-MATCH                         
+              MOVE K857-NUM-EMAIL      TO F305-TXT-EMAIL                        
+           ELSE                                                                 
+           IF BP13K857-STATUS = 23                                              
+              ADD  1                   TO WS-K857-NOMATCH                       
+              MOVE SPACES              TO BP13F30C-REC                          
+              MOVE K800-NUM-REGN       TO F30C-REGN                             
+              MOVE ' - NO REGN MATCH IN EMAIL FILE (K857)'                      
+                                       TO F30C-ERROR-TXT                        
+              WRITE BP13F30C-REC                                                
+           ELSE                                                                 
+              DISPLAY 'BP13K857 READ ERROR : ' BP13K857-STATUS                  
+              MOVE BP13K857-STATUS     TO RETURN-CODE                           
+              GO TO 9000-CLOSE-FILES                                            
+           END-IF.                                                              
+                                                                                
+       4500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-----------------------------------------------------------*             
+       5000-READ-BP13K830.                                                      
+      *-----------------------------------------------------------*             
+           MOVE SPACES                 TO K830-KEY-FLD.                         
+           MOVE K800-NUM-REGN          TO K830-KEY-FLD.                         
+                                                                                
+           READ BP13K830.                                                       
+                                                                                
+           IF BP13K830-STATUS = 00                                              
+              ADD 1                    TO WS-K830-MATCH-CTR                     
+              PERFORM 5100-MOVE-ADDRESS   THRU 5100-EXIT                        
+           ELSE                                                                 
+           IF BP13K830-STATUS = 23                                              
+              ADD 1                    TO WS-K830-NOMATCH-CTR                   
+              MOVE SPACES              TO BP13F30C-REC                          
+              MOVE K800-NUM-REGN       TO F30C-REGN                             
+              MOVE ' - NO REGN MATCH IN ADDRESS FILE (K830)'                    
+                                       TO F30C-ERROR-TXT                        
+              WRITE BP13F30C-REC                                                
+           ELSE                                                                 
+              DISPLAY 'ERROR READING BP13K830 FOR REC ' K830-NUM-REGN           
+              MOVE     BP13K830-STATUS TO RETURN-CODE                           
+              GO TO  9000-CLOSE-FILES                                           
+           END-IF.                                                              
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-----------------------------------------------------------*             
+       5100-MOVE-ADDRESS.                                                       
+      *-----------------------------------------------------------*             
+           IF K830-NUM-MAIL-ADDR = SPACES OR LOW-VALUES OR ZEROES               
+              MOVE K830-NUM-ADDR-TYPE        TO F305-NUM-ADDR-TYPE              
+              MOVE K830-NUM-BLK              TO F305-NUM-BLK                    
+              MOVE K830-NUM-FLAT             TO F305-NUM-FLAT                   
+              MOVE K830-NME-STREET-BLDG      TO F305-NME-STR-BLDG               
+              MOVE K830-NUM-POSTAL           TO F305-NUM-POSTAL                 
+           ELSE                                                                 
+              MOVE K830-NUM-MAIL-ADDR-TYPE   TO F305-NUM-ADDR-TYPE              
+              MOVE K830-NUM-MAIL-BLK         TO F305-NUM-BLK                    
+              MOVE K830-NUM-MAIL-FLAT        TO F305-NUM-FLAT                   
+              MOVE K830-NME-MAIL-STR-BLDG    TO F305-NME-STR-BLDG               
+              MOVE K830-NUM-MAIL-POSTAL      TO F305-NUM-POSTAL                 
+           END-IF.                                                              
+                                                                                
+       5100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-----------------------------------------------------------*             
+       6000-WRITE-BP13F305.                                                     
+      *-----------------------------------------------------------*             
+                                                                                
+           WRITE BP13F305-REC.                                                  
+           MOVE SPACES  TO BP13F305-REC.                                        
+           ADD  1       TO WS-WRITE-F305.                                       
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       9000-CLOSE-FILES.                                                        
+      *-------------------------------------------------------------            
+           DISPLAY '*************************************'.                     
+           DISPLAY '*----- BP13CD74 CONTROL TOTAL ------*'.                     
+           DISPLAY '*************************************'.                     
+           DISPLAY '*NO OF RECS READ IN F800   : ' WS-READ-F800.                
+           DISPLAY '*NO OF AGRMT-FOR-LEASE(NOT BLANK): '                        
+                                               WS-DTE-AGRM-NOT-BLNK             
+           DISPLAY '*NO OF K800 STAT  = C      : ' WS-STATUS-EQ-C.              
+           DISPLAY '*NO OF K800 STAT != C      : ' WS-STATUS-NOT-C.             
+           DISPLAY '*NO OF RECS WHITE  IN F305 : ' WS-WRITE-F305.               
+           DISPLAY '*NO OF RECS FOUND  IN K820 : ' WS-K820-MATCH.               
+           DISPLAY '*NO OF RECS NOTFND IN K820 : ' WS-K820-NOMATCH.             
+           DISPLAY '*NO OF RECS FOUND  IN K857 : ' WS-K857-MATCH.               
+           DISPLAY '*NO OF RECS NOTFND IN K857 : ' WS-K857-NOMATCH.             
+           DISPLAY '*HH = G COUNT          : ' WS-HH-TYPE-G.                    
+           DISPLAY '*FT2T COUNT            : ' WS-HH-TYPE-FT2T.                 
+           DISPLAY '*DIV WID 2T COUNT      : ' WS-HH-TYPE-DW2T.                 
+           DISPLAY '*SUP COUNT             : ' WS-HH-TYPE-SUP.                  
+           DISPLAY '****************************************'.                  
+                                                                                
+           CLOSE BP13F800                                                       
+                 BP13K820                                                       
+                 BP13K830                                                       
+                 BP13K857                                                       
+                 BP13F305                                                       
+                 BP13F30C.                                                      
+           STOP RUN.                                                            
+       9000-EXIT.                                                               
+

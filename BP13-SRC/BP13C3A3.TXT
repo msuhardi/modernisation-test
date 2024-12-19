@@ -1,0 +1,1105 @@
+      *-----------------------------------------------------------*             
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C3A3.                                                 
+       AUTHOR.        ELAINE S ARGA.                                            
+      *-----------------------------------------------------------*             
+                                                                                
+      *===========================================================*             
+      *          BP13 - LOAN ELIGIBILITY & ASSESSMENT SYSTEM      *             
+      *===========================================================*             
+      *                                                           *             
+      * OBJECTIVES :  THIS SUBROUTINE WILL UPDATE SOC TO PROCESS  *             
+      *               'AP' APPROVED HLA TRANSACTIONS WHICH ARE NOT*             
+      *               UPDATED ONLINE BY SOC DUE TO DOWNTIME       *             
+      *                                                                         
+      *               FILES TO BE UPDATED :                       *             
+      *               - BP13K800                                  *             
+      *               - BP13K820                                  *             
+      *               - BP13K640                                  *             
+      *                                                           *             
+      *===========================================================*             
+      *  CHG-REQ   BY    DATE        DESCRIPTION                  *             
+      *  --------  ----  ----------  ---------------------------- *             
+      *  BP135664  ESA1  30/04/15    NEW PROGRAM                  *             
+      *  BP135817  RJB1  26/06/15    BYPASS UPD IF SCHACC IS SPACES             
+      *  BP135731  ESA1  29/06/15    BYPASS IF BP13K800 NOT FOUND *             
+      *  BP135686  ESA1  23/07/15    BYPASS CASES IF              *             
+      *                              K800-NUM-RSV-SAL= N,P OR R   *             
+      *  BP136901  FNP1  25/07/17    CATER FOR ROF ALLO-CAT       *             
+      *  BP137020  ESA1  26/10/17    BYPASS CASES IF              *             
+      *                              K800-NUM-RSV-SAL= N,P ONLY   *             
+      *  BP137210  ESA1  13/02/18    ADD FLAT VALIDATION PRIOR TO *             
+      *                              HLE RESERVING                *             
+      *  BP137786   KV6  18/04/19    CATER FOR OBF ALLO-CAT       *             
+      *  BP137865   KV6  07/08/19    TO CORRECT WRITING OF L2 MAX *             
+      *                              LOAN AND YOUNGEST AGE IN K640*             
+      *************************************************************             
+                                                                                
+                                                                                
+      **********************                                                    
+       ENVIRONMENT DIVISION.                                                    
+      **********************                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP27F341  ASSIGN        TO BP27F341.                          
+                                                                                
+           SELECT BP27F800  ASSIGN        TO BP27F800.                          
+                                                                                
+           SELECT BP13K800  ASSIGN        TO BP13K800                           
+                            ACCESS MODE      IS RANDOM                          
+                            ORGANIZATION     IS INDEXED                         
+                            RECORD KEY       IS K800-NUM-REGN                   
+                            FILE STATUS      IS BP13K800-STAT.                  
+                                                                                
+           SELECT BP13K640  ASSIGN        TO BP13K640                           
+                            ACCESS MODE      IS RANDOM                          
+                            ORGANIZATION     IS INDEXED                         
+                            RECORD KEY       IS K640-KEY-FLD                    
+                            FILE STATUS      IS BP13K640-STAT.                  
+                                                                                
+           SELECT BP13K848  ASSIGN        TO BP13K848                           
+                            ACCESS MODE      IS RANDOM                          
+                            ORGANIZATION     IS INDEXED                         
+                            RECORD KEY       IS K848-KEY-FLD                    
+                            FILE STATUS      IS BP13K848-STAT.                  
+                                                                                
+           SELECT BM06K110  ASSIGN        TO BM06K110                           
+                            ACCESS MODE      IS RANDOM                          
+                            ORGANIZATION     IS INDEXED                         
+                            RECORD KEY       IS K110-KEY-FLD                    
+                            FILE STATUS      IS BM06K110-STAT.                  
+                                                                                
+           SELECT BP13K820  ASSIGN        TO BP13K820                           
+                            ACCESS MODE      IS RANDOM                          
+                            ORGANIZATION     IS INDEXED                         
+                            RECORD KEY       IS K820-KEY-FLD                    
+                            FILE STATUS      IS BP13K820-STAT.                  
+      ****************                                                          
+       DATA DIVISION.                                                           
+      ****************                                                          
+                                                                                
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD  BP27F341                                                             
+           RECORDING MODE IS F                                                  
+           RECORD CONTAINS 50 CHARACTERS.                                       
+       COPY BP27K341.                                                           
+                                                                                
+       FD  BP27F800                                                             
+           RECORDING MODE IS F                                                  
+           RECORD CONTAINS 1200 CHARACTERS.                                     
+       COPY BP27F800.                                                           
+                                                                                
+       FD  BP13K800                                                             
+           RECORD CONTAINS 2000 CHARACTERS.                                     
+       COPY BP13K800.                                                           
+                                                                                
+       FD  BP13K640                                                             
+           RECORD CONTAINS 500 CHARACTERS.                                      
+       COPY BP13K640.                                                           
+                                                                                
+       FD  BP13K848                                                             
+           RECORD CONTAINS 2000 CHARACTERS.                                     
+       COPY BP13K848.                                                           
+                                                                                
+       FD  BP13K820                                                             
+           RECORD CONTAINS 400 CHARACTERS.                                      
+       COPY BP13K820.                                                           
+                                                                                
+       FD  BM06K110                                                             
+           RECORD CONTAINS 500 CHARACTERS.                                      
+       COPY BM06K110.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+       01  WS-FILE-STATUS.                                                      
+           05 BP13K800-STAT              PIC 9(02)      VALUE ZEROES.           
+           05 BP13K640-STAT              PIC 9(02)      VALUE ZEROES.           
+           05 BP13K848-STAT              PIC 9(02)      VALUE ZEROES.           
+           05 BM06K110-STAT              PIC 9(02)      VALUE ZEROES.           
+           05 BP13K820-STAT              PIC 9(02)      VALUE ZEROES.           
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-NRIC                   PIC X(09)      VALUE SPACES.           
+           05  WS-HLA-NRIC1              PIC X(09)      VALUE SPACES.           
+           05  WS-HLA-NRIC2              PIC X(09)      VALUE SPACES.           
+           05  WS-HLA-NRIC3              PIC X(09)      VALUE SPACES.           
+           05  WS-HLA-NRIC4              PIC X(09)      VALUE SPACES.           
+           05  WS-CURR-SELLING-PRICE     PIC S9(7)V99   VALUE ZEROES.           
+           05  WS-TEMP-AMT               PIC 9(07)      VALUE ZEROES.           
+           05  WS-TEMP-AMT2              PIC 9(07)      VALUE ZEROES.           
+           05  WS-NUM-K800-CTR           PIC 9(02)      VALUE ZEROES.           
+           05  WS-MATCH-REGN             PIC 9(05)      VALUE ZEROES.           
+           05  WS-F341-READ              PIC 9(05)      VALUE ZEROES.           
+           05  WS-K800-UPDATE            PIC 9(05)      VALUE ZEROES.           
+           05  WS-NRIC-FND-CTR           PIC 9(02)      VALUE ZEROES.           
+           05  WS-NUM-HLA-CTR            PIC 9(02)      VALUE ZEROES.           
+           05  WS-FLAT-OK                PIC X(01)      VALUE 'N'.              
+           05  WS-K640-FND               PIC X(01)      VALUE 'N'.              
+           05  WS-HLA-UPD-TAG            PIC X(01)      VALUE 'N'.              
+           05  WS-F341-EOF               PIC X(01)      VALUE 'N'.              
+           05  WS-F800-EOF               PIC X(01)      VALUE 'N'.              
+           05  WS-COMM-INT-RATE          PIC 9(02)V9(2) VALUE ZEROES.           
+           05  WS-COMM-REPAY-PERIOD      PIC 9(02)      VALUE ZEROES.           
+           05  WS-COMM-MAX-LOAN          PIC 9(06)      VALUE ZEROES.           
+           05  WS-COMM-MTH-INSTALL       PIC 9(05)      VALUE ZEROES.           
+           05  WS-INSTAL                 PIC S9(5)V9(8) VALUE ZEROES.           
+           05  WS-INSTAL-DOL             PIC S9(07)     VALUE ZEROES.           
+           05  WS-FAC                    PIC 9(02)      VALUE ZEROES.           
+           05  WS-INT                    PIC 99V9(8)    VALUE ZEROES.           
+           05  WS-DIV                    PIC 99V9(8)    VALUE ZEROES.           
+           05  WS-K640-YOUNGEST-AGE      PIC 9(04)      VALUE ZEROES.           
+           05  WS-K640-L2-MAX-LOAN       PIC 9(07)      VALUE ZEROES.           
+                                                                                
+       01  WS-CUR-DATE.                                                         
+           05  WS-CUR-CCYY               PIC 9(04).                             
+           05  WS-CUR-MM                 PIC 9(02).                             
+           05  WS-CUR-DD                 PIC 9(02).                             
+                                                                                
+       01  WS-SYSTEM-TIME.                                                      
+           05 WS-HH                      PIC 9(2).                              
+           05 WS-MM                      PIC 9(2).                              
+           05 WS-SS                      PIC 9(2).                              
+           05 WS-MI                      PIC 9(2).                              
+                                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+      *        LINKAGE FOR BP27C930                                   *         
+      *---------------------------------------------------------------*         
+       01  WS-C930-LINK.                                                        
+           05  WS-C930-NUM-HLA                PIC X(9).                         
+           05  WS-C930-NUM-REGN               PIC X(8).                         
+           05  WS-C930-NUM-APPLN-TYPE         PIC X(3).                         
+           05  WS-C930-NUM-ROOM-APPLN         PIC X(1).                         
+           05  FILLER                         PIC X(25).                        
+           05  WS-C930-NUM-ERROR              PIC X(4).                         
+           05  WS-C930-TXT-ERRMSG             PIC X(50).                        
+                                                                                
+      *-------------------*                                                     
+       PROCEDURE DIVISION.                                                      
+      *-------------------*                                                     
+                                                                                
+      *------------------------*                                                
+       0000-MAIN-LOGIC.                                                         
+      *------------------------*                                                
+                                                                                
+           PERFORM 1000-OPEN-ROUTINE    THRU 1000-EXIT.                         
+           PERFORM 2000-READ-BP27F341   THRU 2000-EXIT.                         
+           PERFORM 2500-READ-BP27F800   THRU 2500-EXIT.                         
+           PERFORM 3000-PROCESS-DATA    THRU 3000-EXIT                          
+            UNTIL WS-F341-EOF = 'Y' OR WS-F800-EOF = 'Y'.                       
+           PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT.                         
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------*                                                
+       1000-OPEN-ROUTINE.                                                       
+      *------------------------*                                                
+                                                                                
+           OPEN INPUT  BP27F341                                                 
+                       BP27F800                                                 
+                       BM06K110                                                 
+                I-O    BP13K800                                                 
+                       BP13K640                                                 
+                       BP13K820                                                 
+                       BP13K848.                                                
+                                                                                
+           IF BP13K800-STAT NOT = 00 AND 97                                     
+              DISPLAY 'OPENING BP13K800 ERROR ' BP13K800-STAT                   
+              MOVE     BP13K800-STAT      TO RETURN-CODE                        
+              PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF BP13K640-STAT NOT = 00 AND 97                                     
+              DISPLAY 'OPENING BP13K640 ERROR ' BP13K640-STAT                   
+              MOVE     BP13K640-STAT      TO RETURN-CODE                        
+              PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF BP13K848-STAT NOT = 00 AND 97                                     
+              DISPLAY 'OPENING BP13K848 ERROR ' BP13K848-STAT                   
+              MOVE     BP13K848-STAT      TO RETURN-CODE                        
+              PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF BP13K820-STAT NOT = 00 AND 97                                     
+              DISPLAY 'OPENING BP13K820 ERROR ' BP13K820-STAT                   
+              MOVE     BP13K820-STAT      TO RETURN-CODE                        
+              PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF BM06K110-STAT NOT = 00 AND 97                                     
+              DISPLAY 'OPENING BM06K110 ERROR ' BM06K110-STAT                   
+              MOVE     BM06K110-STAT      TO RETURN-CODE                        
+              PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                       
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8) TO WS-CUR-DATE.                      
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------*                                                
+       2000-READ-BP27F341.                                                      
+      *------------------------*                                                
+                                                                                
+            READ BP27F341                                                       
+                 AT END MOVE 'Y'  TO WS-F341-EOF                                
+                 GO TO 2000-EXIT                                                
+            END-READ.                                                           
+                                                                                
+            ADD 1            TO WS-F341-READ.                                   
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------*                                                
+       2500-READ-BP27F800.                                                      
+      *------------------------*                                                
+                                                                                
+            READ BP27F800                                                       
+                 AT END MOVE 'Y'  TO WS-F800-EOF                                
+            END-READ.                                                           
+                                                                                
+       2500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------*                                                
+       3000-PROCESS-DATA.                                                       
+      *------------------------*                                                
+                                                                                
+           MOVE SPACES                   TO WS-HLA-NRIC1                        
+                                            WS-HLA-NRIC2                        
+                                            WS-HLA-NRIC3                        
+                                            WS-HLA-NRIC4.                       
+                                                                                
+           IF K341-NUM-REGN = SPACES OR LOW-VALUES                              
+              CONTINUE                                                          
+           ELSE                                                                 
+              MOVE  'Y'                   TO  WS-HLA-UPD-TAG                    
+              IF K341-NUM-HLA = F800-NUM-HLA                                    
+                 ADD 1                       TO WS-MATCH-REGN                   
+                 PERFORM 4000-PROCESS-HLA    THRU 4000-EXIT                     
+                 PERFORM 2500-READ-BP27F800  THRU 2500-EXIT                     
+                 PERFORM 2000-READ-BP27F341  THRU 2000-EXIT                     
+              ELSE                                                              
+                 IF K341-NUM-HLA > F800-NUM-HLA                                 
+                    PERFORM 2500-READ-BP27F800  THRU 2500-EXIT                  
+                 ELSE                                                           
+                    PERFORM 2000-READ-BP27F341  THRU 2000-EXIT                  
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------*                                                
+       4000-PROCESS-HLA.                                                        
+      *------------------------*                                                
+           MOVE F800-NUM-NRIC1 OF BP27F800-MASTER                               
+                                          TO WS-HLA-NRIC1.                      
+           MOVE F800-NUM-NRIC2 OF BP27F800-MASTER                               
+                                          TO WS-HLA-NRIC2.                      
+           MOVE F800-NUM-NRIC3 OF BP27F800-MASTER                               
+                                          TO WS-HLA-NRIC3.                      
+           MOVE F800-NUM-NRIC4 OF BP27F800-MASTER                               
+                                          TO WS-HLA-NRIC4.                      
+           PERFORM 5000-READ-BP13K800     THRU 5000-EXIT.                       
+           IF K800-NUM-REGN = SPACES OR LOW-VALUES                              
+              GO TO 4000-EXIT                                                   
+           END-IF.                                                              
+           PERFORM 6000-VALIDATE-NRIC     THRU 6000-EXIT.                       
+           PERFORM 6100-VALIDATE-HLA      THRU 6100-EXIT.                       
+           IF (WS-HLA-UPD-TAG = 'Y') AND                                        
+              (K800-NUM-SCH-ACC NOT = SPACES AND LOW-VALUES)                    
+              PERFORM 7000-READ-BP13K640  THRU 7000-EXIT                        
+              PERFORM 8000-READ-BM06K110  THRU 8000-EXIT                        
+              PERFORM 9600-CHECK-APR-FT   THRU 9600-EXIT                        
+              PERFORM 9000-UPDATE-FILES   THRU 9000-EXIT                        
+              IF K341-NUM-TRANS = 'AP' AND                                      
+                 WS-FLAT-OK = 'Y'                                               
+                 PERFORM 9500-LINK-BP27C930  THRU 9500-EXIT                     
+              END-IF                                                            
+           ELSE IF K800-NUM-SCH-ACC = SPACES OR LOW-VALUES                      
+              DISPLAY 'SCH-ACC IS SPACES:' K800-NUM-REGN                        
+           END-IF.                                                              
+                                                                                
+       4000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------*                                                
+       5000-READ-BP13K800.                                                      
+      *------------------------*                                                
+           MOVE SPACES                   TO BP13K800-MASTER.                    
+           INITIALIZE                       BP13K800-MASTER.                    
+                                                                                
+           MOVE K341-NUM-REGN            TO K800-NUM-REGN OF                    
+                                            BP13K800-MASTER.                    
+           READ BP13K800.                                                       
+                                                                                
+           EVALUATE BP13K800-STAT                                               
+               WHEN 00                                                          
+                    CONTINUE                                                    
+               WHEN 23                                                          
+                    MOVE SPACES         TO BP13K800-MASTER                      
+                    DISPLAY 'RECORD NOT FOUND BP13K800 : ' K341-NUM-REGN        
+               WHEN OTHER                                                       
+                    MOVE  BP13K800-STAT TO RETURN-CODE                          
+                    DISPLAY 'FILE ERROR  BP13K800 : ' K341-NUM-REGN             
+                    PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                 
+            END-EVALUATE.                                                       
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------*                                                
+       6000-VALIDATE-NRIC.                                                      
+      *------------------------*                                                
+                                                                                
+           MOVE ZEROES             TO WS-NUM-K800-CTR                           
+                                      WS-NRIC-FND-CTR                           
+                                      WS-NUM-HLA-CTR.                           
+                                                                                
+           IF K800-NUM-NRIC1 OF BP13K800-MASTER NOT = SPACES AND                
+                                                      LOW-VALUES                
+              ADD  1               TO WS-NUM-K800-CTR                           
+              IF K800-NUM-NRIC1 OF BP13K800-MASTER =                            
+                                   WS-HLA-NRIC1 OR WS-HLA-NRIC2 OR              
+                                   WS-HLA-NRIC3 OR WS-HLA-NRIC4                 
+                 ADD  1            TO  WS-NRIC-FND-CTR                          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC2 OF BP13K800-MASTER NOT = SPACES AND                
+                                                      LOW-VALUES                
+              ADD  1               TO WS-NUM-K800-CTR                           
+              IF K800-NUM-NRIC2 OF BP13K800-MASTER =                            
+                                   WS-HLA-NRIC1 OR WS-HLA-NRIC2 OR              
+                                   WS-HLA-NRIC3 OR WS-HLA-NRIC4                 
+                 ADD  1            TO  WS-NRIC-FND-CTR                          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC3 OF BP13K800-MASTER NOT = SPACES AND                
+                                                      LOW-VALUES                
+              ADD  1               TO WS-NUM-K800-CTR                           
+              IF K800-NUM-NRIC3 OF BP13K800-MASTER =                            
+                                   WS-HLA-NRIC1 OR WS-HLA-NRIC2 OR              
+                                   WS-HLA-NRIC3 OR WS-HLA-NRIC4                 
+                 ADD  1            TO  WS-NRIC-FND-CTR                          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC4 OF BP13K800-MASTER NOT = SPACES AND                
+                                                      LOW-VALUES                
+              ADD  1               TO WS-NUM-K800-CTR                           
+              IF K800-NUM-NRIC4 OF BP13K800-MASTER =                            
+                                   WS-HLA-NRIC1 OR WS-HLA-NRIC2 OR              
+                                   WS-HLA-NRIC3 OR WS-HLA-NRIC4                 
+                 ADD  1            TO  WS-NRIC-FND-CTR                          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-HLA-NRIC1 NOT = SPACES AND LOW-VALUES                          
+              ADD  1               TO WS-NUM-HLA-CTR                            
+           END-IF.                                                              
+                                                                                
+           IF WS-HLA-NRIC2 NOT = SPACES AND LOW-VALUES                          
+              ADD  1               TO WS-NUM-HLA-CTR                            
+           END-IF.                                                              
+                                                                                
+           IF WS-HLA-NRIC3 NOT = SPACES AND LOW-VALUES                          
+              ADD  1               TO WS-NUM-HLA-CTR                            
+           END-IF.                                                              
+                                                                                
+           IF WS-HLA-NRIC4 NOT = SPACES AND LOW-VALUES                          
+              ADD  1               TO WS-NUM-HLA-CTR                            
+           END-IF.                                                              
+                                                                                
+           IF WS-NUM-K800-CTR NOT = WS-NUM-HLA-CTR                              
+              MOVE 'N'  TO WS-HLA-UPD-TAG                                       
+           ELSE                                                                 
+              IF WS-NRIC-FND-CTR NOT = WS-NUM-HLA-CTR                           
+                 MOVE 'N'  TO WS-HLA-UPD-TAG                                    
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       6000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------*                                                
+       6100-VALIDATE-HLA.                                                       
+      *------------------------*                                                
+           IF K341-NUM-TRANS = 'AP'                                             
+              IF K800-NUM-HLA OF BP13K800-MASTER = SPACES OR                    
+                                                LOW-VALUES                      
+                 IF K800-DTE-ACCEPTANCE NOT = SPACES AND                        
+                                    LOW-VALUES AND ZEROES                       
+                    CONTINUE                                                    
+                 ELSE                                                           
+                    MOVE 'N'   TO  WS-HLA-UPD-TAG                               
+                 END-IF                                                         
+              ELSE                                                              
+                 IF ((K800-NUM-HLA OF BP13K800-MASTER =                         
+                      K341-NUM-HLA) AND                                         
+                     (K800-DTE-ACCEPTANCE NOT = SPACES AND                      
+                                       LOW-VALUES AND ZEROES))                  
+                    CONTINUE                                                    
+                 ELSE                                                           
+                    MOVE 'N'   TO  WS-HLA-UPD-TAG                               
+                 END-IF                                                         
+              END-IF                                                            
+              IF F800-NUM-RSV-SAL = 'N' OR 'P'                                  
+                 MOVE 'N'   TO  WS-HLA-UPD-TAG                                  
+              END-IF                                                            
+           ELSE                                                                 
+              IF K800-NUM-HLA OF BP13K800-MASTER NOT = SPACES AND               
+                                                       LOW-VALUES               
+                 IF K800-NUM-HLA OF BP13K800-MASTER = K341-NUM-HLA              
+                    CONTINUE                                                    
+                 ELSE                                                           
+                    MOVE 'N'   TO  WS-HLA-UPD-TAG                               
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       6100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------*                                                
+       7000-READ-BP13K640.                                                      
+      *------------------------*                                                
+           MOVE SPACES                   TO BP13K640-TRANS-REC                  
+           INITIALIZE                       BP13K640-TRANS-REC.                 
+           MOVE ZEROES                   TO WS-K640-YOUNGEST-AGE                
+                                            WS-K640-L2-MAX-LOAN                 
+                                                                                
+           MOVE K341-NUM-REGN            TO K640-REGN-NO.                       
+                                                                                
+           READ BP13K640.                                                       
+                                                                                
+           EVALUATE BP13K640-STAT                                               
+               WHEN 00                                                          
+                    MOVE  'Y'   TO  WS-K640-FND                                 
+                    MOVE K640-AMT-MAX-LOAN  TO WS-K640-L2-MAX-LOAN              
+                    MOVE K640-NUM-UIN-YNGST-HA-AGE                              
+                                            TO WS-K640-YOUNGEST-AGE             
+               WHEN 23                                                          
+                    MOVE  'N'   TO  WS-K640-FND                                 
+               WHEN OTHER                                                       
+                    MOVE  BP13K640-STAT TO RETURN-CODE                          
+                    DISPLAY 'FILE ERROR  BP13K640 : ' K341-NUM-REGN             
+                    PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                 
+           END-EVALUATE.                                                        
+                                                                                
+       7000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *------------------------*                                                
+       8000-READ-BM06K110.                                                      
+      *------------------------*                                                
+           MOVE SPACES                   TO K110-REC                            
+           INITIALIZE                       K110-REC.                           
+                                                                                
+           MOVE K800-NUM-SCH-ACC         TO K110-SCH-ACC-NO                     
+           READ BM06K110                                                        
+                                                                                
+           EVALUATE BM06K110-STAT                                               
+               WHEN 00                                                          
+                    IF K800-AMT-PREMIUM IS NOT NUMERIC                          
+                       MOVE ZEROES  TO K800-AMT-PREMIUM                         
+                    END-IF                                                      
+                    IF K110-CURR-SELLING-PRICE IS NOT NUMERIC                   
+                       MOVE ZEROES  TO K110-CURR-SELLING-PRICE                  
+                    END-IF                                                      
+                    COMPUTE WS-CURR-SELLING-PRICE = K800-AMT-PREMIUM +          
+                                            K110-CURR-SELLING-PRICE             
+               WHEN 23                                                          
+                    DISPLAY 'RECORD NOT FND BM06K110: ' K800-NUM-SCH-ACC        
+               WHEN OTHER                                                       
+                    MOVE  BM06K110-STAT TO RETURN-CODE                          
+                    DISPLAY 'FILE ERROR  BM06K110 : ' K800-NUM-SCH-ACC          
+                    PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                 
+            END-EVALUATE.                                                       
+                                                                                
+       8000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *----------------------*                                                  
+       9000-UPDATE-FILES.                                                       
+      *----------------------*                                                  
+                                                                                
+           PERFORM 9100-WRITE-K800-IMAGE THRU 9100-EXIT.                        
+           PERFORM 9200-UPDATE-K800      THRU 9200-EXIT.                        
+           IF F800-NUM-CASE-STATUS NOT = 'CAN' AND 'REJ'                        
+              PERFORM 9300-UPDATE-K820      THRU 9300-EXIT                      
+              PERFORM 9400-UPDATE-BP13K640  THRU 9400-EXIT                      
+           END-IF.                                                              
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *--------------------------------------------------------------*          
+       9100-WRITE-K800-IMAGE.                                                   
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE BP13K800-MASTER TO BP13K848-MASTER.                             
+           MOVE 'C3A3'          TO K848-NUM-TRANS-BKIMAGE.                      
+                                                                                
+           MOVE 'BP13C3A3'      TO K848-NUM-USERID.                             
+           MOVE WS-CUR-DATE     TO K848-DTE-BKIMAGE.                            
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(9:8) TO WS-SYSTEM-TIME.                   
+                                                                                
+           MOVE WS-SYSTEM-TIME  TO K848-TME-BKIMAGE.                            
+           MOVE K848-NUM-REGN   TO K848-NUM-REGN-BKIMAGE.                       
+                                                                                
+           WRITE BP13K848-MASTER.                                               
+                                                                                
+           EVALUATE BP13K848-STAT                                               
+               WHEN 00                                                          
+                    CONTINUE                                                    
+               WHEN OTHER                                                       
+                 MOVE  BP13K848-STAT TO RETURN-CODE                             
+                 DISPLAY 'ERR WRITING BP13K848 FILE : ' BP13K848-STAT           
+                 DISPLAY 'K848-NUM-REGN = ' K848-NUM-REGN                       
+                 PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       9100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *----------------------*                                                  
+       9200-UPDATE-K800.                                                        
+      *----------------------*                                                  
+                                                                                
+           IF K341-NUM-TRANS = 'AP'                                             
+              IF WS-FLAT-OK = 'Y'                                               
+                 MOVE 'H'     TO K800-NUM-LOAN-TAG   OF BP13K800-MASTER         
+                 MOVE 'RSV'   TO K800-NUM-HLA-STATUS OF BP13K800-MASTER         
+                 MOVE K341-NUM-HLA  TO K800-NUM-HLA OF BP13K800-MASTER          
+              ELSE                                                              
+                 MOVE 'B'   TO  K800-NUM-LOAN-TAG   OF BP13K800-MASTER          
+                 MOVE 'REJ' TO  K800-NUM-HLA-STATUS OF BP13K800-MASTER          
+                 MOVE K341-NUM-HLA  TO K800-NUM-HLA OF BP13K800-MASTER          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF K341-NUM-TRANS = 'RJ'                                             
+              MOVE 'B'   TO  K800-NUM-LOAN-TAG   OF BP13K800-MASTER             
+              MOVE 'REJ' TO  K800-NUM-HLA-STATUS OF BP13K800-MASTER             
+              MOVE K341-NUM-HLA  TO K800-NUM-HLA OF BP13K800-MASTER             
+           END-IF.                                                              
+                                                                                
+           IF K341-NUM-TRANS = 'CA' OR 'NL' OR 'BL'                             
+              MOVE 'N'   TO  K800-NUM-LOAN-TAG   OF BP13K800-MASTER             
+              MOVE 'CAN' TO  K800-NUM-HLA-STATUS OF BP13K800-MASTER             
+              MOVE K341-NUM-HLA  TO K800-NUM-HLA OF BP13K800-MASTER             
+              IF F800-NUM-COFN = 'A'                                            
+                 MOVE 'T'   TO  K800-NUM-LOAN-TAG   OF BP13K800-MASTER          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           MOVE WS-CUR-DATE                TO K800-DTE-UPDATE OF                
+                                              BP13K800-MASTER.                  
+                                                                                
+           MOVE 'BP13C3A3'       TO K800-NUM-USERID OF BP13K800-MASTER          
+                                                                                
+           PERFORM 9250-REWRITE-BP13K800   THRU 9250-EXIT.                      
+                                                                                
+       9200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *----------------------*                                                  
+       9250-REWRITE-BP13K800.                                                   
+      *----------------------*                                                  
+                                                                                
+           REWRITE BP13K800-MASTER.                                             
+                                                                                
+           IF BP13K800-STAT = 00                                                
+              CONTINUE                                                          
+              ADD 1               TO WS-K800-UPDATE                             
+           ELSE                                                                 
+              MOVE  BP13K800-STAT TO RETURN-CODE                                
+              DISPLAY 'ERROR WRITING BP13K800 FILE : ' BP13K800-STAT            
+              DISPLAY 'K800-NUM-REGN = ' K800-NUM-REGN                          
+              PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                       
+           END-IF.                                                              
+                                                                                
+       9250-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-----------------------*                                                 
+       9300-UPDATE-K820.                                                        
+      *-----------------------*                                                 
+           IF K800-NUM-NRIC1 OF BP13K800-MASTER NOT = SPACES AND                
+                                                      LOW-VALUES                
+              MOVE K800-NUM-NRIC1 OF BP13K800-MASTER  TO   WS-NRIC              
+              PERFORM 9310-READ-BP13K820        THRU 9310-EXIT                  
+              PERFORM 9320-REWRITE-BP13K820     THRU 9320-EXIT                  
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC2 OF BP13K800-MASTER NOT = SPACES AND                
+                                                      LOW-VALUES                
+              MOVE SPACES                             TO   WS-NRIC              
+              MOVE K800-NUM-NRIC2 OF BP13K800-MASTER  TO   WS-NRIC              
+              PERFORM 9310-READ-BP13K820        THRU 9310-EXIT                  
+              PERFORM 9320-REWRITE-BP13K820     THRU 9320-EXIT                  
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC3 OF BP13K800-MASTER NOT = SPACES AND                
+                                                      LOW-VALUES                
+              MOVE SPACES                             TO   WS-NRIC              
+              MOVE K800-NUM-NRIC3 OF BP13K800-MASTER  TO   WS-NRIC              
+              PERFORM 9310-READ-BP13K820        THRU 9310-EXIT                  
+              PERFORM 9320-REWRITE-BP13K820     THRU 9320-EXIT                  
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC4 OF BP13K800-MASTER NOT = SPACES AND                
+                                                      LOW-VALUES                
+              MOVE SPACES                             TO   WS-NRIC              
+              MOVE K800-NUM-NRIC4 OF BP13K800-MASTER  TO   WS-NRIC              
+              PERFORM 9310-READ-BP13K820        THRU 9310-EXIT                  
+              PERFORM 9320-REWRITE-BP13K820     THRU 9320-EXIT                  
+           END-IF.                                                              
+                                                                                
+       9300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *------------------------*                                                
+       9310-READ-BP13K820.                                                      
+      *------------------------*                                                
+                                                                                
+           INITIALIZE                             BP13K820-REC.                 
+           MOVE SPACES                      TO    BP13K820-REC.                 
+                                                                                
+           MOVE K800-NUM-REGN               TO    K820-NUM-REGN.                
+           MOVE WS-NRIC                     TO    K820-NUM-NRIC.                
+                                                                                
+           READ BP13K820.                                                       
+                                                                                
+           EVALUATE BP13K820-STAT                                               
+               WHEN 00                                                          
+                  MOVE 'CA'                TO   K820-NUM-CA-TAG                 
+                  MOVE ZEROES              TO   K820-AMT-INCOME-CA              
+                  MOVE WS-CUR-DATE         TO K820-DTE-UPDATE OF                
+                                                BP13K820-REC                    
+                  MOVE 'BP13C3A3'       TO K820-NUM-USERID                      
+                                             OF BP13K820-REC                    
+               WHEN 23                                                          
+                    MOVE  BP13K820-STAT TO RETURN-CODE                          
+                    DISPLAY 'RECORD NOT FND BP13K820 : ' K341-NUM-REGN          
+                    PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                 
+               WHEN OTHER                                                       
+                    MOVE  BP13K820-STAT TO RETURN-CODE                          
+                    DISPLAY 'FILE ERROR  BP13K820 : ' K341-NUM-REGN             
+                    PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                 
+            END-EVALUATE.                                                       
+                                                                                
+       9310-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------*                                                
+       9320-REWRITE-BP13K820.                                                   
+      *------------------------*                                                
+                                                                                
+           REWRITE BP13K820-REC.                                                
+                                                                                
+           IF BP13K820-STAT = 00                                                
+              CONTINUE                                                          
+           ELSE                                                                 
+              MOVE  BP13K820-STAT TO RETURN-CODE                                
+              DISPLAY 'ERROR WRITING BP13K820 FILE : ' BP13K820-STAT            
+              DISPLAY 'K820-NUM-REGN = ' K820-NUM-REGN                          
+              PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                       
+           END-IF.                                                              
+                                                                                
+       9320-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *--------------------*                                                    
+       9400-UPDATE-BP13K640.                                                    
+      *--------------------*                                                    
+           MOVE SPACES                  TO   BP13K640-TRANS-REC.                
+           INITIALIZE                        BP13K640-TRANS-REC.                
+                                                                                
+           MOVE K341-NUM-REGN           TO   K640-REGN-NO.                      
+           PERFORM 9410-FMT-BP13K640    THRU 9410-EXIT.                         
+                                                                                
+           IF WS-K640-FND = 'Y'                                                 
+              PERFORM 9420-REWRITE-BP13K640 THRU 9420-EXIT                      
+           ELSE                                                                 
+              PERFORM 9430-WRITE-K640       THRU 9430-EXIT                      
+           END-IF.                                                              
+                                                                                
+       9400-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-----------------*                                                       
+       9410-FMT-BP13K640.                                                       
+      *-----------------*                                                       
+           IF F800-NUM-SUBSIDISED-LOAN OF BP27F800-MASTER NOT NUMERIC           
+              MOVE ZEROES TO F800-NUM-SUBSIDISED-LOAN OF BP27F800-MASTER        
+           END-IF.                                                              
+                                                                                
+           MOVE F800-NUM-SUBSIDISED-LOAN OF BP27F800-MASTER TO                  
+                K640-NUM-SUBSIDISED-LOAN.                                       
+                                                                                
+           IF F800-NUM-LOAN-TAG-GRANT NOT = SPACES AND LOW-VALUES               
+              IF F800-NUM-LOAN-TAG-GRANT = 'S'                                  
+                 MOVE 'H'  TO  F800-NUM-LOAN-TAG-GRANT                          
+              END-IF                                                            
+                                                                                
+              IF F800-NUM-LOAN-TAG-GRANT = 'U'                                  
+                 MOVE 'A'  TO  F800-NUM-LOAN-TAG-GRANT                          
+              END-IF                                                            
+                                                                                
+              MOVE F800-NUM-LOAN-TAG-GRANT TO K640-CDE-LOAN-OPTION              
+           ELSE                                                                 
+              IF F800-NUM-LOAN-TAG OF BP27F800-MASTER = 'S'                     
+                 MOVE 'H'  TO  F800-NUM-LOAN-TAG OF BP27F800-MASTER             
+              END-IF                                                            
+                                                                                
+              IF F800-NUM-LOAN-TAG OF BP27F800-MASTER = 'U'                     
+                 MOVE 'A'  TO  F800-NUM-LOAN-TAG OF BP27F800-MASTER             
+              END-IF                                                            
+                                                                                
+              MOVE F800-NUM-LOAN-TAG OF BP27F800-MASTER TO                      
+                   K640-CDE-LOAN-OPTION                                         
+           END-IF.                                                              
+                                                                                
+           IF K640-CDE-LOAN-OPTION = 'H'                                        
+              MOVE 'P' TO K640-CDE-LOAN-OPTION                                  
+           END-IF.                                                              
+                                                                                
+           MOVE F800-AMT-MAX-LOAN  OF BP27F800-MASTER   TO                      
+                K640-AMT-CA-LOAN.                                               
+                                                                                
+      * COMPUTE MAX LOAN                                                        
+           IF F800-NUM-HLA-HDBREF-SALE(1:8) NOT = SPACES AND LOW-VALUES         
+              IF F800-NUM-HLA-HDBREF-SALE(9:3)  = SPACES OR  LOW-VALUES         
+                 CONTINUE                                                       
+              ELSE                                                              
+                 MOVE  ZEROES TO WS-CURR-SELLING-PRICE                          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      **BP137865 - IF DTE-REGN IS >= 20190510,                                  
+      **           DO NOT OVERWRITE L2 MAX LOAN AND YOUNGEST AGE                
+           IF K800-DTE-REGN >= '20190510'                                       
+              MOVE WS-K640-L2-MAX-LOAN    TO K640-AMT-MAX-LOAN                  
+              MOVE WS-K640-YOUNGEST-AGE   TO K640-NUM-UIN-YNGST-HA-AGE          
+           ELSE                                                                 
+              INITIALIZE                  WS-TEMP-AMT                           
+                                                                                
+              COMPUTE WS-TEMP-AMT = 0.9 * WS-CURR-SELLING-PRICE                 
+                                                                                
+              IF F800-AMT-MAX-LOAN <= WS-TEMP-AMT                               
+                 MOVE F800-AMT-MAX-LOAN OF BP27F800-MASTER                      
+                   TO K640-AMT-MAX-LOAN                                         
+              ELSE                                                              
+                 INITIALIZE             WS-TEMP-AMT2                            
+                 COMPUTE WS-TEMP-AMT2 = WS-TEMP-AMT / 100                       
+                 INITIALIZE             WS-TEMP-AMT                             
+                 COMPUTE WS-TEMP-AMT  = WS-TEMP-AMT2 * 100                      
+                 MOVE WS-TEMP-AMT    TO K640-AMT-MAX-LOAN                       
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-INTEREST    OF BP27F800-MASTER NOT NUMERIC               
+              MOVE ZEROES TO F800-NUM-INTEREST OF BP27F800-MASTER               
+           END-IF.                                                              
+           MOVE F800-NUM-INTEREST  OF BP27F800-MASTER TO                        
+                K640-AMT-INTEREST-RATE.                                         
+                                                                                
+           IF F800-AMT-INSTAL      OF BP27F800-MASTER NOT NUMERIC               
+              MOVE ZEROES TO F800-AMT-INSTAL OF BP27F800-MASTER                 
+           END-IF.                                                              
+           MOVE F800-AMT-INSTAL    OF BP27F800-MASTER   TO                      
+                K640-AMT-ELIG-INSTAL.                                           
+                                                                                
+           IF F800-NUM-REPAY       OF BP27F800-MASTER NOT NUMERIC               
+              MOVE ZEROES TO F800-NUM-REPAY OF BP27F800-MASTER                  
+           END-IF.                                                              
+           MOVE F800-NUM-REPAY     OF BP27F800-MASTER TO                        
+                K640-AMT-REPAY-PERIOD.                                          
+                                                                                
+           MOVE K800-NUM-HOUSEHOLD OF BP13K800-MASTER TO                        
+                K640-NUM-HOUSEHOLD.                                             
+                                                                                
+           MOVE F800-NUM-FLAT-UPGRADE  OF BP27F800-MASTER      TO               
+                K640-NUM-FLAT-UPGRADE.                                          
+                                                                                
+           IF F800-NUM-LOAN-TAG-GRANT NOT = SPACES AND LOW-VALUES               
+              IF F800-NUM-LOAN-TAG-GRANT = 'S'                                  
+                 MOVE 'H'  TO  F800-NUM-LOAN-TAG-GRANT                          
+              END-IF                                                            
+                                                                                
+              IF F800-NUM-LOAN-TAG-GRANT = 'U'                                  
+                 MOVE 'A'  TO  F800-NUM-LOAN-TAG-GRANT                          
+              END-IF                                                            
+                                                                                
+              IF F800-NUM-LOAN-TAG-GRANT = 'A'                                  
+                 MOVE 'H' TO K640-NUM-LOAN-TAG                                  
+              ELSE                                                              
+                 MOVE F800-NUM-LOAN-TAG-GRANT TO                                
+                      K640-NUM-LOAN-TAG                                         
+              END-IF                                                            
+           ELSE                                                                 
+              IF F800-NUM-LOAN-TAG OF BP27F800-MASTER = 'S'                     
+                 MOVE 'H'  TO  F800-NUM-LOAN-TAG OF BP27F800-MASTER             
+              END-IF                                                            
+                                                                                
+              IF F800-NUM-LOAN-TAG OF BP27F800-MASTER = 'U'                     
+                 MOVE 'A'  TO  F800-NUM-LOAN-TAG OF BP27F800-MASTER             
+              END-IF                                                            
+                                                                                
+              IF F800-NUM-LOAN-TAG OF BP27F800-MASTER = 'A'                     
+                 MOVE 'H' TO K640-NUM-LOAN-TAG                                  
+              ELSE                                                              
+                 MOVE F800-NUM-LOAN-TAG OF BP27F800-MASTER TO                   
+                      K640-NUM-LOAN-TAG                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           MOVE WS-CUR-DATE                TO K640-DTE-UPDATE.                  
+           MOVE 'BP13C3A3'                 TO K640-USERID                       
+                                                                                
+      * GET MONTHLY INSTALLMENT                                                 
+           PERFORM 9411-COMPUTE-MTH-INSTAL THRU 9411-EXIT.                      
+                                                                                
+      * FORMAT OTHER DATA                                                       
+           MOVE K800-NUM-SCH-ACC           TO K640-SCH-ACC.                     
+           MOVE WS-CUR-DATE                TO K640-DTE-LOAN-APPROVAL            
+                                              K640-DTE-LOAN-APPLN-RETURN        
+                                              K640-DTE-LETTER-PRINTED           
+                                              K640-DTE-MLA-SENT.                
+           MOVE '00000000'                 TO K640-DTE-REMINDER-SENT.           
+           MOVE '01'                       TO K640-NUM-LETTER-PRINTED.          
+           MOVE 'N'                        TO K640-NUM-OUTRGHT-PURC.            
+                                                                                
+       9410-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------*                                                
+       9411-COMPUTE-MTH-INSTAL.                                                 
+      *------------------------*                                                
+                                                                                
+           MOVE F800-NUM-INTEREST OF BP27F800-MASTER                            
+                                              TO WS-COMM-INT-RATE.              
+           MOVE F800-NUM-REPAY OF BP27F800-MASTER                               
+                                              TO WS-COMM-REPAY-PERIOD.          
+           MOVE K640-AMT-MAX-LOAN             TO WS-COMM-MAX-LOAN.              
+                                                                                
+           IF WS-COMM-MAX-LOAN  = ZEROES OR LOW-VALUES                          
+              DISPLAY F800-NUM-HLA OF BP27F800-MASTER ' ' K800-NUM-REGN         
+                      ':WS-COMM-MAX-LOAN:'                                      
+              MOVE ZEROES TO K640-AMT-ELIG-INSTAL                               
+              GO TO 9411-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           MOVE 12 TO WS-FAC.                                                   
+           COMPUTE WS-INT = WS-COMM-INT-RATE / 100.                             
+           COMPUTE WS-DIV = WS-INT / WS-FAC.                                    
+                                                                                
+           COMPUTE WS-INSTAL = (WS-COMM-MAX-LOAN * WS-DIV)/                     
+                               (1 - (1 / (1 + WS-DIV) **                        
+                               (WS-FAC * WS-COMM-REPAY-PERIOD))).               
+                                                                                
+           COMPUTE WS-INSTAL-DOL = WS-INSTAL + 0.99.                            
+           MOVE WS-INSTAL-DOL         TO WS-COMM-MTH-INSTALL.                   
+                                                                                
+           MOVE WS-COMM-MTH-INSTALL   TO K640-AMT-ELIG-INSTAL.                  
+                                                                                
+       9411-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------*                                                
+       9420-REWRITE-BP13K640.                                                   
+      *------------------------*                                                
+                                                                                
+           REWRITE BP13K640-TRANS-REC                                           
+                                                                                
+           IF BP13K640-STAT = 00                                                
+              CONTINUE                                                          
+           ELSE                                                                 
+              MOVE  BP13K640-STAT TO RETURN-CODE                                
+              DISPLAY 'ERROR WRITING BP13K640 FILE : ' BP13K640-STAT            
+              DISPLAY 'K640-REGN-NO = ' K640-REGN-NO                            
+              PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                       
+           END-IF.                                                              
+                                                                                
+       9420-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------*                                                
+       9430-WRITE-K640.                                                         
+      *------------------------*                                                
+                                                                                
+           WRITE BP13K640-TRANS-REC.                                            
+                                                                                
+           EVALUATE BP13K640-STAT                                               
+               WHEN 00                                                          
+                    CONTINUE                                                    
+               WHEN OTHER                                                       
+                 MOVE  BP13K640-STAT TO RETURN-CODE                             
+                 DISPLAY 'ERR WRITING BP13K640 FILE : ' BP13K640-STAT           
+                 DISPLAY 'K640-REGN-NO  = ' K640-REGN-NO                        
+                 PERFORM 9999-CLOSE-ROUTINE   THRU 9999-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       9430-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------*                                                
+       9500-LINK-BP27C930.                                                      
+      *------------------------*                                                
+           MOVE SPACES               TO WS-C930-LINK.                           
+           INITIALIZE                   WS-C930-LINK.                           
+                                                                                
+           MOVE K341-NUM-HLA         TO WS-C930-NUM-HLA.                        
+           MOVE K341-NUM-REGN        TO WS-C930-NUM-REGN.                       
+                                                                                
+           EVALUATE K800-NUM-ALLO-CAT    OF BP13K800-MASTER                     
+              WHEN 'WIS'                                                        
+              WHEN 'WIA'                                                        
+              WHEN 'WIB'                                                        
+              WHEN 'WIC'                                                        
+              WHEN 'WIH'                                                        
+              WHEN '3R '                                                        
+                MOVE 'WIS'               TO WS-C930-NUM-APPLN-TYPE              
+              WHEN 'BTO'                                                        
+                MOVE 'BTO'               TO WS-C930-NUM-APPLN-TYPE              
+              WHEN 'BE '                                                        
+                MOVE 'BE '               TO WS-C930-NUM-APPLN-TYPE              
+              WHEN 'DBS'                                                        
+                MOVE 'DBS'               TO WS-C930-NUM-APPLN-TYPE              
+              WHEN 'SER'                                                        
+                MOVE 'SER'               TO WS-C930-NUM-APPLN-TYPE              
+              WHEN 'SBF'                                                        
+                MOVE 'SBF'               TO WS-C930-NUM-APPLN-TYPE              
+              WHEN 'ROF'                                                        
+                MOVE 'ROF'               TO WS-C930-NUM-APPLN-TYPE              
+              WHEN 'OBF'                                                        
+                MOVE 'OBF'               TO WS-C930-NUM-APPLN-TYPE              
+              WHEN OTHER                                                        
+                MOVE 'SAL'               TO WS-C930-NUM-APPLN-TYPE              
+           END-EVALUATE.                                                        
+                                                                                
+           IF K800-NUM-ALLO-SCHEME = 'FTS'                                      
+                MOVE 'FTS'               TO WS-C930-NUM-APPLN-TYPE              
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-PORT-ELIG-TAG = 'P' OR 'Y'                               
+              MOVE 'SER'                 TO WS-C930-NUM-APPLN-TYPE              
+           END-IF.                                                              
+                                                                                
+           MOVE K800-NUM-FLAT-TYPE       TO WS-C930-NUM-ROOM-APPLN.             
+                                                                                
+           CALL 'BP27C930'  USING WS-C930-LINK.                                 
+                                                                                
+           IF WS-C930-NUM-ERROR NOT = '0000'                                    
+              DISPLAY 'ERR CODE: ' WS-C930-NUM-ERROR                            
+              DISPLAY 'ERROR IN RESERVING USING BP27C930: ' K341-NUM-HLA        
+           END-IF.                                                              
+                                                                                
+       9500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-----------------------*                                                 
+       9600-CHECK-APR-FT.                                                       
+      *-----------------------*                                                 
+           MOVE 'Y'                       TO  WS-FLAT-OK.                       
+                                                                                
+           IF K800-NUM-ROOM = 'E'                                               
+              MOVE '6' TO  K800-NUM-ROOM                                        
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-PRE-PURCH-FT = 'A'                                       
+              CONTINUE                                                          
+           ELSE                                                                 
+              EVALUATE F800-NUM-PRE-BIGGER-FT                                   
+              WHEN 'N'                                                          
+                   IF K800-NUM-ROOM NOT = F800-NUM-PRE-PURCH-FT                 
+                      MOVE 'N'            TO  WS-FLAT-OK                        
+                   END-IF                                                       
+              WHEN 'S'                                                          
+                   IF K800-NUM-ROOM > F800-NUM-PRE-PURCH-FT                     
+                      MOVE 'N'            TO  WS-FLAT-OK                        
+                   END-IF                                                       
+              WHEN 'B'                                                          
+                   IF K800-NUM-ROOM < F800-NUM-PRE-PURCH-FT                     
+                      MOVE 'N'            TO  WS-FLAT-OK                        
+                   END-IF                                                       
+              WHEN OTHER                                                        
+                   IF F800-NUM-PRE-BIGGER-FT = SPACES OR LOW-VALUES             
+                      MOVE 'N'            TO  WS-FLAT-OK                        
+                   ELSE                                                         
+                      IF K800-NUM-ROOM >= F800-NUM-PRE-PURCH-FT  AND            
+                         K800-NUM-ROOM <= F800-NUM-PRE-BIGGER-FT                
+                         CONTINUE                                               
+                      ELSE                                                      
+                         MOVE 'N'         TO  WS-FLAT-OK                        
+                      END-IF                                                    
+                   END-IF                                                       
+              END-EVALUATE                                                      
+           END-IF.                                                              
+                                                                                
+       9600-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *------------------------*                                                
+       9999-CLOSE-ROUTINE.                                                      
+      *------------------------*                                                
+                                                                                
+           DISPLAY 'RECS READ    FROM BP27F341: ' WS-F341-READ.                 
+           DISPLAY 'RECS UPDATED FROM BP13K800: ' WS-K800-UPDATE.               
+                                                                                
+           CLOSE BP13K800                                                       
+                 BP27F341                                                       
+                 BP27F800                                                       
+                 BP13K820                                                       
+                 BP13K848                                                       
+                 BM06K110                                                       
+                 BP13K640.                                                      
+                                                                                
+           IF BP13K800-STAT NOT = 00 AND 97                                     
+              DISPLAY 'CLOSING BP13K800 ERROR ' BP13K800-STAT                   
+              MOVE     BP13K800-STAT      TO RETURN-CODE                        
+           END-IF.                                                              
+                                                                                
+           IF BP13K820-STAT NOT = 00 AND 97                                     
+              DISPLAY 'CLOSING BP13K820 ERROR ' BP13K820-STAT                   
+              MOVE     BP13K820-STAT      TO RETURN-CODE                        
+           END-IF.                                                              
+                                                                                
+           IF BP13K640-STAT NOT = 00 AND 97                                     
+              DISPLAY 'CLOSING BP13K640 ERROR ' BP13K640-STAT                   
+              MOVE     BP13K640-STAT      TO RETURN-CODE                        
+           END-IF.                                                              
+                                                                                
+           IF BP13K848-STAT NOT = 00 AND 97                                     
+              DISPLAY 'CLOSING BP13K848 ERROR ' BP13K848-STAT                   
+              MOVE     BP13K848-STAT      TO RETURN-CODE                        
+           END-IF.                                                              
+                                                                                
+           IF BM06K110-STAT NOT = 00 AND 97                                     
+              DISPLAY 'CLOSING BM06K110 ERROR ' BM06K110-STAT                   
+              MOVE     BM06K110-STAT      TO RETURN-CODE                        
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9999-EXIT.                                                               
+            EXIT.                                                               
+

@@ -1,0 +1,707 @@
+      ***************************                                               
+       IDENTIFICATION DIVISION.                                                 
+      ***************************                                               
+                                                                                
+       PROGRAM-ID. BP13C433.                                                    
+      *AUTHOR.     ACK.                                                         
+      *REMARKS.                                                                 
+      * ======================================================= *               
+      *              SYSTEM OF COMMITMENT  (BP13)               *               
+      * ======================================================= *               
+      *    OBJECTIVE    :                                       *               
+      *           TO UPDATE THE EXPIRED DATE OF TP FOR          *               
+      *           EXISTING CASES (TP EXPIRED DATE = 0000000)    *               
+      *                                                         *               
+      *     INPUT FILES :                                       *               
+      *           1.  BP13F310  (SOC TRANSACTION FILE)          *               
+      *           2.  BM06K110  (FLAT INVENTORY FILE)           *               
+      *           3.  BB14K500  (LIST BLOCK SUMMARY FILE)       *               
+      *                                                         *               
+      *     I-O FILE    :                                       *               
+      *           1.  BP13K800  (APPLICATION FILE)              *               
+      *                                                         *               
+      *     LISTINGS    :                                       *               
+      *           1.  BP13OUT                                   *               
+      *           2.  BP13L433                                  *               
+      *                                                         *               
+      * ======================================================= *               
+      * CHG-REQ  DATE   BY   DESCRIPTION                        *               
+      * -------  ------ ---  -----------                        *               
+      * SOC-PH8  930728 JEP  RENAME P10K020 TO BP13K800         *               
+      * C9404E6  941006 LMS  TO READ BB14K500 USING CDE-BLK     *               
+      * BP130020 951012 SSS  REPOSITION RPT-ID TO COL 1         *               
+      * BP130418 980313 SIA  CHGE BM06 K211 & K210 TO K110&K100 *               
+      * ======================================================= *               
+                                                                                
+      ************************                                                  
+       ENVIRONMENT DIVISION.                                                    
+      ************************                                                  
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F310   ASSIGN         TO  BP13F310.                       
+                                                                                
+           SELECT BM06K110   ASSIGN         TO  BM06K110                        
+                             ACCESS MODE    IS  RANDOM                          
+                             ORGANIZATION   IS  INDEXED                         
+                             RECORD KEY     IS  K110-KEY-FLD                    
+                             FILE STATUS    IS  WS-K110-FILE-STATUS.            
+                                                                                
+           SELECT BM06K100   ASSIGN         TO  BM06K100                        
+                             ACCESS MODE    IS  RANDOM                          
+                             ORGANIZATION   IS  INDEXED                         
+                             RECORD KEY     IS  K100-KEY-FLD                    
+                             FILE STATUS    IS  WS-K100-FILE-STATUS.            
+                                                                                
+           SELECT BB14K500   ASSIGN         TO  BB14K500                        
+                             ACCESS MODE    IS  RANDOM                          
+                             ORGANIZATION   IS  INDEXED                         
+                             RECORD KEY     IS  K500-KEY-FLD                    
+                             FILE STATUS    IS  WS-K500-FILE-STATUS.            
+                                                                                
+           SELECT BP13K800   ASSIGN         TO  BP13K800                        
+                             ACCESS MODE    IS  RANDOM                          
+                             ORGANIZATION   IS  INDEXED                         
+                             RECORD KEY     IS  K800-NUM-REGN                   
+                             FILE STATUS    IS  WS-K800-FILE-STATUS.            
+                                                                                
+           SELECT BP13OUT    ASSIGN         TO  BP13OUT.                        
+                                                                                
+           SELECT BP13L433   ASSIGN         TO  BP13L433.                       
+                                                                                
+                                                                                
+                                                                                
+      *****************                                                         
+       DATA DIVISION.                                                           
+      *****************                                                         
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F310                                                            
+            RECORD CONTAINS 150 CHARACTERS                                      
+            RECORDING MODE  IS  F.                                              
+       COPY BP13F310.                                                           
+                                                                                
+       FD   BM06K100                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BM06K100.                                                           
+                                                                                
+       FD   BM06K110                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BM06K110.                                                           
+                                                                                
+       FD   BB14K500                                                            
+            RECORD CONTAINS 400 CHARACTERS.                                     
+       COPY BB14K500.                                                           
+                                                                                
+       FD   BP13K800                                                            
+            RECORD CONTAINS 2000 CHARACTERS.                                    
+       COPY BP13K800.                                                           
+                                                                                
+       FD   BP13OUT                                                             
+            RECORD CONTAINS 150 CHARACTERS                                      
+            RECORDING MODE  IS  F.                                              
+       01   BP13OUT-REC                 PIC X(150).                             
+                                                                                
+       FD   BP13L433                                                            
+            RECORDING MODE  IS  F                                               
+            LABEL RECORDS   ARE OMITTED.                                        
+       01   L433-REC                    PIC X(133).                             
+                                                                                
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-INDICATORS.                                                       
+           05  WS-K100-FILE-STATUS      PIC 99      VALUE ZERO.                 
+           05  WS-K110-FILE-STATUS      PIC 99      VALUE ZERO.                 
+           05  WS-K500-FILE-STATUS      PIC 99      VALUE ZERO.                 
+           05  WS-K800-FILE-STATUS      PIC 99      VALUE ZERO.                 
+           05  WS-EOF-F310              PIC X(3)    VALUE 'NO'.                 
+               88  EOF-OF-F310                      VALUE 'YES'.                
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F310                  PIC 9(5)    VALUE ZERO.                 
+           05  WS-NOT-FOUND             PIC 9(5)    VALUE ZERO.                 
+           05  WS-REWRITE               PIC 9(5)    VALUE ZERO.                 
+           05  WS-OUTPUT                PIC 9(8)    VALUE ZERO.                 
+           05  WS-ERROR                 PIC 9(5)    VALUE ZERO.                 
+           05  WS-PAGE                  PIC 9(4)    VALUE ZERO.                 
+           05  WS-LINE                  PIC 9(2)    VALUE 66.                   
+                                                                                
+       01  WS-CURRENT-DATE.                                                     
+           05  WS-CURR-CCYY             PIC 9(4).                               
+           05  WS-CURR-MM               PIC 9(2).                               
+           05  WS-CURR-DD               PIC 9(2).                               
+                                                                                
+       01  WS-CHK-DATE.                                                         
+           05  WS-CHK-CCYY              PIC 9(4).                               
+           05  WS-CHK-MM                PIC 9(2).                               
+           05  WS-CHK-DD                PIC 9(2).                               
+                                                                                
+       01  WS-COMPLETE-DATE             PIC X(8).                               
+                                                                                
+       01  WS-DTE-EXPIRED.                                                      
+           05  WS-DTE-EXPIRED-CCYY  PIC 9(4).                                   
+           05  WS-DTE-EXPIRED-MM    PIC 9(2).                                   
+           05  WS-DTE-EXPIRED-DD    PIC 9(2).                                   
+                                                                                
+       01  WS-ACCEPT-DATE.                                                      
+           05  WS-ACCEPT-CCYY           PIC X(4).                               
+           05  WS-ACCEPT-MM             PIC X(2).                               
+           05  WS-ACCEPT-DD             PIC X(2).                               
+                                                                                
+       01  WS-YEAR                      PIC 999.                                
+       01  WS-LEAP-YEAR                 PIC 99.                                 
+       01  WS-MONTH                     PIC X(2).                               
+           88  CHECK-MM                     VALUE '04' '06' '09' '11'.          
+           88  CHECK-FEB                    VALUE '02'.                         
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+      *        ERROR PRINT HEADINGS                                    *        
+      *----------------------------------------------------------------*        
+       01  WS-ERR-HDG1.                                                         
+           05  FILLER                   PIC X(8)    VALUE 'BP13L433'.           
+           05  FILLER                   PIC X(33)   VALUE SPACES.               
+           05  FILLER                   PIC X(60)   VALUE                       
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER                   PIC X(14)   VALUE SPACES.               
+           05  FILLER                   PIC X(7)    VALUE 'DATE : '.            
+           05  WS-ERR-DATE.                                                     
+               10  WS-ERR-DATE-DD       PIC X(2)    VALUE SPACES.               
+               10  FILLER               PIC X       VALUE '/'.                  
+               10  WS-ERR-DATE-MM       PIC X(2)    VALUE SPACES.               
+               10  FILLER               PIC X       VALUE '/'.                  
+               10  WS-ERR-DATE-CCYY     PIC X(4)    VALUE SPACES.               
+                                                                                
+       01  WS-ERR-HDG2.                                                         
+           05  FILLER                   PIC X(21)   VALUE                       
+               'PROGRAM ID : BP13C433'.                                         
+           05  FILLER                   PIC X(20)   VALUE SPACES.               
+           05  FILLER                   PIC X(60)   VALUE                       
+               'LIST OF CASES WHICH ALREADY UPDATED BEFORE'.                    
+           05  FILLER                   PIC X(14)   VALUE SPACES.               
+           05  FILLER                   PIC X(8)    VALUE 'PAGE :  '.           
+           05  WS-ERR-PAGE              PIC ZZZ9.                               
+                                                                                
+       01  WS-ERR-HDG3.                                                         
+           05  FILLER                   PIC X(10)   VALUE 'TRANS CDE'.          
+           05  FILLER                   PIC X(5)    VALUE SPACES.               
+           05  FILLER                   PIC X(10)   VALUE 'SALES TYP'.          
+           05  FILLER                   PIC X(5)    VALUE SPACES.               
+           05  FILLER                   PIC X(7)    VALUE 'REGN-NO'.            
+           05  FILLER                   PIC X(5)    VALUE SPACES.               
+           05  FILLER                   PIC X(11)   VALUE 'ACCEPT DATE'.        
+           05  FILLER                   PIC X(5)    VALUE SPACES.               
+           05  FILLER                   PIC X(15)   VALUE                       
+               'COMPLETION DATE'.                                               
+           05  FILLER                   PIC X(11)   VALUE SPACES.               
+           05  FILLER                   PIC X(15)   VALUE                       
+               'EXPIRY DATE '.                                                  
+           05  FILLER                   PIC X(8)    VALUE SPACES.               
+           05  FILLER                   PIC X(18)   VALUE                       
+               'KEY AVAILABLE DATE'.                                            
+                                                                                
+      *----------------------------------------------------------------*        
+      *        ERROR PRINT DETAIL LINE                                 *        
+      *----------------------------------------------------------------*        
+       01  WS-ERR-DTL.                                                          
+           05  FILLER                   PIC X(2)    VALUE SPACES.               
+           05  WS-ERR-CDE-TRANS         PIC X(2)    VALUE SPACES.               
+           05  FILLER                   PIC X(14)   VALUE SPACES.               
+           05  WS-ERR-SALES-TYPE        PIC X(2)    VALUE SPACES.               
+           05  FILLER                   PIC X(10)   VALUE SPACES.               
+           05  WS-ERR-REGNO             PIC X(8)    VALUE SPACES.               
+           05  FILLER                   PIC X(6)    VALUE SPACES.               
+           05  WS-ERR-ACCEPT-DATE.                                              
+               10  WS-ERR-ACCEPT-DD     PIC X(2)    VALUE SPACES.               
+               10  FILLER               PIC X       VALUE '/'.                  
+               10  WS-ERR-ACCEPT-MM     PIC X(2)    VALUE SPACES.               
+               10  FILLER               PIC X       VALUE '/'.                  
+               10  WS-ERR-ACCEPT-CCYY   PIC X(4)    VALUE SPACES.               
+           05  FILLER                   PIC X(08)   VALUE SPACES.               
+           05  WS-ERR-COMPLETE-DATE.                                            
+               10  WS-ERR-COMPLETE-DD   PIC X(2)    VALUE SPACES.               
+               10  FILLER               PIC X       VALUE '/'.                  
+               10  WS-ERR-COMPLETE-MM   PIC X(2)    VALUE SPACES.               
+               10  FILLER               PIC X       VALUE '/'.                  
+               10  WS-ERR-COMPLETE-CCYY PIC X(4)    VALUE SPACES.               
+           05  FILLER                   PIC X(13)   VALUE SPACES.               
+           05  WS-ERR-EXPIRY-DATE.                                              
+               10  WS-ERR-EXPIRY-DD     PIC X(2)    VALUE SPACES.               
+               10  FILLER               PIC X       VALUE '/'.                  
+               10  WS-ERR-EXPIRY-MM     PIC X(2)    VALUE SPACES.               
+               10  FILLER               PIC X       VALUE '/'.                  
+               10  WS-ERR-EXPIRY-CCYY   PIC X(4)    VALUE SPACES.               
+           05  FILLER                   PIC X(15)   VALUE SPACES.               
+           05  WS-ERR-KEY-AVAIL-DATE.                                           
+               10  WS-ERR-KEY-AVAIL-DD  PIC X(2)    VALUE SPACES.               
+               10  FILLER               PIC X       VALUE '/'.                  
+               10  WS-ERR-KEY-AVAIL-MM  PIC X(2)    VALUE SPACES.               
+               10  FILLER               PIC X       VALUE '/'.                  
+               10  WS-ERR-KEY-AVAIL-CCYY PIC X(4)    VALUE SPACES.              
+                                                                                
+                                                                                
+      **********************                                                    
+       PROCEDURE DIVISION.                                                      
+      ******************************************************************        
+      *    MAIN LOGIC PROCESS SECTION                                  *        
+      ******************************************************************        
+       000-MAIN-ROUTINE.                                                        
+                                                                                
+           PERFORM  100-OPEN-ROUTINE    THRU  100-EXIT.                         
+           PERFORM  200-READ-BP13F310   THRU  200-EXIT.                         
+           PERFORM  300-PROCESS-UPDATE  THRU  300-EXIT                          
+                        UNTIL EOF-OF-F310.                                      
+           PERFORM  900-CLOSE-ROUTINE   THRU  900-EXIT.                         
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    OPENING FILES SECTION                                       *        
+      ******************************************************************        
+       100-OPEN-ROUTINE.                                                        
+           OPEN INPUT  BP13F310                                                 
+                       BM06K100                                                 
+                       BM06K110                                                 
+                       BB14K500                                                 
+                I-O    BP13K800                                                 
+                OUTPUT BP13OUT                                                  
+                       BP13L433.                                                
+                                                                                
+           IF  WS-K100-FILE-STATUS NOT = 00 AND 97                              
+               DISPLAY 'ERROR OPENING BM06K100 FILE '                           
+                        WS-K100-FILE-STATUS                                     
+               MOVE WS-K100-FILE-STATUS  TO RETURN-CODE                         
+               PERFORM 900-CLOSE-ROUTINE.                                       
+                                                                                
+           IF  WS-K110-FILE-STATUS NOT = 00 AND 97                              
+               DISPLAY 'ERROR OPENING BM06K110 FILE '                           
+                        WS-K110-FILE-STATUS                                     
+               MOVE WS-K110-FILE-STATUS  TO RETURN-CODE                         
+               PERFORM 900-CLOSE-ROUTINE.                                       
+                                                                                
+           IF  WS-K500-FILE-STATUS NOT = 00 AND 97                              
+               DISPLAY 'ERROR OPENING BB14K500  FILE '                          
+                        WS-K500-FILE-STATUS                                     
+               MOVE WS-K500-FILE-STATUS  TO RETURN-CODE                         
+               PERFORM 900-CLOSE-ROUTINE.                                       
+                                                                                
+           IF  WS-K800-FILE-STATUS NOT = 00 AND 97                              
+               DISPLAY 'ERROR OPENING BP13K800 FILE '                           
+                        WS-K800-FILE-STATUS                                     
+               MOVE WS-K800-FILE-STATUS  TO RETURN-CODE                         
+               PERFORM 900-CLOSE-ROUTINE.                                       
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    READ SEQUENTIAL FILE BP13F310 AT END SET EOF-IND TO 'YES'   *        
+      ******************************************************************        
+       200-READ-BP13F310.                                                       
+           READ BP13F310 AT END                                                 
+                         MOVE 'YES' TO WS-EOF-F310                              
+                         MOVE HIGH-VALUE TO F310-KEY-FLD                        
+                         GO TO 200-EXIT.                                        
+                                                                                
+           ADD 1 TO WS-F310.                                                    
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    READ SEQUENTIAL FILE BP13F310 AT END SET EOF-IND TO 'YES'   *        
+      ******************************************************************        
+       300-PROCESS-UPDATE.                                                      
+                                                                                
+           PERFORM 320-READ-BM06K110 THRU 320-EXIT.                             
+           IF  WS-K110-FILE-STATUS = 00                                         
+               IF K110-FLAT-STATUS = 'SD'                                       
+                  WRITE  BP13OUT-REC FROM BP13F310-TRANS-REC                    
+                  ADD    1             TO WS-OUTPUT                             
+               ELSE                                                             
+                  PERFORM 310-UPD-TP-EXPIRE-DTE THRU 310-EXIT                   
+               END-IF                                                           
+           ELSE                                                                 
+              DISPLAY 'NOT FOUND IN BM06K110   ' K110-KEY-FLD                   
+              ADD   1  TO  WS-NOT-FOUND.                                        
+                                                                                
+           PERFORM  200-READ-BP13F310   THRU  200-EXIT.                         
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    UPDATE TP EXPIRY DATE IN BP13K800                           *        
+      ******************************************************************        
+       310-UPD-TP-EXPIRE-DTE.                                                   
+           PERFORM 330-READ-BM06K100 THRU 330-EXIT                              
+           IF WS-K100-FILE-STATUS = 00                                          
+              PERFORM 340-READ-BB14K500 THRU 340-EXIT                           
+              IF WS-K500-FILE-STATUS = 00                                       
+                 MOVE K500-DTE-BLDG-COMPLETE TO WS-COMPLETE-DATE                
+                 PERFORM 360-READ-BP13K800 THRU 360-EXIT                        
+                 IF WS-K800-FILE-STATUS = 00                                    
+                    PERFORM 400-PROCEED-CHECKING  THRU 400-EXIT                 
+                 ELSE                                                           
+                    DISPLAY 'NOT FOUND IN BP13K800   ' F310-REGN-NO             
+                    ADD   1  TO  WS-NOT-FOUND                                   
+              ELSE                                                              
+                 DISPLAY 'NOT FOUND IN BB14K500   ' K100-CDE-BLK                
+                 ADD   1  TO  WS-NOT-FOUND                                      
+           ELSE                                                                 
+              DISPLAY 'NOT FOUND IN BM06K100   ' K110-AIX1                      
+              ADD   1  TO  WS-NOT-FOUND.                                        
+                                                                                
+       310-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    READ VSAM FILE BM06K110 USING F310-SCH-ACC AS A KEY         *        
+      ******************************************************************        
+       320-READ-BM06K110.                                                       
+           MOVE F310-SCH-ACC TO K110-KEY-FLD.                                   
+                                                                                
+           READ BM06K110.                                                       
+                                                                                
+           IF WS-K110-FILE-STATUS = 00  OR 23                                   
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              DISPLAY 'ERROR READING BM06K110, STATUS  =  '                     
+                             WS-K110-FILE-STATUS                                
+                      ',     K110-KEY-FLD   =  ' K110-KEY-FLD                   
+              MOVE WS-K110-FILE-STATUS  TO  RETURN-CODE                         
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+       320-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    READ VSAM FILE BM06K100 USING K110-AIX1 AS A KEY            *        
+      ******************************************************************        
+       330-READ-BM06K100.                                                       
+           MOVE K110-AIX1 TO K100-KEY-FLD.                                      
+                                                                                
+           READ BM06K100.                                                       
+                                                                                
+           IF WS-K100-FILE-STATUS = 00 OR 23                                    
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              DISPLAY 'ERROR READING BM06K100, STATUS  =  '                     
+                             WS-K100-FILE-STATUS                                
+                      ',     K100-KEY-FLD   =  ' K100-KEY-FLD                   
+              MOVE WS-K100-FILE-STATUS  TO  RETURN-CODE                         
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+       330-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    READ VSAM FILE BB14K500 BY ITS ALTERNATE INDEX1 KEY         *        
+      ******************************************************************        
+       340-READ-BB14K500.                                                       
+           MOVE K100-CDE-BLK TO K500-CDE-BLK.                                   
+                                                                                
+           READ BB14K500.                                                       
+                                                                                
+           IF WS-K500-FILE-STATUS = 00 OR 23                                    
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              DISPLAY 'ERROR READING BB14K500, STATUS  =  '                     
+                             WS-K500-FILE-STATUS                                
+                      ',     K500-ALTX-KEY  =  ' K500-ALTX-KEY                  
+              MOVE WS-K500-FILE-STATUS  TO  RETURN-CODE                         
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+       340-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    READ VSAM FILE BP13K800 USING F310-REGN-NO AS A KEY         *        
+      ******************************************************************        
+       360-READ-BP13K800.                                                       
+           MOVE F310-REGN-NO  TO  K800-NUM-REGN.                                
+                                                                                
+           READ BP13K800.                                                       
+                                                                                
+           IF WS-K800-FILE-STATUS = 00  OR 23                                   
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              DISPLAY 'ERROR READING BP13K800, STATUS  =  '                     
+                             WS-K800-FILE-STATUS                                
+                      ',     K800-NUM-REGN  =  ' K800-NUM-REGN                  
+              MOVE WS-K800-FILE-STATUS  TO  RETURN-CODE                         
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+       360-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    EXPIRED DATE FOR TP COMPUTED BASED ON 4 MONTHS FROM         *        
+      *            DATE OF  ACCEPTANCE                                 *        
+      *            - IF THE NOTICE TO TP IS ONE MONTH > EXPIRED DATE   *        
+      *                 NO  CHANGE                                     *        
+      *              ELSE                                              *        
+      *                 ADD 1 MONTH TO THE NOTICE TO TP DATE           *        
+      *                 RE  UPDATE THE DATE IN BP13K800 TO REFLECT     *        
+      *                     THE CORRECT DATE                           *        
+      ******************************************************************        
+       400-PROCEED-CHECKING.                                                    
+           PERFORM 500-COMPUTE-FOUR-MONTH-DATE THRU 500-EXIT.                   
+                                                                                
+           IF  K800-DTE-EXPIRED-TP = '00000000' OR  LOW-VALUE OR SPACES         
+               PERFORM 600-CHECK-EXPIRED-DATE       THRU  600-EXIT              
+               PERFORM 700-COMPUTE-ONE-MONTH-DATE   THRU  700-EXIT              
+           ELSE                                                                 
+      *       MOVE K800-DTE-EXPIRED-TP TO  WS-K800-DATE                         
+              IF   WS-DTE-EXPIRED      =   K800-DTE-EXPIRED-TP OR               
+                   K800-DTE-EXPIRED-TP =   WS-COMPLETE-DATE                     
+                   PERFORM 700-COMPUTE-ONE-MONTH-DATE THRU 700-EXIT             
+              ELSE                                                              
+                   PERFORM 800-PRINT-ERROR-REPORT     THRU 800-EXIT             
+                   GO TO 400-EXIT.                                              
+                                                                                
+           IF K800-DTE-EXPIRED-TP = ZEROES                                      
+              PERFORM 800-PRINT-ERROR-REPORT THRU 800-EXIT                      
+              GO TO 400-EXIT.                                                   
+                                                                                
+           MOVE   K800-DTE-EXPIRED-TP  TO    F310-DTE-TRANS.                    
+           WRITE  BP13OUT-REC          FROM  BP13F310-TRANS-REC.                
+           ADD    1                    TO    WS-OUTPUT.                         
+           MOVE   SPACES               TO    WS-CHK-DATE WS-DTE-EXPIRED.        
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    COMPUTE FOUR MONTH DATE SECTION                             *        
+      ******************************************************************        
+       500-COMPUTE-FOUR-MONTH-DATE.                                             
+           MOVE K110-DTE-ACCEPTANCE TO   WS-ACCEPT-DATE.                        
+           MOVE WS-ACCEPT-CCYY       TO  WS-CHK-CCYY.                           
+           MOVE WS-ACCEPT-MM         TO  WS-CHK-MM.                             
+           MOVE WS-ACCEPT-DD         TO  WS-CHK-DD.                             
+           ADD  4                    TO  WS-CHK-MM.                             
+                                                                                
+           IF WS-CHK-MM > 12                                                    
+              ADD 1                  TO  WS-CHK-CCYY                            
+              SUBTRACT 12 FROM WS-CHK-MM                                        
+              PERFORM 520-CHECK-DAY THRU 520-EXIT                               
+           ELSE                                                                 
+              PERFORM 520-CHECK-DAY THRU 520-EXIT.                              
+                                                                                
+           MOVE WS-CHK-DD           TO   WS-DTE-EXPIRED-DD.                     
+           MOVE WS-CHK-MM           TO   WS-DTE-EXPIRED-MM.                     
+           MOVE WS-CHK-CCYY         TO   WS-DTE-EXPIRED-CCYY.                   
+                                                                                
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    CHECK IF IT IS A LEAP YEAR                                  *        
+      ******************************************************************        
+       520-CHECK-DAY.                                                           
+           MOVE   WS-CHK-MM TO WS-MONTH.                                        
+           DIVIDE WS-CHK-CCYY BY 4 GIVING WS-YEAR REMAINDER                     
+                  WS-LEAP-YEAR.                                                 
+                                                                                
+           IF WS-CHK-MM = 2                                                     
+              IF WS-LEAP-YEAR = 0                                               
+                 IF WS-CHK-DD = 30 OR 31                                        
+                    MOVE 29 TO WS-CHK-DD                                        
+                 ELSE                                                           
+                    NEXT SENTENCE                                               
+              ELSE                                                              
+                 IF WS-CHK-DD = 29 OR 30 OR 31                                  
+                    MOVE 28 TO WS-CHK-DD                                        
+                 ELSE                                                           
+                    NEXT SENTENCE                                               
+           ELSE                                                                 
+              IF CHECK-MM                                                       
+                 IF WS-CHK-DD = 31                                              
+                    MOVE 30 TO WS-CHK-DD                                        
+                 ELSE                                                           
+                    NEXT SENTENCE                                               
+              ELSE                                                              
+                 IF WS-CHK-DD = 30                                              
+                    MOVE 31 TO WS-CHK-DD                                        
+                 ELSE                                                           
+                    NEXT SENTENCE.                                              
+                                                                                
+       520-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    CHECK EXPIRED DATE SECTION                                  *        
+      ******************************************************************        
+       600-CHECK-EXPIRED-DATE.                                                  
+                                                                                
+           IF K110-DTE-ACCEPTANCE   <  K110-DTE-KEY-AVAIL                       
+              IF WS-CHK-DATE > WS-COMPLETE-DATE                                 
+                 IF WS-COMPLETE-DATE = ZEROES OR SPACES OR LOW-VALUES           
+                    MOVE '00000000'             TO K800-DTE-EXPIRED-TP          
+                 ELSE                                                           
+                    MOVE WS-DTE-EXPIRED         TO K800-DTE-EXPIRED-TP          
+              ELSE                                                              
+                 MOVE K500-DTE-BLDG-COMPLETE    TO K800-DTE-EXPIRED-TP          
+           ELSE                                                                 
+              IF K110-DTE-KEY-AVAIL = ZEROES OR SPACES OR LOW-VALUES            
+                 IF WS-COMPLETE-DATE = ZEROES OR SPACES OR LOW-VALUES           
+                    MOVE '00000000'             TO K800-DTE-EXPIRED-TP          
+                 ELSE                                                           
+                    MOVE K500-DTE-BLDG-COMPLETE TO K800-DTE-EXPIRED-TP          
+              ELSE                                                              
+                 MOVE WS-DTE-EXPIRED            TO K800-DTE-EXPIRED-TP.         
+                                                                                
+           IF K800-DTE-EXPIRED-TP = '00000000'                                  
+              IF K110-FLAT-STATUS = 'RP'                                        
+                 MOVE WS-DTE-EXPIRED TO K800-DTE-EXPIRED-TP.                    
+                                                                                
+           REWRITE BP13K800-MASTER.                                             
+                                                                                
+           IF  WS-K800-FILE-STATUS = 00                                         
+               ADD   1 TO   WS-REWRITE                                          
+           ELSE                                                                 
+               DISPLAY 'REWRITE ERROR IN BP13K800  ' K800-NUM-REGN              
+               DISPLAY SPACES.                                                  
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    COMPUTE ONE MONTH DATE SECTION                              *        
+      ******************************************************************        
+       700-COMPUTE-ONE-MONTH-DATE.                                              
+           MOVE FUNCTION CURRENT-DATE TO WS-CURRENT-DATE.                       
+                                                                                
+           ADD  1              TO   WS-CURR-MM.                                 
+                                                                                
+           IF  WS-CURR-MM > 12                                                  
+               ADD      1             TO   WS-CURR-CCYY                         
+               SUBTRACT 12            FROM WS-CURR-MM                           
+               MOVE     WS-CURRENT-DATE(1:4) TO   WS-CHK-CCYY                   
+               MOVE     WS-CURR-MM    TO   WS-CHK-MM                            
+               MOVE     WS-CURR-DD    TO   WS-CHK-DD                            
+               PERFORM  520-CHECK-DAY THRU 520-EXIT                             
+           ELSE                                                                 
+               MOVE     WS-CURRENT-DATE(1:4) TO   WS-CHK-CCYY                   
+               MOVE     WS-CURR-MM    TO   WS-CHK-MM                            
+               MOVE     WS-CURR-DD    TO   WS-CHK-DD                            
+               PERFORM  520-CHECK-DAY THRU 520-EXIT.                            
+                                                                                
+           MOVE WS-CHK-DD             TO   WS-CURR-DD.                          
+                                                                                
+           IF K800-DTE-EXPIRED-TP  =  K500-DTE-BLDG-COMPLETE                    
+              MOVE '*'             TO F310-CDE-ECD.                             
+                                                                                
+           IF WS-CURRENT-DATE       <  K800-DTE-EXPIRED-TP    OR                
+              K800-DTE-EXPIRED-TP   =  K500-DTE-BLDG-COMPLETE                   
+              MOVE K800-DTE-EXPIRED-TP TO   F310-DTE-TRANS                      
+           ELSE                                                                 
+              MOVE WS-CURRENT-DATE     TO   K800-DTE-EXPIRED-TP                 
+              MOVE WS-CURRENT-DATE     TO   F310-DTE-TRANS                      
+              REWRITE BP13K800-MASTER                                           
+              IF WS-K800-FILE-STATUS = 00                                       
+                 ADD   1 TO   WS-REWRITE                                        
+              ELSE                                                              
+                 DISPLAY 'REWRITE ERROR IN BP13K800  ' K800-NUM-REGN            
+                 DISPLAY SPACES.                                                
+                                                                                
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    PRINT ERROR DETAIL LINE                                     *        
+      ******************************************************************        
+       800-PRINT-ERROR-REPORT.                                                  
+           IF    WS-LINE  >  55                                                 
+                 MOVE   0             TO    WS-LINE                             
+                 ADD    1             TO    WS-PAGE                             
+                 MOVE   WS-PAGE       TO    WS-ERR-PAGE                         
+                 MOVE   WS-CURR-DD    TO    WS-ERR-DATE-DD                      
+                 MOVE   WS-CURR-MM    TO    WS-ERR-DATE-MM                      
+                 MOVE   WS-CURR-CCYY  TO    WS-ERR-DATE-CCYY                    
+                 WRITE  L433-REC      FROM  WS-ERR-HDG1 AFTER PAGE              
+                 WRITE  L433-REC      FROM  WS-ERR-HDG2 AFTER 1                 
+                 WRITE  L433-REC      FROM  WS-ERR-HDG3 AFTER 3                 
+                 MOVE   SPACES        TO    L433-REC                            
+                 WRITE  L433-REC      AFTER 1.                                  
+                                                                                
+           MOVE  F310-REGN-NO         TO    WS-ERR-REGNO.                       
+           MOVE  K110-DTE-ACCEPTANCE TO     WS-ACCEPT-DATE.                     
+           MOVE  WS-ACCEPT-CCYY       TO    WS-ERR-ACCEPT-CCYY.                 
+           MOVE  WS-ACCEPT-MM         TO    WS-ERR-ACCEPT-MM.                   
+           MOVE  WS-ACCEPT-DD         TO    WS-ERR-ACCEPT-DD.                   
+           MOVE  WS-COMPLETE-DATE     TO    WS-ACCEPT-DATE.                     
+           MOVE  WS-ACCEPT-CCYY       TO    WS-ERR-COMPLETE-CCYY.               
+           MOVE  WS-ACCEPT-MM         TO    WS-ERR-COMPLETE-MM.                 
+           MOVE  WS-ACCEPT-DD         TO    WS-ERR-COMPLETE-DD.                 
+           MOVE  K800-DTE-EXPIRED-TP  TO    WS-DTE-EXPIRED.                     
+           MOVE  WS-DTE-EXPIRED-CCYY  TO    WS-ERR-EXPIRY-CCYY.                 
+           MOVE  WS-DTE-EXPIRED-MM    TO    WS-ERR-EXPIRY-MM.                   
+           MOVE  WS-DTE-EXPIRED-DD    TO    WS-ERR-EXPIRY-DD.                   
+           MOVE  F310-CDE-TRANS       TO    WS-ERR-CDE-TRANS.                   
+           MOVE  F310-CDE-SALES-TYPE  TO    WS-ERR-SALES-TYPE.                  
+           MOVE  K110-DTE-KEY-AVAIL   TO    WS-ACCEPT-DATE.                     
+           MOVE  WS-ACCEPT-CCYY       TO    WS-ERR-KEY-AVAIL-CCYY.              
+           MOVE  WS-ACCEPT-MM         TO    WS-ERR-KEY-AVAIL-MM.                
+           MOVE  WS-ACCEPT-DD         TO    WS-ERR-KEY-AVAIL-DD.                
+                                                                                
+           WRITE L433-REC             FROM  WS-ERR-DTL AFTER 1.                 
+           ADD   1                    TO    WS-LINE.                            
+           ADD   1                    TO    WS-ERROR.                           
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    -  DISPLAY NECESSARY STATISTICS                             *        
+      *    -  CLOSE ALL FILES   AND    STOP RUN                        *        
+      ******************************************************************        
+       900-CLOSE-ROUTINE.                                                       
+                                                                                
+           DISPLAY SPACES.                                                      
+           DISPLAY '****  BP13C433 CONTROL TOTALS  ****'.                       
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO OF BP13F310 READ    ' WS-F310.                           
+           DISPLAY 'NO OF RECORD UPDATED   ' WS-REWRITE.                        
+           DISPLAY 'NO OF RECORD IN ERROR  ' WS-ERROR.                          
+           DISPLAY 'NO OF RECORD NOT FND   ' WS-NOT-FOUND.                      
+           DISPLAY 'NO OF RECORD OUTPUT    ' WS-OUTPUT.                         
+                                                                                
+           CLOSE      BP13F310                                                  
+                      BM06K110                                                  
+                      BB14K500                                                  
+                      BP13K800                                                  
+                      BP13OUT                                                   
+                      BP13L433.                                                 
+                                                                                
+           IF  WS-K110-FILE-STATUS NOT = 00                                     
+               DISPLAY 'ERROR CLOSING BM06K110 FILE '                           
+                        WS-K110-FILE-STATUS                                     
+               MOVE WS-K110-FILE-STATUS  TO RETURN-CODE.                        
+                                                                                
+           IF  WS-K500-FILE-STATUS NOT = 00                                     
+               DISPLAY 'ERROR CLOSING BB14K500  FILE '                          
+                        WS-K500-FILE-STATUS                                     
+               MOVE WS-K500-FILE-STATUS  TO RETURN-CODE.                        
+                                                                                
+           IF  WS-K800-FILE-STATUS NOT = 00                                     
+               DISPLAY 'ERROR CLOSING BP13K800 FILE '                           
+                        WS-K800-FILE-STATUS                                     
+               MOVE WS-K800-FILE-STATUS  TO RETURN-CODE.                        
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+

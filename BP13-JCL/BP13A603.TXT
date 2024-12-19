@@ -1,0 +1,323 @@
+//BP13A603 JOB (BP13P),'BP13A603',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//         NOTIFY=CSD0071                                                       
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//******************************************************************            
+//* FOR REPORT ONLY USE HA1 NRIC ONLY, RE-RUN BP13ATMP                          
+//* COMPUTE UNSUCC ATTEMPT, PRINT SUMMARY REPORT                                
+//******************************************************************            
+//* CHG REF  BY  ON       DESCRIPTION                                           
+//* -------- --- ------   -----------                                           
+//* BP133111 LSB 091107 - NEW JCL                                               
+//**************************************************************                
+//*  TO SEND DJDE AHEAD OF THE PRINT DATASET                                    
+//*  PRT01                    APPLICATION TEAM                                  
+//**************************************************************                
+//PRT01    EXEC PGM=IEBGENER                                                    
+//SYSUT1   DD *                                                                 
+$DJDE$ JDE=BP13D,JDL=BP13,END;                                                  
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EAALAP1A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID)                                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*                                                                             
+//*-------------------------------------------------------------------*         
+//*- JOB COPY FROM BP13ATMP USING NRIC1 ONLY                                    
+//*-------------------------------------------------------------------*         
+//*  OMIT CONDITION FOR COMPUTATION OF UNSUCC ATTEMPTS                          
+//*  CONVERT DTE-BALLOT 200303, 200305 TO 200212                                
+//*  334,6,CH,EQ,C'200303',OR,                                                  
+//*  334,6,CH,EQ,C'200305',OR,                                                  
+//*---------------------------------------------------------------------        
+//STEP01   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K595.BALLOT.LOG,DISP=SHR,                                
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//SORTOUT  DD DSN=&&F595BALL,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=500),                                         
+//            SPACE=(CYL,(250,50),RLSE)                                         
+//SYSIN   DD *                                                                  
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+   OMIT COND=(1,1,CH,EQ,C' ',OR,                                                
+              260,1,CH,EQ,C' ',OR,                                              
+              334,4,CH,LT,C'2001',OR,                                           
+              334,6,CH,EQ,C'      ',OR,                                         
+              334,6,CH,EQ,C'200204',OR,                                         
+              334,6,CH,EQ,C'200205',OR,                                         
+              376,1,CH,EQ,C'W',OR,                                              
+              376,1,CH,EQ,C' ',OR,                                              
+              376,2,CH,EQ,C'3R')                                                
+//*-----------------------------------------------------------------            
+//*- OUTPUT NRIC1                                                               
+//*---------------------------------------------------------------------        
+//STEP02   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F595BALL,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&BP13F595,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=500),                                         
+//            SPACE=(CYL,(20,20),RLSE)                                          
+//SYSIN   DD *                                                                  
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+   OUTREC FIELDS=(1,483,41,9,8X)                                                
+   OMIT COND=(41,1,CH,EQ,C'#')                                                  
+//*---------------------------------------------------------------------        
+//*- ALL NRIC - SORT OUTREC BY NRIC ASC & DTE-BALLOT DESC                       
+//*---------------------------------------------------------------------        
+//STEP06   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&BP13F595,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F595DTE,DISP=(,PASS),                                       
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=500),                                         
+//            SPACE=(CYL,(250,20),RLSE)                                         
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(484,9,A,334,6,D,260,1,A),FORMAT=CH                              
+//*-------------------------------------------------------------------*         
+//* SORT ACCEPTED CASES BY REGN NO & DTE-ACC-REJ                      *         
+//*-------------------------------------------------------------------*         
+//STEP07   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.K580.ACCEPT,DISP=SHR,                                    
+//         AMP=('BUFND=13')                                                     
+//SORTOUT  DD DSN=&&F580ACC,DISP=(,PASS),                                       
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=200),                                         
+//            SPACE=(CYL,(250,50),RLSE)                                         
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(1,8,A,20,8,D),FORMAT=CH                                          
+  INCLUDE COND=(28,1,CH,EQ,C'A')                                                
+//*-------------------------------------------------------------------*         
+//* RETRIEVE RECS WITH LATEST DTE-ACC-REJ                             *         
+//*-------------------------------------------------------------------*         
+//STEP08   EXEC PGM=BP13CB36,COND=(0,NE)                                        
+//BP13F580 DD DSN=&&F580ACC,DISP=(OLD,PASS)                                     
+//P13F580A DD DSN=&&F580LAST,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=200),                                         
+//            SPACE=(CYL,(100,50),RLSE)                                         
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-----------------------------------------------------------------            
+//*- OMIT BLANK DTE-ACCEPT                                                      
+//*---------------------------------------------------------------------        
+//STEP09   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F580LAST,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F580BALL,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=200),                                         
+//            SPACE=(CYL,(250,50),RLSE)                                         
+//SYSIN   DD *                                                                  
+   SORT FIELDS=(1,29,A),FORMAT=CH                                               
+   OMIT COND=(20,8,CH,EQ,C'        ')                                           
+//*-----------------------------------------------------------------            
+//*- OUTPUT NRIC1                                                               
+//*---------------------------------------------------------------------        
+//STEP10   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F580BALL,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&BP13F580,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=200),                                         
+//            SPACE=(CYL,(250,50),RLSE)                                         
+//SYSIN   DD *                                                                  
+   SORT FIELDS=(1,29,A),FORMAT=CH                                               
+   OMIT COND=(74,1,CH,EQ,C'#',OR,74,1,CH,EQ,C' ',OR,74,1,CH,LT,C' ')            
+//*---------------------------------------------------------------------        
+//*- OUTPUT NRIC2                                                               
+//*---------------------------------------------------------------------        
+//STEP11   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F580BALL,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&BP13F580,DISP=(MOD,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=200),                                         
+//            SPACE=(CYL,(250,50),RLSE)                                         
+//SYSIN   DD *                                                                  
+   SORT FIELDS=(1,29,A),FORMAT=CH                                               
+   OUTREC FIELDS=(1,73,83,9,83,118)                                             
+   OMIT COND=(83,1,CH,EQ,C'#',OR,83,1,CH,EQ,C' ',OR,83,1,CH,LT,C' ')            
+//*---------------------------------------------------------------------        
+//*- OUTPUT NRIC3                                                               
+//*---------------------------------------------------------------------        
+//STEP12   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F580BALL,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&BP13F580,DISP=(MOD,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=200),                                         
+//            SPACE=(CYL,(250,50),RLSE)                                         
+//SYSIN   DD *                                                                  
+   SORT FIELDS=(1,29,A),FORMAT=CH                                               
+   OUTREC FIELDS=(1,73,92,9,83,118)                                             
+   OMIT COND=(92,1,CH,EQ,C'#',OR,92,1,CH,EQ,C' ',OR,92,1,CH,LT,C' ')            
+//*---------------------------------------------------------------------        
+//*- OUTPUT NRIC4                                                               
+//*---------------------------------------------------------------------        
+//STEP13   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F580BALL,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&BP13F580,DISP=(MOD,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=200),                                         
+//            SPACE=(CYL,(250,50),RLSE)                                         
+//SYSIN   DD *                                                                  
+   SORT FIELDS=(1,29,A),FORMAT=CH                                               
+   OUTREC FIELDS=(1,73,101,9,83,118)                                            
+   OMIT COND=(101,1,CH,EQ,C'#',OR,101,1,CH,EQ,C' ',OR,101,1,CH,LT,C' ')         
+//*---------------------------------------------------------------------        
+//*- SORT BY NRIC ASC & DTE-ACCEPT DESC                                         
+//*---------------------------------------------------------------------        
+//STEP14   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&BP13F580,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F580SORT,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=200),                                         
+//            SPACE=(CYL,(150,50),RLSE)                                         
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(74,9,A,20,8,D),FORMAT=CH                                        
+//*-------------------------------------------------------------------*         
+//* REMOVE BALLOT HIST IF DTE-BALLOT <= DTE-ACPT                                
+//*-------------------------------------------------------------------*         
+//STEP15   EXEC PGM=BP13CB38,COND=(0,NE)                                        
+//BP13F580 DD DSN=&&F580SORT,DISP=(OLD,PASS)                                    
+//BP13F595 DD DSN=&&F595DTE,DISP=(OLD,PASS)                                     
+//P13F595A DD DSN=&&F595ACC,DISP=(,PASS),                                       
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=500),                                         
+//            SPACE=(CYL,(250,50),RLSE)                                         
+//BP13LB38 DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//*- ALL NRIC - SORT OUTREC BY NRIC ASC & DTE-BALLOT DESC                       
+//*---------------------------------------------------------------------        
+//STEP16   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F595ACC,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&F595SORT,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=500),                                         
+//            SPACE=(CYL,(250,50),RLSE)                                         
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(484,9,A,334,6,D),FORMAT=CH                                      
+//*---------------------------------------------------------------------        
+//* COMPUTE UNSUCC ATTEMPT                                                      
+//*---------------------------------------------------------------------        
+//STEP17   EXEC PGM=BP13CB22,COND=(0,NE)                                        
+//BP13F595 DD DSN=&&F595SORT,DISP=(OLD,PASS)                                    
+//BP13F593 DD DSN=&&BP13F593,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=2000),                                        
+//            SPACE=(CYL,(250,20),RLSE)                                         
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT DUPLICATE NRIC                                                         
+//*---------------------------------------------------------------------        
+//STEP18   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&BP13F593,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F593SORT,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=2000),                                        
+//            SPACE=(CYL,(250,20),RLSE)                                         
+//SYSIN   DD *                                                                  
+   SORT FIELDS=(1,9,A),FORMAT=CH                                                
+   SUM FIELDS=NONE                                                              
+//*-------------------------------------------------------------------*         
+//* PRINT REPORT, BYAPSS CASES FOUND IN SMS/RSL FILES                           
+//*-------------------------------------------------------------------*         
+//* CREATE P13F593A FOR LASTEST UNSUCC-REC HH = 'H' OR 'T'                      
+//*-------------------------------------------------------------------*         
+//STEP02   EXEC PGM=BP13CB41,COND=(0,NE)                                        
+//BP13F593 DD DSN=&&F593SORT,DISP=(OLD,PASS)                                    
+//P13F593A DD DSN=&&F593LAST,DISP=(,PASS),                                      
+//         UNIT=SYSDA,                                                          
+//         DCB=(RECFM=FB,LRECL=2000),                                           
+//         SPACE=(CYL,(120,20),RLSE)                                            
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*--------------------------------------------------------------------         
+//* CHECK REQUEST BUY RESALE FLATS                                              
+//*--------------------------------------------------------------------         
+//STEP03   EXEC  PGM=BP13CB25,COND=(0,NE)                                       
+//BP13F593 DD  DSN=&&F593LAST,DISP=(OLD,PASS)                                   
+//BB24K020 DD DSN=BB24.K020.OCCUPIER,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BB24K021 DD DSN=BB24.K020.OCCUPIER.PATH1,DISP=SHR,                            
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BB24K010 DD DSN=BB24.K010.MASTER,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//P13F593F DD DSN=&&F593RSFD,DISP=(,PASS),                                      
+//            SPACE=(CYL,(10,3),RLSE),                                          
+//            DCB=(LRECL=2000,RECFM=FB)                                         
+//P13F593N DD DSN=&&F593RESL,DISP=(,PASS),                                      
+//            SPACE=(CYL,(80,10),RLSE),                                         
+//            DCB=(LRECL=2000,RECFM=FB)                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//*--------------------------------------------------------------------         
+//* CHECK REQUEST FOUND IN SMS                                                  
+//*--------------------------------------------------------------------         
+//STEP04   EXEC  PGM=BP13CB26,COND=(0,NE)                                       
+//BP13F593 DD  DSN=&&F593RESL,DISP=(OLD,PASS)                                   
+//AB03K080 DD  DSN=AB03.K080.UINACC,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//AB03K030 DD  DSN=AB03.K030.SALEMAST,DISP=SHR,                                 
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//P13F593F DD  DSN=&&F593SALE,DISP=(,PASS),                                     
+//             SPACE=(CYL,(10,3),RLSE),                                         
+//             DCB=(LRECL=2000,RECFM=FB)                                        
+//P13F593N DD DSN=&&F593SMS,DISP=(,PASS),                                       
+//            SPACE=(CYL,(70,10),RLSE),                                         
+//            DCB=(LRECL=2000,RECFM=FB)                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//*---------------------------------------------------------------------00000270
+//* CHECK SOC MASTER, BYPASS BOOKED FLAT CASES                          00000280
+//*---------------------------------------------------------------------00000290
+//STEP05   EXEC  PGM=BP13CB42,COND=(0,NE)                               00000300
+//BP13F593 DD  DSN=&&F593SMS,DISP=(OLD,PASS)                            00000310
+//BP13K820 DD  DSN=BP13.K820.OCCUP,DISP=SHR,                            00000310
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K821 DD  DSN=BP13.K820.OCCUP.PATH1,DISP=SHR,                      00000310
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K800 DD  DSN=BP13.K800.APPLN,DISP=SHR,                            00000310
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//P13F593A DD  DSN=&&F593FNEW,DISP=(,PASS),                             00000310
+//            SPACE=(CYL,(50,15),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=2000,BLKSIZE=0)                               
+//P13F593B DD  DSN=BP13.F593.SOCATMP,DISP=OLD                           00000310
+//SYSPRINT DD  SYSOUT=*                                                 00000470
+//SYSDBG   DD  SYSOUT=*                                                 00000470
+//SYSDBOUT DD  SYSOUT=*                                                 00000480
+//SYSOUT   DD  SYSOUT=*                                                 00000480
+//*-----------------------------------------------------------------            
+//* PRINT REPORT ON UNSUCC ATTEMPT BY BE/BTO/DBSS                               
+//*-----------------------------------------------------------------            
+//STEP06   EXEC  SAS,COND=(0,NE)                                                
+//BP13F593 DD DSN=BP13.F593.SOCATMP,DISP=SHR                                    
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13LC21 DD DSN=&&BP13LC21,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(1,1),RLSE),                                
+//            DCB=(RECFM=FA,LRECL=133,BLKSIZE=0)                                
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13SC21),DISP=SHR                             
+//*                                                                             
+//*------------------------------------------------------------------           
+//* OUTPUT BP13LC21 TO HARDCOPY                                                 
+//*------------------------------------------------------------------           
+//STEP07   EXEC PGM=IEBGENER,COND=(0,NE)                                        
+//SYSUT1   DD DSN=&&BP13LC21,DISP=(OLD,PASS)                                    
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*------------------------------------------------------------------           
+//* OUTPUT BP13LC21 TO FILE                                                     
+//*------------------------------------------------------------------           
+//STEP08   EXEC PGM=IEBGENER,COND=(0,NE)                                        
+//SYSUT1   DD DSN=&&BP13LC21,DISP=(OLD,PASS)                                    
+//SYSUT2   DD DSN=BP13.LC21.SOCATMP,DISP=OLD                                    
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+

@@ -1,0 +1,628 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CC70.                                                 
+      *AUTHOR.        BALA AMUTHAN.                                             
+      *DATE-WRITTEN.  05/03/2007.                                               
+      *=============================================================            
+      * SYSTEM OF COMMITMENT                                                    
+      *=============================================================            
+      * OBJECTIVE  - REPORT FOR PROJECT LOAN FOR MONTH-END CLOSING.             
+      *              PROGRAM TO COMPUTE TOTAL LOAN BALANCE AS AT THE RUN        
+      *              DATE, AND :                                                
+      *              1) ADD NEW LOAN + NEW LOAN INTEREST IF DUE IN THE          
+      *                MONTH AND THE DAY IS AFTER 25TH                          
+      *              2) MINUS MONTH-INSTALMENT FOR GIRO CASES,                  
+      *                                                                         
+      *              THIS PROGRAM WILL RUN ON 21ST OF THE MONTH                 
+      *                                                                         
+      * ------------------------------------------------------------            
+      * CHG REF  DATE     BY   AMENDMENTS/ENHANCEMENTS                          
+      * -------- ----     ---  -----------------------                          
+      * BP133031 05032007 BA2  NEW PRG                                          
+      * BP133033 30042007 SSS2 REMOVE P13LC70B                                  
+      * BP133091 17102007 RB12 EXPAND BP13KD00 FR 1200 TO 1600 BYTES            
+      * BP134073 15112010 JB8  TO SEPARATE REPORT BY LOAN-SCH                   
+      * BP134089 26012011 JB8  TO PRT KD38 INFO AFTER KD00                      
+      *=============================================================            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+           SELECT  BP13KD38  ASSIGN        TO BP13KD38                          
+                             ACCESS MODE   IS DYNAMIC                           
+                             ORGANIZATION  IS INDEXED                           
+                             RECORD KEY    IS KD38-KEY-FLD                      
+                             FILE STATUS   IS WS-KD38-STATUS.                   
+                                                                                
+           SELECT  BP13FD00  ASSIGN        TO BP13FD00.                         
+                                                                                
+           SELECT  SY02F001  ASSIGN        TO SY02F001.                         
+                                                                                
+           SELECT  BP13LC70  ASSIGN        TO BP13LC70.                         
+                                                                                
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD   BP13FD00                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 1600 CHARACTERS                                     
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13FD00.                                                           
+                                                                                
+       FD   BP13KD38                                                            
+            RECORD CONTAINS 400 CHARACTERS.                                     
+       COPY BP13KD38.                                                           
+                                                                                
+       COPY SY02F001.                                                           
+                                                                                
+       FD  BP13LC70                                                             
+           BLOCK  CONTAINS    0 RECORDS                                         
+           RECORD CONTAINS  132 CHARACTERS                                      
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+       01  LC70-PRTREC       PIC X(132).                                        
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-KD38-STATUS                   PIC 9(2)  VALUE 0.                  
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-CNT-FD30                  PIC 9(7)  VALUE 0.                  
+           05  WS-CNT-LC70                  PIC 9(7)  VALUE 0.                  
+           05  WS-LNE-CNT                   PIC 9(2)  VALUE 55.                 
+           05  WS-PAGE                      PIC 9(5)  VALUE 0.                  
+           05  WS-SNO                       PIC 9(5)  VALUE 0.                  
+           05  WS-TMP-LNE-CNT               PIC 9(2)  VALUE 0.                  
+           05  WS-I                         PIC 9(5)  VALUE 0.                  
+                                                                                
+       01  WS-MIS-VAR.                                                          
+           05  WS-KD38-LOAN                 PIC 9(10)V99 VALUE 0.               
+           05  WS-KD38-INTEREST             PIC 9(08)V99 VALUE 0.               
+           05  WS-KD38-TOTAL                PIC 9(08)V99 VALUE 0.               
+           05  WS-TOT-LOAN                  PIC 9(10)V99 VALUE 0.               
+           05  WS-TOT-CASE                  PIC 9(5).                           
+           05  WS-CTR                       PIC 9(2).                           
+           05  WS-KD38-FLG                  PIC X(1).                           
+           05  WS-INTEREST-RATE             PIC S9(2)V9(8) VALUE ZERO.          
+           05  WS-AMT-INT                   PIC 9(5)V99    VALUE ZERO.          
+           05  WS-LOAN-BAL-GR               PIC 9(10)V99 VALUE 0.               
+           05  WS-TOT-LOAN-GR               PIC 9(10)V99 VALUE 0.               
+           05  WS-NEW-LOAN-GR               PIC 9(10)V99 VALUE 0.               
+           05  WS-LOAN-SCH                  PIC X(1) VALUE SPACES.              
+           05  WS-LOAN-BAL-SUB              PIC 9(10)V99 VALUE 0.               
+           05  WS-TOT-LOAN-SUB              PIC 9(10)V99 VALUE 0.               
+           05  WS-NEW-LOAN-SUB              PIC 9(10)V99 VALUE 0.               
+                                                                                
+       01  WS-PRT-DTLS.                                                         
+           05  CNT-DTL                      PIC 9(5)  VALUE 0.                  
+           05  WS-PRT-DTL OCCURS 10 TIMES.                                      
+               10 WS-PRT-DUE-DTE      PIC X(10).                                
+               10 WS-PRT-NEW-LOAN     PIC 9(08)V99.                             
+               10 WS-PRT-INT-NEW      PIC 9(06)V99.                             
+               10 WS-PRT-DTE-INST-NEW PIC X(10).                                
+                                                                                
+      *-----------------------------------------------------------*             
+      *    WS VARIABLES PASSED  TO SUB-PROGRAM "BP13C950"         *             
+      *-----------------------------------------------------------*             
+       01  C950-FIELD.                                                          
+           05  C950-PROCESS-DATE       PIC X(08).                               
+           05  C950-PROCESS-DATE-NUM REDEFINES C950-PROCESS-DATE.               
+               10  C950-PROCESS-CC     PIC 99.                                  
+               10  C950-PROCESS-YY     PIC 99.                                  
+               10  C950-PROCESS-MM     PIC 99.                                  
+               10  C950-PROCESS-DD     PIC 99.                                  
+           05  C950-INTREST-RATE       PIC 9(02)V9(4).                          
+           05  C950-FACT               PIC 9(02).                               
+           05  C950-REPYMT-PERIOD      PIC 9(02).                               
+                                                                                
+      *--------------------------------------------------------------           
+      *   REPORT LAYOUT                                                         
+      *--------------------------------------------------------------           
+       01  LC70-HEADER01.                                                       
+           05  FILLER              PIC X(8)      VALUE 'BP13LC70'.              
+           05  FILLER              PIC X(5)      VALUE SPACES .                 
+           05  FILLER              PIC X(8)      VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(24)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER              PIC X(17)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE :'.                
+           05  LC70-DATE           PIC X(10)     VALUE SPACES.                  
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'PAGE : '.               
+           05  LC70-PRT-PAGE       PIC ZZZZ9     VALUE ZEROES.                  
+                                                                                
+       01  LC70-HEADER02-CON.                                                   
+           05  FILLER              PIC X(31)     VALUE SPACES .                 
+           05  FILLER              PIC X(68)     VALUE                          
+               'REPORT ON PROJECTION OF MONTH-END LOAN AMOUNT (CONCESSIO        
+      -        'NARY LOAN - '.                                                  
+           05  LC70-LOAN-SCH-P     PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ')'.                     
+                                                                                
+       01  LC70-HEADER02-NCON.                                                  
+           05  FILLER              PIC X(29)     VALUE SPACES .                 
+           05  FILLER              PIC X(72)     VALUE                          
+               'REPORT ON PROJECTION OF MONTH-END LOAN AMOUNT (NON-CONCE        
+      -        'SSIONARY LOAN - '.                                              
+           05  LC70-LOAN-SCH-NP    PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ')'.                     
+                                                                                
+       01  LC70-HEADER03.                                                       
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(05)     VALUE 'SNO  '.                 
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(08)     VALUE 'REGN-NO '.              
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'INSTALMENT'.            
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'ARR-INSTAL'.            
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(04)     VALUE 'GIRO'.                  
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE 'LOAN-BALANCE'.          
+           05  FILLER              PIC X(06)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'TOTAL-LOAN'.            
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'DUE-DATE'.              
+           05  FILLER              PIC X(06)     VALUE SPACES.                  
+           05  FILLER              PIC X(09)     VALUE                          
+                                                 'NEW-LOAN '.                   
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE                          
+                                                 'INT-NEW-LOAN'.                
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE                          
+                                                 'EFF-DATE  '.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+                                                                                
+       01  LC70-HEADER04.                                                       
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(129)    VALUE ALL '-'.                 
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+                                                                                
+       01  LC70-DETAIL.                                                         
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  LC70-PRT-SNO        PIC ZZZZ9     VALUE ZEROES.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  LC70-REGN-NO        PIC X(08)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  LC70-INSTAL         PIC $$$$,$$9.99 VALUE ZEROES.                
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  LC70-ARR-INSTAL     PIC $$$,$$9.99 VALUE ZEROES.                 
+           05  LC70-ARR-SIGN       PIC X(1)      VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  LC70-GIRO           PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  LC70-LOAN-BAL       PIC $$,$$$,$$9.99  VALUE ZEROES.             
+           05  FILLER              PIC X(06)     VALUE SPACES.                  
+           05  LC70-TOT-LOAN       PIC $$$$,$$9.99 VALUE ZEROES.                
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  LC70-DUE-DTE        PIC X(10)     VALUE ZEROES.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  LC70-NEW-LOAN       PIC $$,$$$,$$9.99  VALUE ZEROES.             
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  LC70-INT-NEW        PIC $$$,$$9.99 VALUE ZEROES.                 
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  LC70-DTE-INST-NEW   PIC X(10)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE SPACES.                  
+                                                                                
+       01  LC70-SUB-TOTAL.                                                      
+           05  FILLER              PIC X(08)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE 'SUB-TOTAL : '.          
+           05  FILLER              PIC X(25)     VALUE SPACES.                  
+           05  LC70-LOAN-BAL-SUB   PIC $$$$,$$$,$$9.99 VALUE ZEROES.            
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  LC70-TOT-LOAN-SUB   PIC $$$$,$$$,$$9.99  VALUE ZEROES.           
+           05  FILLER              PIC X(13)     VALUE SPACES.                  
+           05  LC70-NEW-LOAN-SUB   PIC $$$$,$$$,$$9.99 VALUE ZEROES.            
+           05  FILLER              PIC X(22)     VALUE SPACES.                  
+                                                                                
+       01  LC70-FOOTER.                                                         
+           05  FILLER              PIC X(08)     VALUE SPACES.                  
+           05  FILLER              PIC X(08)     VALUE 'TOTAL'.                 
+           05  FILLER              PIC X(29)     VALUE SPACES.                  
+           05  LC70-LOAN-BAL-GR    PIC $$$$,$$$,$$9.99 VALUE ZEROES.            
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  LC70-TOT-LOAN-GR    PIC $$$$,$$$,$$9.99  VALUE ZEROES.           
+           05  FILLER              PIC X(13)     VALUE SPACES.                  
+           05  LC70-NEW-LOAN-GR    PIC $$$$,$$$,$$9.99 VALUE ZEROES.            
+           05  FILLER              PIC X(22)     VALUE SPACES.                  
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN-PARA.                                                          
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM 1000-START-UP         THRU 1000-EXIT.                        
+           PERFORM 2000-READ-BP13FD00    THRU 2000-EXIT.                        
+           PERFORM 3000-PROCESSING       THRU 3000-EXIT                         
+                UNTIL FD00-NUM-REGN = HIGH-VALUES.                              
+           IF WS-PAGE > 0                                                       
+              PERFORM 6100-PRINT-SUB-TOTAL THRU 6100-EXIT                       
+              PERFORM 6000-PRINT-GRANT   THRU 6000-EXIT                         
+           END-IF.                                                              
+           PERFORM 9999-WRAP-UP.                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       1000-START-UP.                                                           
+      *-------------------------------------------------------------            
+                                                                                
+           OPEN INPUT  BP13FD00                                                 
+                       BP13KD38                                                 
+                       SY02F001                                                 
+               OUTPUT  BP13LC70.                                                
+                                                                                
+           IF WS-KD38-STATUS = 97 OR 00                                         
+              CONTINUE                                                          
+           ELSE                                                                 
+              MOVE WS-KD38-STATUS TO RETURN-CODE                                
+              DISPLAY 'OPEN BP13KD38 FAIL. STATUS : ' WS-KD38-STATUS            
+              PERFORM 9999-WRAP-UP                                              
+           END-IF.                                                              
+                                                                                
+           READ SY02F001.                                                       
+                                                                                
+           STRING F001-DTE-CURRENT(7:2) '/'                                     
+                  F001-DTE-CURRENT(5:2) '/'                                     
+                  F001-DTE-CURRENT(1:4)                                         
+                  DELIMITED BY SIZE INTO LC70-DATE.                             
+                                                                                
+       1000-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       2000-READ-BP13FD00.                                                      
+      *----------------------------------------------------------------*        
+                                                                                
+           READ BP13FD00 AT END                                                 
+                MOVE HIGH-VALUES TO FD00-NUM-REGN                               
+                GO TO 2000-EXIT.                                                
+           ADD 1 TO WS-CNT-FD30.                                                
+                                                                                
+       2000-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3000-PROCESSING.                                                         
+      *----------------------------------------------------------------*        
+           MOVE 'N'     TO  WS-KD38-FLG.                                        
+           MOVE  ZEROES TO  WS-TOT-LOAN                                         
+                            WS-AMT-INT                                          
+                            WS-KD38-LOAN                                        
+                            WS-KD38-INTEREST                                    
+                            WS-KD38-TOTAL.                                      
+           MOVE SPACES  TO  WS-PRT-DTLS.                                        
+           INITIALIZE       WS-PRT-DTLS.                                        
+                                                                                
+           IF FD00-AMT-LOAN-BAL IS NOT NUMERIC                                  
+              MOVE ZEROES TO FD00-AMT-LOAN-BAL                                  
+           END-IF.                                                              
+                                                                                
+           IF FD00-AMT-INSTAL   IS NOT NUMERIC                                  
+              MOVE ZEROES TO FD00-AMT-INSTAL                                    
+           END-IF.                                                              
+                                                                                
+           IF FD00-AMT-ARR-INSTAL   IS NOT NUMERIC                              
+              MOVE ZEROES TO FD00-AMT-ARR-INSTAL                                
+           END-IF.                                                              
+                                                                                
+           IF FD00-AMT-LOAN-BAL > 0                                             
+              PERFORM 3100-START-BP13KD38    THRU 3100-EXIT                     
+              PERFORM 3200-READNEXT-BP13KD38 THRU 3200-EXIT                     
+                      UNTIL WS-KD38-FLG  = 'Y'                                  
+                                                                                
+              IF WS-KD38-LOAN > ZEROS                                           
+                  COMPUTE WS-KD38-TOTAL = WS-KD38-LOAN                          
+                                         + WS-KD38-INTEREST                     
+              END-IF                                                            
+                                                                                
+              IF FD00-NUM-GIRO-INFO NOT = SPACES AND LOW-VALUES                 
+                 IF FD00-AMT-ARR-INSTAL > ZEROS                                 
+                    IF FD00-AMT-ARR-INSTAL < FD00-AMT-INSTAL                    
+                       COMPUTE WS-TOT-LOAN = FD00-AMT-LOAN-BAL +                
+                                             WS-KD38-TOTAL -                    
+                                             FD00-AMT-ARR-INSTAL                
+                    ELSE                                                        
+                       COMPUTE WS-TOT-LOAN = FD00-AMT-LOAN-BAL +                
+                                             WS-KD38-TOTAL -                    
+                                             FD00-AMT-INSTAL                    
+                    END-IF                                                      
+                 ELSE                                                           
+                    COMPUTE WS-TOT-LOAN = FD00-AMT-LOAN-BAL +                   
+                                       WS-KD38-TOTAL -                          
+                                       FD00-AMT-INSTAL                          
+                 END-IF                                                         
+              ELSE                                                              
+                 COMPUTE WS-TOT-LOAN = FD00-AMT-LOAN-BAL +                      
+                                       WS-KD38-TOTAL                            
+              END-IF                                                            
+              PERFORM 4000-PRINT-REPORT         THRU 4000-EXIT                  
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-READ-BP13FD00        THRU 2000-EXIT.                    
+                                                                                
+       3000-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      *------------------------------------------------------------*            
+       3100-START-BP13KD38.                                                     
+      *------------------------------------------------------------*            
+                                                                                
+           INITIALIZE BP13KD38-TRANS-REC.                                       
+           MOVE SPACES TO BP13KD38-TRANS-REC.                                   
+           MOVE FD00-NUM-REGN TO KD38-NUM-REGN.                                 
+           START BP13KD38 KEY IS >= KD38-KEY-FLD.                               
+                                                                                
+           EVALUATE WS-KD38-STATUS                                              
+           WHEN 00                                                              
+             CONTINUE                                                           
+           WHEN 23                                                              
+           WHEN 10                                                              
+             DISPLAY 'REGN NO. NOT FOUND IN BP13KD38: ' KD38-NUM-REGN   G       
+             MOVE 'Y'                          TO   WS-KD38-FLG                 
+           WHEN OTHER                                                           
+             MOVE     WS-KD38-STATUS           TO   RETURN-CODE                 
+             DISPLAY 'ERROR STARTING BP13KD38-FILE.' WS-KD38-STATUS             
+             PERFORM 9999-WRAP-UP                                               
+           END-EVALUATE.                                                        
+                                                                                
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *------------------------------------------------------------*            
+       3200-READNEXT-BP13KD38.                                                  
+      *------------------------------------------------------------*            
+            READ BP13KD38 NEXT.                                                 
+                                                                                
+            EVALUATE WS-KD38-STATUS                                             
+            WHEN 00                                                             
+              IF FD00-NUM-REGN = KD38-NUM-REGN                                  
+                 PERFORM 3250-BP13KD38-PROCESS  THRU 3250-EXIT                  
+              ELSE                                                              
+                 MOVE 'Y'               TO   WS-KD38-FLG                        
+              END-IF                                                            
+            WHEN 10                                                             
+              MOVE 'Y'                  TO   WS-KD38-FLG                        
+            WHEN 23                                                             
+              DISPLAY 'REG NUMBER NOT FOUND AT BP13KD38 : '                     
+                                               KD38-NUM-REGN                    
+              MOVE 'Y'                  TO   WS-KD38-FLG                        
+            WHEN OTHER                                                          
+              MOVE  WS-KD38-STATUS      TO   RETURN-CODE                        
+              DISPLAY 'ERROR READING BP13KD38 : ' WS-KD38-STATUS                
+              PERFORM 9999-WRAP-UP                                              
+           END-EVALUATE.                                                        
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *------------------------------------------------------------*            
+       3250-BP13KD38-PROCESS.                                                   
+      *------------------------------------------------------------*            
+           IF KD38-AMT-LOAN-NEW IS NOT NUMERIC                                  
+              MOVE 0     TO KD38-AMT-LOAN-NEW.                                  
+                                                                                
+           IF KD38-AMT-INSTAL-NEW-TOT IS NOT NUMERIC                            
+              MOVE 0     TO KD38-AMT-INSTAL-NEW-TOT.                            
+                                                                                
+           IF KD38-DTE-DUE(1:6) = F001-DTE-CURRENT(1:6)                         
+              IF KD38-DTE-DUE(7:2) > F001-DTE-CURRENT(7:2)                      
+                 COMPUTE WS-KD38-LOAN = WS-KD38-LOAN +                          
+                                       KD38-AMT-LOAN-NEW                        
+                 COMPUTE WS-KD38-INTEREST = WS-KD38-INTEREST +                  
+                                            KD38-AMT-INTEREST-NEWLOAN           
+                 PERFORM 3300-SAVE-PP-SCHEDULE  THRU 3300-EXIT                  
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+       3250-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3300-SAVE-PP-SCHEDULE.                                                   
+      *----------------------------------------------------------------*        
+                                                                                
+           ADD 1              TO CNT-DTL.                                       
+                                                                                
+           IF KD38-DTE-DUE NOT = SPACES AND LOW-VALUES AND ZEROES               
+              STRING KD38-DTE-DUE(7:2) '/'                                      
+                     KD38-DTE-DUE(5:2) '/'                                      
+                     KD38-DTE-DUE(1:4)                                          
+                     DELIMITED BY SIZE INTO WS-PRT-DUE-DTE(CNT-DTL)             
+           ELSE                                                                 
+              MOVE SPACES                TO WS-PRT-DUE-DTE(CNT-DTL)             
+           END-IF.                                                              
+                                                                                
+           IF KD38-AMT-LOAN-NEW IS NOT NUMERIC                                  
+              MOVE 0 TO KD38-AMT-LOAN-NEW.                                      
+                                                                                
+           IF KD38-AMT-INTEREST-NEWLOAN IS NOT NUMERIC                          
+              MOVE 0 TO KD38-AMT-INTEREST-NEWLOAN.                              
+                                                                                
+           MOVE KD38-AMT-LOAN-NEW         TO WS-PRT-NEW-LOAN(CNT-DTL)           
+                                                                                
+           COMPUTE WS-NEW-LOAN-GR = KD38-AMT-LOAN-NEW + WS-NEW-LOAN-GR.         
+           COMPUTE WS-NEW-LOAN-SUB = KD38-AMT-LOAN-NEW + WS-NEW-LOAN-SUB        
+                                                                                
+           MOVE KD38-AMT-INTEREST-NEWLOAN TO WS-PRT-INT-NEW(CNT-DTL)            
+           IF KD38-DTE-INSTAL-NEW NOT = SPACES AND LOW-VALUES AND ZEROES        
+              STRING KD38-DTE-INSTAL-NEW(7:2) '/'                               
+                     KD38-DTE-INSTAL-NEW(5:2) '/'                               
+                     KD38-DTE-INSTAL-NEW(1:4)                                   
+                     DELIMITED BY SIZE INTO WS-PRT-DTE-INST-NEW(CNT-DTL)        
+           ELSE                                                                 
+              MOVE SPACES                TO WS-PRT-DTE-INST-NEW(CNT-DTL)        
+           END-IF.                                                              
+                                                                                
+       3300-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       4000-PRINT-REPORT.                                                       
+      *----------------------------------------------------------------*        
+                                                                                
+           COMPUTE WS-TMP-LNE-CNT = WS-LNE-CNT + CNT-DTL - 1                    
+                                                                                
+           IF (WS-LOAN-SCH NOT = FD00-CDE-LOAN-SCH) OR                          
+              (WS-TMP-LNE-CNT > 53)                                             
+              ADD +1 TO WS-PAGE                                                 
+              IF WS-LOAN-SCH NOT = FD00-CDE-LOAN-SCH                            
+                 IF WS-LOAN-SCH NOT = SPACES AND LOW-VALUES                     
+                    PERFORM 6100-PRINT-SUB-TOTAL THRU 6100-EXIT                 
+                 END-IF                                                         
+                 MOVE ZEROES                TO WS-SNO                           
+                 MOVE FD00-CDE-LOAN-SCH     TO WS-LOAN-SCH                      
+                 MOVE ZEROES                TO WS-LOAN-BAL-SUB                  
+                                               WS-TOT-LOAN-SUB                  
+                                               WS-NEW-LOAN-SUB                  
+              END-IF                                                            
+              PERFORM  4100-PRINT-HEAD    THRU 4100-EXIT                        
+           END-IF.                                                              
+           IF FD00-AMT-LOAN-BAL   IS NOT NUMERIC                                
+              MOVE 0 TO FD00-AMT-LOAN-BAL.                                      
+                                                                                
+           IF FD00-AMT-INSTAL     IS NOT NUMERIC                                
+              MOVE 0 TO FD00-AMT-INSTAL.                                        
+                                                                                
+           IF FD00-AMT-ARR-INSTAL IS NOT NUMERIC                                
+              MOVE 0 TO FD00-AMT-ARR-INSTAL.                                    
+                                                                                
+           MOVE  SPACES       TO   LC70-PRTREC                                  
+                                   LC70-DETAIL.                                 
+           ADD  +01                  TO WS-SNO.                                 
+           MOVE WS-SNO               TO LC70-PRT-SNO.                           
+           MOVE FD00-NUM-REGN        TO LC70-REGN-NO.                           
+           MOVE FD00-AMT-ARR-INSTAL  TO LC70-ARR-INSTAL.                        
+                                                                                
+           IF FD00-AMT-ARR-INSTAL < 0                                           
+              MOVE '-'    TO LC70-ARR-SIGN                                      
+           ELSE                                                                 
+              MOVE SPACES TO LC70-ARR-SIGN.                                     
+                                                                                
+           IF FD00-NUM-GIRO-INFO NOT = SPACES AND LOW-VALUES AND ZEROES         
+              MOVE 'Y'    TO LC70-GIRO                                          
+           ELSE                                                                 
+              MOVE SPACES TO LC70-GIRO.                                         
+                                                                                
+           MOVE FD00-AMT-LOAN-BAL    TO LC70-LOAN-BAL.                          
+                                                                                
+           MOVE FD00-AMT-INSTAL       TO LC70-INSTAL.                           
+           MOVE WS-TOT-LOAN           TO LC70-TOT-LOAN.                         
+                                                                                
+           COMPUTE WS-LOAN-BAL-GR = FD00-AMT-LOAN-BAL + WS-LOAN-BAL-GR.         
+           COMPUTE WS-TOT-LOAN-GR = WS-TOT-LOAN       + WS-TOT-LOAN-GR.         
+           COMPUTE WS-LOAN-BAL-SUB = FD00-AMT-LOAN-BAL + WS-LOAN-BAL-SUB        
+           COMPUTE WS-TOT-LOAN-SUB = WS-TOT-LOAN      + WS-TOT-LOAN-SUB.        
+                                                                                
+           IF CNT-DTL > 0                                                       
+              MOVE WS-PRT-DUE-DTE(1)      TO LC70-DUE-DTE                       
+              MOVE WS-PRT-NEW-LOAN(1)     TO LC70-NEW-LOAN                      
+              MOVE WS-PRT-INT-NEW(1)      TO LC70-INT-NEW                       
+              MOVE WS-PRT-DTE-INST-NEW(1) TO LC70-DTE-INST-NEW                  
+           END-IF.                                                              
+                                                                                
+           WRITE LC70-PRTREC FROM LC70-DETAIL.                                  
+           ADD  +01                  TO WS-LNE-CNT.                             
+           ADD  +01                  TO WS-CNT-LC70.                            
+                                                                                
+           IF CNT-DTL > 1                                                       
+              PERFORM VARYING WS-I FROM 2 BY 1 UNTIL WS-I > CNT-DTL             
+                 MOVE SPACES                    TO LC70-DETAIL                  
+                 MOVE WS-PRT-DUE-DTE(WS-I)      TO LC70-DUE-DTE                 
+                 MOVE WS-PRT-NEW-LOAN(WS-I)     TO LC70-NEW-LOAN                
+                 MOVE WS-PRT-INT-NEW(WS-I)      TO LC70-INT-NEW                 
+                 MOVE WS-PRT-DTE-INST-NEW(WS-I) TO LC70-DTE-INST-NEW            
+                 ADD +01                        TO WS-LNE-CNT                   
+                 ADD +01                        TO WS-CNT-LC70                  
+              END-PERFORM                                                       
+           END-IF.                                                              
+                                                                                
+       4000-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4100-PRINT-HEAD.                                                         
+      *-------------------------------------------------------------            
+           MOVE  WS-PAGE      TO   LC70-PRT-PAGE.                               
+                                                                                
+           MOVE  SPACES       TO   LC70-PRTREC.                                 
+           WRITE LC70-PRTREC AFTER PAGE.                                        
+           WRITE LC70-PRTREC.                                                   
+           WRITE LC70-PRTREC FROM LC70-HEADER01 AFTER 1.                        
+           IF WS-LOAN-SCH = 'P'                                                 
+              MOVE WS-LOAN-SCH        TO LC70-LOAN-SCH-P                        
+              WRITE LC70-PRTREC FROM LC70-HEADER02-CON AFTER 1                  
+           ELSE                                                                 
+              MOVE WS-LOAN-SCH        TO LC70-LOAN-SCH-NP                       
+              WRITE LC70-PRTREC FROM LC70-HEADER02-NCON AFTER 1                 
+           END-IF.                                                              
+           WRITE LC70-PRTREC FROM LC70-HEADER03 AFTER 1.                        
+           WRITE LC70-PRTREC FROM LC70-HEADER04.                                
+           MOVE  09           TO   WS-LNE-CNT.                                  
+                                                                                
+       4100-EXIT.  EXIT.                                                        
+                                                                                
+      *----------------------------------------------------------------*        
+       6000-PRINT-GRANT.                                                        
+      *----------------------------------------------------------------*        
+           MOVE  SPACES        TO  LC70-PRTREC                                  
+           WRITE LC70-PRTREC.                                                   
+           MOVE WS-LOAN-BAL-GR TO  LC70-LOAN-BAL-GR.                            
+           MOVE WS-TOT-LOAN-GR TO  LC70-TOT-LOAN-GR.                            
+           MOVE WS-NEW-LOAN-GR TO  LC70-NEW-LOAN-GR.                            
+           WRITE LC70-PRTREC FROM LC70-FOOTER.                                  
+                                                                                
+       6000-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       6100-PRINT-SUB-TOTAL.                                                    
+      *----------------------------------------------------------------*        
+           MOVE  SPACES        TO  LC70-PRTREC                                  
+           WRITE LC70-PRTREC.                                                   
+           MOVE WS-LOAN-BAL-SUB TO  LC70-LOAN-BAL-SUB.                          
+           MOVE WS-TOT-LOAN-SUB TO  LC70-TOT-LOAN-SUB.                          
+           MOVE WS-NEW-LOAN-SUB TO  LC70-NEW-LOAN-SUB.                          
+           WRITE LC70-PRTREC FROM LC70-SUB-TOTAL.                               
+                                                                                
+       6100-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       9999-WRAP-UP.                                                            
+      *----------------------------------------------------------------*        
+           CLOSE BP13FD00                                                       
+                 SY02F001                                                       
+                 BP13KD38                                                       
+                 BP13LC70.                                                      
+                                                                                
+           IF WS-KD38-STATUS = 97 OR 00                                         
+              CONTINUE                                                          
+           ELSE                                                                 
+              MOVE WS-KD38-STATUS TO RETURN-CODE                                
+              DISPLAY 'CLOSE BP13KD38 FAIL. STATUS : ' WS-KD38-STATUS           
+           END-IF.                                                              
+                                                                                
+           DISPLAY  SPACES.                                                     
+           DISPLAY '- BP13CC70 CONTROL TOTAL -----------------'.                
+           DISPLAY  SPACES.                                                     
+           DISPLAY ' NO. OF BP13FD00 RECORDS READ     : '                       
+                    WS-CNT-FD30.                                                
+           DISPLAY ' NO. OF BP13LC70 RECORDS WRITTEN  : '                       
+                    WS-CNT-LC70.                                                
+                                                                                
+           STOP RUN.                                                            
+

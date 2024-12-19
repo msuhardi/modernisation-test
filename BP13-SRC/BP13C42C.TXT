@@ -1,0 +1,812 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C42C.                                                 
+       AUTHOR.        JGO1.                                                     
+       DATE-WRITTEN.  13 NOV 2013.                                              
+      ************************************************************              
+      *   SYSTEM NAME : SOC - EMAIL ALERT FOR IRAS               *              
+      *                                                          *              
+      *   OBJECTIVE:                                             *              
+      *      GENERATE EMAIL ALERT USING THE HDB ASSESSMENT FILE  *              
+      *      FROM IRAS. ( REJECTED VOUCHERS )                    *              
+      *                                                          *              
+      *  FILES :                                                 *              
+      *  INPUT :     BB14F142  (BB14.F142.RECVIRAS)              *              
+      *              BP13K625  (BP13.K625.STAMPFEE)              *              
+      *              BP13IMSG  (BP13.IRAS.ERRMSG)                *              
+      *  OUTPUT:     BP13IRPT  (BP13.IRAS.EMAIL.REPORT)          *              
+      *              BP13IRP2  (BP13.IRAS.EMAIL.REPORT.NFND)     *              
+      *                                                          *              
+      * CHG-NO  BY   ON       DESCRIPTION                        *              
+      *-------  ---  ------   ----------                         *              
+      *BP135136 JGO1 13/01/13 INITIAL CODING                     *              
+      *BP135537 RJB1 23/02/15 CHANGE THE EMAIL RECIPIENT FROM    *              
+      *                       NICKNAME INTO COMPLETE NAME        *              
+      *BP137087 PCL4 17/11/17 TO UPDATE EMAIL RECIPIENTS         *              
+      *BP137155 PCL4 08/01/18 TO UPDATE EMAIL RECIPIENTS         *              
+      *BP138757 KV8  23/07/21 TO REPLACE KATHIJAH TO SUZANNE     *              
+      *BP139159 KAC1 28/06/22 TO REMOVED NORMALA AND AFIQAH      *              
+      ************************************************************              
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BB14F142  ASSIGN TO BB14F142.                                 
+           SELECT BP13IMSG  ASSIGN TO BP13IMSG.                                 
+           SELECT BP13IRPT  ASSIGN TO BP13IRPT.                                 
+           SELECT BP13IRP2  ASSIGN TO BP13IRP2.                                 
+                                                                                
+           SELECT BP13K625     ASSIGN   TO      BP13K625                        
+                  ORGANIZATION     IS  INDEXED                                  
+                  ACCESS MODE      IS  DYNAMIC                                  
+                  RECORD KEY       IS  K625-KEY-FLD                             
+                  ALTERNATE RECORD KEY IS K625-ALT-KEY1                         
+                                   WITH DUPLICATES                              
+                  ALTERNATE RECORD KEY IS K625-ALT-KEY2                         
+                                   WITH DUPLICATES                              
+                  FILE STATUS      IS  WS-K625-STATUS.                          
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+                                                                                
+       FD  BB14F142                   RECORD CONTAINS 200 CHARACTERS            
+                                      RECORDING MODE IS F                       
+                                      LABEL RECORD IS OMITTED.                  
+       COPY BB14F142.                                                           
+                                                                                
+       FD  BP13IMSG                   RECORD CONTAINS 200 CHARACTERS            
+                                      RECORDING MODE IS F                       
+                                      LABEL RECORD IS OMITTED.                  
+       01 IRAS-ERRMSG                   PIC X(200).                             
+                                                                                
+       FD  BP13IRPT                   RECORD CONTAINS 130 CHARACTERS            
+                                      RECORDING MODE IS F                       
+                                      LABEL RECORD IS OMITTED.                  
+       01 IRPT-REC                      PIC X(130).                             
+                                                                                
+       FD  BP13IRP2                   RECORD CONTAINS 130 CHARACTERS            
+                                      RECORDING MODE IS F                       
+                                      LABEL RECORD IS OMITTED.                  
+       01 IRP2-REC                      PIC X(130).                             
+                                                                                
+       FD   BP13K625                                                            
+            RECORD CONTAINS  500 CHARACTERS.                                    
+       COPY BP13K625.                                                           
+                                                                                
+      *-------------------------                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------                                                
+       01  WS-FILE-STATUS.                                                      
+           05  WS-K625-STATUS           PIC X(02).                              
+       01  WS-FLAGS-INDICATORS.                                                 
+           05  WS-F142-EOF              PIC X      VALUE 'N'.                   
+           05  WS-F142-FIRST            PIC X      VALUE 'Y'.                   
+           05  WS-K625-EOF              PIC X      VALUE 'N'.                   
+           05  WS-IRAS-EOF              PIC X      VALUE 'N'.                   
+           05  WS-ERROR-FND             PIC X      VALUE 'N'.                   
+           05  WS-K625-FND              PIC X      VALUE 'N'.                   
+           05  WS-GOTO-NEXT-BATCH       PIC X      VALUE 'N'.                   
+       01  WS-REJECT-CDE                PIC X(3)   VALUE SPACES.                
+       01  WS-REJECT-MSG                PIC X(100) VALUE SPACES.                
+       01  WS-COUNTERS.                                                         
+           05  WS-CNT-F142-RD           PIC 9(5)   VALUE ZEROES.                
+           05  WS-CNT-IRAS-RD           PIC 9(5)   VALUE ZEROES.                
+           05  WS-CNT-BATCH-PROCESSED   PIC 9(5)   VALUE ZEROES.                
+           05  WS-CNT-BATCH-SKIP        PIC 9(5)   VALUE ZEROES.                
+           05  WS-CNTR                  PIC 9(5)   VALUE ZEROES.                
+       01  WS-SERIAL-NUMBER             PIC 9(4)   VALUE ZEROES.                
+       01  WS-SERIAL-NUMBER2            PIC 9(4)   VALUE ZEROES.                
+       01  WS-ERR-MSG.                                                          
+           05  WS-MSG-DETAIL OCCURS 100 TIMES.                                  
+               10  WS-ERR-CODE      PIC X(3).                                   
+               10  WS-REJ-MSG       PIC X(100).                                 
+               10  FILLER           PIC X(97).                                  
+                                                                                
+      *VARIABLES FOR EMAIL                                                      
+       01  WS-HDR-LINES.                                                        
+           05 WS-SUBJ                   PIC X(9)                                
+              VALUE 'SUBJECT:'.                                                 
+           05 WS-SUBJ2                  PIC X(31)                               
+              VALUE 'REPORT ON VOUCHERS SENT TO IRAS'.                          
+                                                                                
+       01  WS-HDR2-LINES.                                                       
+           05 WS-SUBJ                   PIC X(9)                                
+              VALUE 'SUBJECT:'.                                                 
+           05 WS-SUBJ2                  PIC X(31)                               
+              VALUE 'BATCH NUMBER NOT FOUND         '.                          
+                                                                                
+       01  MAIL-HDR1.                                                           
+           05  FILLER          PIC X(12)  VALUE 'HELO SGPHDB1'.                 
+           05  FILLER          PIC X(88)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-HDR2.                                                           
+           05  FILLER          PIC X(11)  VALUE 'MAIL FROM:<'.                  
+           05  MAIL-SENDID     PIC X(04)  VALUE 'OPCP'.                         
+           05  FILLER          PIC X(09)  VALUE '@SGPHDB1>'.                    
+           05  FILLER          PIC X(76)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL1A.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  RCPT-ID         PIC X(26)  VALUE                                 
+                               'BALASUBRAMANIAM_ARUNASALAM'.                    
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  MAIL-DTL1B.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  RCPT-ID         PIC X(34)  VALUE                                 
+                               'NOORJAHAN_SHAIK_MOHAMED_GULEMKADER'.            
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  MAIL-DTL1D.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  RCPT-ID    PIC X(23) VALUE 'MUHAMMED_SHARIFF_SAHROM'.            
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  MAIL-DTL1E.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+      *    05  RCPT-ID PIC X(24)  VALUE 'KATHIJAH_BEE_ALI_MOHAMED'.             
+           05  RCPT-ID PIC X(15)  VALUE 'SUZANNE_SC_HENG'.                      
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  MAIL-DTL1G.                                                          
+           05  FILLER          PIC X(26)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2.                                                           
+           05  FILLER          PIC X(04)  VALUE 'DATA'.                         
+           05  FILLER          PIC X(96)  VALUE SPACES.                         
+                                                                                
+                                                                                
+       01  MAIL-DTL3.                                                           
+           05  FILLER          PIC X(05)  VALUE 'FROM:'.                        
+           05  MAIL-SENDMAILID PIC X(26)  VALUE                                 
+               'SOC - EMAIL ALERT'.                                             
+           05  FILLER          PIC X(69)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL4A.                                                          
+           05  FILLER          PIC X(04)  VALUE 'TO:<'.                         
+           05  RCPT-ID         PIC X(26)  VALUE                                 
+                               'BALASUBRAMANIAM_ARUNASALAM'.                    
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  MAIL-DTL4B.                                                          
+           05  FILLER          PIC X(04)  VALUE 'TO:<'.                         
+           05  RCPT-ID         PIC X(34)  VALUE                                 
+                               'NOORJAHAN_SHAIK_MOHAMED_GULEMKADER'.            
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  MAIL-DTL4D.                                                          
+           05  FILLER          PIC X(04)  VALUE 'TO:<'.                         
+           05  RCPT-ID PIC X(23) VALUE 'MUHAMMED_SHARIFF_SAHROM'.               
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  MAIL-DTL4E.                                                          
+           05  FILLER          PIC X(04)  VALUE 'TO:<'.                         
+      *    05  RCPT-ID PIC X(24)  VALUE 'KATHIJAH_BEE_ALI_MOHAMED'.             
+           05  RCPT-ID PIC X(15)  VALUE 'SUZANNE_SC_HENG'.                      
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  MAIL-DTL4G.                                                          
+           05  FILLER          PIC X(21)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-TRAILER.                                                        
+           05  FILLER          PIC X(01)  VALUE '.'.                            
+                                                                                
+                                                                                
+      *VARIABLES FOR REPORT                                                     
+       01  WS-RPT-HDR1.                                                         
+           05 WS-HDR-HDB-SENT       PIC X(15) VALUE 'PROCESS DATE :'.           
+           05 FILLER                PIC X(03) VALUE SPACES.                     
+           05 WS-HDR-PROC-DATE      PIC X(08) VALUE SPACES.                     
+                                                                                
+       01  WS-RPT-DASH              PIC X(130) VALUE ALL '-'.                   
+       01  WS-RPT-HDR2.                                                         
+           05 WS-HDR-SER-NUM        PIC X(04) VALUE 'S/N '.                     
+           05 FILLER                PIC X(03) VALUE SPACES.                     
+           05 WS-HDR-BTCH-NUM       PIC X(20) VALUE 'BATCH NUMBER'.             
+           05 FILLER                PIC X(03) VALUE SPACES.                     
+           05 WS-HDR-VCHR-NUM       PIC X(13) VALUE 'VOUCHER NUM  '.            
+           05 FILLER                PIC X(03) VALUE SPACES.                     
+           05 WS-HDR-REGN-NUM       PIC X(08) VALUE 'REGN NUM'.                 
+           05 FILLER                PIC X(03) VALUE SPACES.                     
+           05 WS-HDR-SCH-ACCT       PIC X(15) VALUE 'SCHEME ACCT'.              
+           05 FILLER                PIC X(02) VALUE SPACES.                     
+           05 WS-HDR-ADDRESS        PIC X(56) VALUE 'FLAT ADDRESS'.             
+                                                                                
+       01  WS-RPT-DTL.                                                          
+           05 WS-DTL-SER-NUM        PIC ZZZ9.                                   
+           05 FILLER                PIC X(03) VALUE SPACES.                     
+           05 WS-DTL-BTCH-NUM       PIC X(20) VALUE SPACES.                     
+           05 FILLER                PIC X(03) VALUE SPACES.                     
+           05 WS-DTL2.                                                          
+              10 WS-DTL-VCHR-NUM    PIC X(13) VALUE SPACES.                     
+              10 FILLER             PIC X(03) VALUE SPACES.                     
+              10 WS-DTL-REGN-NUM    PIC X(08) VALUE SPACES.                     
+              10 FILLER             PIC X(03) VALUE SPACES.                     
+              10 WS-DTL-SCH-ACCT    PIC X(15) VALUE SPACES.                     
+              10 FILLER             PIC X(02) VALUE SPACES.                     
+              10 WS-DTL-ADDRESS     PIC X(56) VALUE SPACES.                     
+                                                                                
+       01  WS-RPT-TRLR.                                                         
+           05 WS-TRL-REMARKS        PIC X(08)  VALUE 'ERROR :'.                 
+           05 FILLER                PIC X(03)  VALUE SPACES.                    
+           05 WS-TRL-ERR-MSG        PIC X(100) VALUE SPACES.                    
+                                                                                
+       01  WS-RPT2-HDR.                                                         
+           05 WS-HDR2-SER-NUM       PIC X(04) VALUE 'S/N '.                     
+           05 FILLER                PIC X(03) VALUE SPACES.                     
+           05 WS-HDR2-BTCH-NUM      PIC X(20) VALUE 'BATCH NUMBER'.             
+           05 FILLER                PIC X(03) VALUE SPACES.                     
+                                                                                
+       01  WS-RPT2-DTL.                                                         
+           05 WS-DTL2-SER-NUM       PIC ZZZ9.                                   
+           05 FILLER                PIC X(03) VALUE SPACES.                     
+           05 WS-DTL2-BTCH-NUM       PIC X(20) VALUE SPACES.                    
+           05 FILLER                PIC X(03) VALUE SPACES.                     
+                                                                                
+       01  WS-RPT-END.                                                          
+           05 FILLER                PIC X(55) VALUE ALL '-'.                    
+           05 FILLER                PIC X(20) VALUE                             
+              '    END OF REPORT   '.                                           
+           05 FILLER                PIC X(55) VALUE ALL '-'.                    
+                                                                                
+       01  SQL-CODE                    PIC 9(4).                                
+                                                                                
+      *----------------------------------------------------------------*        
+      *        LINKAGE FOR SUB-PROGRAM BP13C913                        *        
+      *----------------------------------------------------------------*        
+       01  WS-LINK-REC.                                                         
+           05  WS-LINK-NUM-SCH-ACC.                                             
+               10  WS-LINK-NUM-SCH     PIC X(4).                                
+               10  WS-LINK-NUM-ACC     PIC X(5).                                
+                                                                                
+       COPY P13COMM8.                                                           
+                                                                                
+      *-------------------------                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------                                                
+       0000-MAIN.                                                               
+                                                                                
+            PERFORM 0500-INITIALIZE     THRU 0500-EXIT.                         
+            PERFORM 2000-PROCESS        THRU 2000-EXIT                          
+                    UNTIL WS-F142-EOF = 'Y'.                                    
+            PERFORM 8000-SUMMARY        THRU 8000-EXIT.                         
+            PERFORM 9000-CLOSE-FILES    THRU 9000-EXIT.                         
+                                                                                
+       0000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       0500-INITIALIZE.                                                         
+      *-------------------------                                                
+                                                                                
+            OPEN INPUT       BB14F142                                           
+                             BP13IMSG                                           
+                             BP13K625                                           
+                 OUTPUT      BP13IRPT                                           
+                             BP13IRP2.                                          
+                                                                                
+           IF    WS-K625-STATUS = '00' OR '97'                                  
+                 CONTINUE                                                       
+           ELSE                                                                 
+                 DISPLAY 'ERROR WHILE OPENING BP13K625' WS-K625-STATUS          
+                 PERFORM  9000-CLOSE-FILES THRU     9000-EXIT                   
+           END-IF.                                                              
+                                                                                
+            PERFORM 1000-READ-IRASMSG THRU 1000-EXIT                            
+                    UNTIL WS-IRAS-EOF = 'Y'.                                    
+                                                                                
+       0500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       1000-READ-IRASMSG.                                                       
+      *-------------------------                                                
+                                                                                
+            READ BP13IMSG                                                       
+                 AT END MOVE 'Y' TO WS-IRAS-EOF                                 
+                 GO TO 1000-EXIT.                                               
+            ADD 1 TO WS-CNT-IRAS-RD.                                            
+            MOVE IRAS-ERRMSG TO WS-MSG-DETAIL(WS-CNT-IRAS-RD).                  
+                                                                                
+       1000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       1500-CHECK-ERRMSG.                                                       
+      *-------------------------                                                
+                                                                                
+            ADD 1 TO WS-CNTR.                                                   
+            IF WS-REJECT-CDE = WS-ERR-CODE(WS-CNTR)                             
+               MOVE WS-REJ-MSG(WS-CNTR) TO WS-REJECT-MSG                        
+               MOVE 'Y' TO WS-ERROR-FND                                         
+            END-IF.                                                             
+                                                                                
+       1500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------                                                
+       2000-PROCESS.                                                            
+      *-------------------------                                                
+                                                                                
+            PERFORM 2500-READ-F142    THRU 2500-EXIT.                           
+            PERFORM 3000-CHECK-RECORD THRU 3000-EXIT.                           
+                                                                                
+       2000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       2500-READ-F142.                                                          
+      *-------------------------                                                
+                                                                                
+            READ BB14F142                                                       
+                 AT END MOVE 'Y' TO WS-F142-EOF                                 
+                 GO TO 2000-EXIT.                                               
+            ADD 1 TO WS-CNT-F142-RD.                                            
+                                                                                
+       2500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       3000-CHECK-RECORD.                                                       
+      *-------------------------                                                
+                                                                                
+            MOVE 0 TO WS-CNTR.                                                  
+            MOVE SPACES TO WS-REJECT-MSG.                                       
+            MOVE 'N'    TO WS-ERROR-FND.                                        
+            EVALUATE BB14F142-HEADER(1:6)                                       
+            WHEN 'HEAD  '                                                       
+                 PERFORM 4000-PROCESS-HEADER THRU 4000-EXIT                     
+            WHEN 'BATCH '                                                       
+                 PERFORM 5000-PROCESS-BATCH  THRU 5000-EXIT                     
+            WHEN 'DETAIL'                                                       
+                 IF WS-GOTO-NEXT-BATCH NOT = 'Y'                                
+                    PERFORM 6000-PROCESS-DETAIL THRU 6000-EXIT                  
+                 END-IF                                                         
+            WHEN OTHER                                                          
+                 CONTINUE                                                       
+            END-EVALUATE.                                                       
+                                                                                
+                                                                                
+       3000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       4000-PROCESS-HEADER.                                                     
+      *-------------------------                                                
+                                                                                
+            IF F142-NUM-REJECT NOT = SPACES AND LOW-VALUES                      
+               MOVE F142-NUM-REJECT TO WS-REJECT-CDE                            
+               PERFORM 1500-CHECK-ERRMSG  THRU 1500-EXIT                        
+                   UNTIL  WS-REJECT-CDE = WS-ERR-CODE(WS-CNTR)                  
+                        OR WS-CNTR > WS-CNT-IRAS-RD                             
+               IF WS-ERROR-FND NOT = 'Y'                                        
+                  STRING 'ERROR CODE NOT FOUND:' WS-REJECT-CDE                  
+                  DELIMITED BY SIZE INTO WS-REJECT-MSG                          
+               END-IF                                                           
+               PERFORM 7000-FORMAT-EMAIL THRU 7000-EXIT                         
+            END-IF.                                                             
+                                                                                
+       4000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       5000-PROCESS-BATCH.                                                      
+      *-------------------------                                                
+                                                                                
+            MOVE 'N' TO WS-GOTO-NEXT-BATCH.                                     
+            MOVE 'N' TO WS-K625-FND.                                            
+            INITIALIZE WS-RPT-DTL.                                              
+            INITIALIZE WS-RPT2-DTL.                                             
+                                                                                
+            IF WS-F142-FIRST = 'Y'                                              
+               AND F142-DTE-VALUE NOT = SPACES AND LOW-VALUES                   
+               MOVE F142-DTE-VALUE           TO WS-HDR-PROC-DATE                
+               MOVE 'N' TO WS-F142-FIRST                                        
+            END-IF.                                                             
+                                                                                
+            IF F142-REJECTION-CDE NOT = SPACES AND LOW-VALUES                   
+               MOVE F142-REJECTION-CDE  TO WS-REJECT-CDE                        
+               PERFORM 1500-CHECK-ERRMSG  THRU 1500-EXIT                        
+                   UNTIL  WS-REJECT-CDE = WS-ERR-CODE(WS-CNTR)                  
+                        OR WS-CNTR > WS-CNT-IRAS-RD                             
+               IF WS-ERROR-FND NOT = 'Y'                                        
+                  STRING 'ERROR CODE NOT FOUND:' WS-REJECT-CDE                  
+                  DELIMITED BY SIZE INTO WS-REJECT-MSG                          
+               END-IF                                                           
+               OPEN INPUT       BP13K625                                        
+               MOVE F142-NUM-BATCH(1:13)  TO K625-ALT-KEY2                      
+               MOVE F142-NUM-BATCH     TO WS-DTL2-BTCH-NUM                      
+               PERFORM 5100-CHECK-BATCH THRU 5100-EXIT                          
+                   CLOSE        BP13K625                                        
+               MOVE F142-NUM-BATCH     TO WS-DTL-BTCH-NUM                       
+               ADD 1 TO WS-CNT-BATCH-PROCESSED                                  
+               PERFORM 7000-FORMAT-EMAIL THRU 7000-EXIT                         
+            ELSE                                                                
+               MOVE 'Y' TO WS-GOTO-NEXT-BATCH                                   
+            END-IF.                                                             
+                                                                                
+       5000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       5100-CHECK-BATCH.                                                        
+      *-------------------------                                                
+                                                                                
+            START BP13K625 KEY = K625-ALT-KEY2.                                 
+                                                                                
+            EVALUATE  WS-K625-STATUS                                            
+               WHEN '00'                                                        
+                   IF K625-ALT-KEY2 NOT = F142-NUM-BATCH(1:13)                  
+                      MOVE 'Y' TO WS-GOTO-NEXT-BATCH                            
+                      ADD 1 TO WS-CNT-BATCH-SKIP                                
+                      PERFORM 7500-FORMAT-EMAIL-NOTFND THRU 7500-EXIT           
+                      GO TO 5000-EXIT                                           
+                   END-IF                                                       
+               WHEN '10'                                                        
+               WHEN '23'                                                        
+                     DISPLAY 'BATCH NUMBER NOT FOUND IN BP13K5100'              
+                              WS-DTL-BTCH-NUM                                   
+                     MOVE 'Y' TO WS-GOTO-NEXT-BATCH                             
+                     ADD 1 TO WS-CNT-BATCH-SKIP                                 
+                     PERFORM 7500-FORMAT-EMAIL-NOTFND THRU 7500-EXIT            
+                     GO TO 5000-EXIT                                            
+               WHEN OTHER                                                       
+                    DISPLAY 'ERROR WHILE STARTING BROWSE-BP13K625 '             
+                    MOVE WS-K625-STATUS TO RETURN-CODE                          
+                    PERFORM 9000-CLOSE-FILES                                    
+            END-EVALUATE.                                                       
+                                                                                
+                                                                                
+       5100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       5200-READNEXT-BP13K625.                                                  
+      *-------------------------                                                
+                                                                                
+            READ BP13K625 NEXT AT END MOVE 'Y' TO WS-K625-EOF                   
+               GO TO 5200-EXIT.                                                 
+                                                                                
+            IF K625-ALT-KEY2 NOT = F142-NUM-BATCH(1:13)                         
+               MOVE 'Y' TO WS-K625-EOF                                          
+            ELSE                                                                
+               MOVE 'Y' TO WS-K625-FND                                          
+            END-IF.                                                             
+                                                                                
+                                                                                
+       5200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       6000-PROCESS-DETAIL.                                                     
+      *-------------------------                                                
+                                                                                
+            INITIALIZE WS-DTL2.                                                 
+            INITIALIZE WS-TRL-ERR-MSG.                                          
+            IF F142-REJECT-CDE NOT = SPACES AND LOW-VALUES                      
+               MOVE F142-REJECT-CDE     TO WS-REJECT-CDE                        
+               PERFORM 1500-CHECK-ERRMSG  THRU 1500-EXIT                        
+                   UNTIL  WS-REJECT-CDE = WS-ERR-CODE(WS-CNTR)                  
+                        OR WS-CNTR > WS-CNT-IRAS-RD                             
+               IF WS-ERROR-FND NOT = 'Y'                                        
+                  STRING 'ERROR CODE NOT FOUND:' WS-REJECT-CDE                  
+                  DELIMITED BY SIZE INTO WS-REJECT-MSG                          
+               END-IF                                                           
+               PERFORM 6100-PASS-DETAIL  THRU 6100-EXIT                         
+               PERFORM 7000-FORMAT-EMAIL THRU 7000-EXIT                         
+            END-IF.                                                             
+                                                                                
+       6000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       6100-PASS-DETAIL.                                                        
+      *-------------------------                                                
+                                                                                
+            MOVE SPACES TO WS-DTL-VCHR-NUM                                      
+            IF F142-NUM-HDB-REF NOT = SPACES AND LOW-VALUES                     
+               AND F142-REJECT-CDE NOT = 'D01'                                  
+               STRING F142-NUM-HDB-REF(1:4) '-'                                 
+                      F142-NUM-HDB-REF(5:4) '-'                                 
+                      F142-NUM-HDB-REF(9:1) '-'                                 
+                      F142-NUM-HDB-REF(10:2) DELIMITED BY                       
+                      SIZE INTO WS-DTL-SCH-ACCT                                 
+               MOVE WS-DTL-BTCH-NUM(1:13)  TO K625-ALT-KEY2                     
+               MOVE 'N'          TO WS-K625-EOF                                 
+               OPEN INPUT       BP13K625                                        
+               MOVE WS-DTL-BTCH-NUM(1:13)  TO K625-ALT-KEY2                     
+               MOVE 'N'          TO WS-K625-EOF                                 
+               PERFORM 6200-STARTBR-K625 THRU 6200-EXIT                         
+               CLOSE            BP13K625                                        
+            END-IF.                                                             
+                                                                                
+      *------------------------------------                                     
+      *      CALL BP13C913 TO GET ADDRESS                                       
+      *------------------------------------                                     
+                                                                                
+            MOVE  SPACES                  TO  BP13COMM8-REC.                    
+            MOVE  SPACES                  TO  WS-DTL-ADDRESS.                   
+            INITIALIZE                        BP13COMM8-REC.                    
+                                                                                
+            MOVE  F142-NUM-HDB-REF        TO  WS-LINK-REC.                      
+                                                                                
+            PERFORM 6400-CALL-BP13C913 THRU  6400-EXIT.                         
+                                                                                
+            IF COMM8-CDE-SYSERR = 0                                             
+               STRING COMM8-NUM-BLK ' ' COMM8-NME-STREET ' '                    
+                      COMM8-NUM-LEVEL '-' COMM8-NUM-UNIT-MAIN                   
+                      COMM8-NUM-UNIT-SUB ' '                                    
+                      COMM8-NUM-POSTAL-CODE DELIMITED BY SIZE                   
+                      INTO WS-DTL-ADDRESS                                       
+            END-IF.                                                             
+                                                                                
+                                                                                
+       6100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       6200-STARTBR-K625.                                                       
+      *-------------------------                                                
+                                                                                
+            START BP13K625 KEY = K625-ALT-KEY2.                                 
+                                                                                
+            EVALUATE  WS-K625-STATUS                                            
+               WHEN '00'                                                        
+                     PERFORM 6300-READNEXT-BP13K625 THRU 6300-EXIT              
+                        UNTIL WS-K625-EOF = 'Y'                                 
+               WHEN '10'                                                        
+               WHEN '23'                                                        
+                     DISPLAY 'BATCH NUMBER NOT FOUND IN BP13K6200'              
+                              WS-DTL-BTCH-NUM                                   
+               WHEN OTHER                                                       
+                    DISPLAY 'ERROR WHILE STARTING BROWSE-BP13K625 '             
+                    MOVE WS-K625-STATUS TO RETURN-CODE                          
+                    PERFORM 9000-CLOSE-FILES                                    
+            END-EVALUATE.                                                       
+                                                                                
+                                                                                
+       6200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       6300-READNEXT-BP13K625.                                                  
+      *-------------------------                                                
+                                                                                
+            READ BP13K625 NEXT AT END MOVE 'Y' TO WS-K625-EOF                   
+               GO TO 6300-EXIT.                                                 
+                                                                                
+            IF K625-ALT-KEY2 NOT = WS-DTL-BTCH-NUM                              
+               MOVE 'Y'  TO WS-K625-EOF                                         
+               GO TO 6300-EXIT                                                  
+            ELSE                                                                
+               IF K625-NUM-HDB-REF = F142-NUM-HDB-REF                           
+                  MOVE K625-NUM-REGN TO WS-DTL-REGN-NUM                         
+                  STRING K625-NUM-VRCH(1:3) '-'                                 
+                         K625-NUM-VRCH(4:2) '-'                                 
+                         K625-NUM-VRCH(6:6) DELIMITED                           
+                         BY SIZE INTO WS-DTL-VCHR-NUM                           
+               END-IF                                                           
+            END-IF.                                                             
+                                                                                
+                                                                                
+       6300-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       6400-CALL-BP13C913.                                                      
+      *-------------------------                                                
+                                                                                
+            CALL 'BP13C913'     USING  WS-LINK-REC,                             
+                                       BP13COMM8-REC.                           
+                                                                                
+            IF COMM8-CDE-SYSERR NOT = 0                                         
+               MOVE COMM8-CDE-SYSERR TO SQL-CODE                                
+               IF COMM8-CDE-SYSERR = 100                                        
+                  DISPLAY 'SCHEME-ACCT-NO = ' WS-LINK-REC                       
+                  DISPLAY 'SCH-ACC NOT FOUND INF PIDB TABLE   ' SQL-CODE        
+               ELSE                                                             
+                  DISPLAY 'ERROR IN READING PIDB TABLE   ' SQL-CODE.            
+                                                                                
+       6400-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------                                                
+       7000-FORMAT-EMAIL.                                                       
+      *-------------------------                                                
+                                                                                
+            IF WS-SERIAL-NUMBER = 0                                             
+               PERFORM 7100-WRITE-HEADER THRU 7100-EXIT                         
+            END-IF                                                              
+            ADD 1 TO WS-SERIAL-NUMBER.                                          
+            MOVE WS-SERIAL-NUMBER TO WS-DTL-SER-NUM.                            
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC FROM  WS-RPT-DTL.                                    
+            INITIALIZE WS-TRL-ERR-MSG                                           
+            MOVE WS-REJECT-MSG TO WS-TRL-ERR-MSG.                               
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC FROM  WS-RPT-TRLR.                                   
+                                                                                
+       7000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       7100-WRITE-HEADER.                                                       
+      *-------------------------                                                
+                                                                                
+            PERFORM 7200-WRITE-EMAIL-HEADER THRU 7200-EXIT.                     
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC FROM  WS-RPT-HDR1.                                   
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC FROM  WS-RPT-DASH.                                   
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC FROM  WS-RPT-HDR2.                                   
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC FROM  WS-RPT-DASH.                                   
+                                                                                
+       7100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       7200-WRITE-EMAIL-HEADER.                                                 
+      *-------------------------                                                
+                                                                                
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-HDR1.                                   
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-HDR2.                                   
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-DTL1A.                                  
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-DTL1B.                                  
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-DTL1D.                                  
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-DTL1E.                                  
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-DTL2.                                   
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-DTL3.                                   
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-DTL4A.                                  
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-DTL4B.                                  
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-DTL4D.                                  
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-DTL4E.                                  
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM WS-HDR-LINES.                                
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC.                                                     
+                                                                                
+       7200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       7500-FORMAT-EMAIL-NOTFND.                                                
+      *-------------------------                                                
+                                                                                
+            IF WS-SERIAL-NUMBER2 = 0                                            
+               PERFORM 7600-WRITE-HEADER THRU 7600-EXIT                         
+            END-IF                                                              
+            ADD 1 TO WS-SERIAL-NUMBER2.                                         
+            MOVE WS-SERIAL-NUMBER2 TO WS-DTL2-SER-NUM.                          
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRP2-REC FROM  WS-RPT2-DTL.                                   
+                                                                                
+       7500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       7600-WRITE-HEADER.                                                       
+      *-------------------------                                                
+                                                                                
+            PERFORM 7700-WRITE-EMAIL-HEADER THRU 7700-EXIT.                     
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC FROM  WS-RPT-HDR1.                                   
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC FROM  WS-RPT-DASH.                                   
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC FROM  WS-RPT2-HDR.                                   
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC FROM  WS-RPT-DASH.                                   
+                                                                                
+       7600-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       7700-WRITE-EMAIL-HEADER.                                                 
+      *-------------------------                                                
+                                                                                
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-HDR1.                                   
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-HDR2.                                   
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-DTL1A.                                  
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-DTL1B.                                  
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-DTL1D.                                  
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-DTL1E.                                  
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-DTL2.                                   
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-DTL3.                                   
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-DTL4A.                                  
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-DTL4B.                                  
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-DTL4D.                                  
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-DTL4E.                                  
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM WS-HDR2-LINES.                               
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC.                                                     
+                                                                                
+       7700-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------                                                
+       8000-SUMMARY.                                                            
+      *-------------------------                                                
+                                                                                
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM WS-RPT-END.                                  
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC.                                                     
+            INITIALIZE IRPT-REC.                                                
+            STRING 'TOTAL RECORDS PROCESSED: ' WS-CNT-F142-RD                   
+               DELIMITED BY SIZE INTO IRPT-REC.                                 
+            WRITE IRPT-REC.                                                     
+            INITIALIZE IRPT-REC.                                                
+            STRING 'BATCH RECORDS PROCESSED: ' WS-CNT-BATCH-PROCESSED           
+               DELIMITED BY SIZE INTO IRPT-REC.                                 
+            WRITE IRPT-REC.                                                     
+            INITIALIZE IRPT-REC.                                                
+            STRING 'BATCH RECORDS NOT FOUND: ' WS-CNT-BATCH-SKIP                
+               DELIMITED BY SIZE INTO IRPT-REC.                                 
+            WRITE IRPT-REC.                                                     
+                                                                                
+            INITIALIZE IRPT-REC.                                                
+            WRITE IRPT-REC    FROM MAIL-TRAILER.                                
+            INITIALIZE IRP2-REC.                                                
+            WRITE IRP2-REC    FROM MAIL-TRAILER.                                
+                                                                                
+       8000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------                                                
+       9000-CLOSE-FILES.                                                        
+      *-------------------------                                                
+                                                                                
+            DISPLAY '*********************'.                                    
+            DISPLAY '*  BP13C42C TOTALS  *'.                                    
+            DISPLAY '*********************'.                                    
+            DISPLAY 'INP READ  :  ' WS-CNT-F142-RD.                             
+            DISPLAY 'BATCH PROC:  ' WS-CNT-BATCH-PROCESSED.                     
+            DISPLAY 'BATCH SKIP:  ' WS-CNT-BATCH-SKIP.                          
+                                                                                
+            CLOSE BB14F142                                                      
+                  BP13IMSG                                                      
+                  BP13K625                                                      
+                  BP13IRPT                                                      
+                  BP13IRP2.                                                     
+                                                                                
+            STOP RUN.                                                           
+                                                                                
+       9000-EXIT.                                                               
+            EXIT.                                                               
+

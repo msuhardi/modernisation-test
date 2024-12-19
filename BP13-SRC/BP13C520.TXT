@@ -1,0 +1,923 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.   BP13C520.                                                  
+      *AUTHOR.       ANC1.                                                      
+      *DATE-WRITTEN. 26/12/2002.                                                
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (SOC)                                 *            
+      * ========================================================== *            
+      *  OBJECTIVE:  TO DETERMINE LOAN TAG AND PREMIUM CODE.       *            
+      *              TO UPDATE LOAN TAG AND PREMIUM CODE TO F520.  *            
+      *                                                            *            
+      *  INPUT:  BP13F558                                          *            
+      *          BP13F520                                          *            
+      *  OUTPUT: P13F520A                                          *            
+      *          BP13L520                                          *            
+      *                                                            *            
+      * ---------------------------------------------------------- *            
+      * CHG-NO   CHG-DATE  BY   DESCRIPTION                        *            
+      * ------   --------  --   -----------                        *            
+      * BP132258 26122002 ANC1  NEW PGM.                           *            
+      * BP132283 11012003 ANC1  ADD WRITING TO BP13K648 FILE.      *            
+      * BP132302 21022003 ANC1  TO WRITE LOAN-POLICY-CODE IN K648  *            
+      *                         AND F520 FILE.                     *            
+      * BP132302 13032003 ANC1  TO WRITE ELIG-POLICY-CODE.         *            
+      * BP132387 28072003 ANC1  TO CHANGE F558-CDE-FLAT-TYPE-RESALE*            
+      *                         TO F558-CDE-FT-RSL-LATEST AND F558-*            
+      *                         DTE-APPROVAL-RSL TO F558-DTE-APPR- *            
+      *                         RSL-LATEST TO CATER FOR LATEST APPR*            
+      *                         DATE IN RESALE HISTORY.            *            
+      * BP132451 02122003 SK    ADD REPORT BP13L520                *            
+      * BP132626 24112004 SK    CHANGE DTE-REGN TO DTE-REQUEST     *            
+      * BP132590 04102004 JF4   INCLUDE SLS & MAM FT IN UPG CHECK  *            
+      * BP133837 05032010 IL5   NEW POLICY ON 2ND CONC LOAN POLICY *            
+      * BP135921 15092015 LSB1  ADD RESALE-STATUS PD AS PREMIUM-CD *            
+      * BP136007 04112015 SMR2  CATER FOR 2-ROOM FLEXI             *            
+      * BP136901 24072017 FNP1  CATER FOR ROF MODE, FT=RF--> FT=5  *            
+      * BP138374 28072020 FP6   REVERT CHANGES FOR UPGRADER        *            
+      * BP138374 06082020 LSB1  REMOVE CHECKING OF UPGRADER AND HH *            
+      *                         TYPE FOR LOAN TAG                  *            
+      * BP138565 25012021 KR13  TO CATER FOR FLAT-TYPE - '1F'.     *            
+      * BP139747 22012024 EL27  HFE TAKE IN LOAN AND ORIG LOAN TAG *            
+      *                         FOR OCT 2023 ONWARDS               *            
+      * ========================================================== *            
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT BP13F558 ASSIGN TO BP13F558.                                  
+           SELECT BP13F520 ASSIGN TO BP13F520.                                  
+                                                                                
+           SELECT BR10K010 ASSIGN TO BR10K010                                   
+                  ACCESS MODE     IS DYNAMIC                                    
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K010-KEY-FLD                               
+                  FILE STATUS     IS BR10K010-STATUS.                           
+                                                                                
+           SELECT BP13K648 ASSIGN TO BP13K648                                   
+                  ACCESS MODE     IS RANDOM                                     
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K648-KEY-FLD                               
+                  FILE STATUS     IS BP13K648-STATUS.                           
+                                                                                
+           SELECT P13F520A ASSIGN TO P13F520A.                                  
+           SELECT BP13L520 ASSIGN TO BP13L520.                                  
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD  BP13F558                BLOCK  CONTAINS 0 RECORDS                    
+                                   RECORD CONTAINS 600 CHARACTERS               
+                                   RECORDING MODE IS F                          
+                                   LABEL RECORDS ARE STANDARD.                  
+       COPY BP13F558.                                                           
+                                                                                
+       FD  BP13F520                BLOCK  CONTAINS 0 RECORDS                    
+                                   RECORD CONTAINS 500 CHARACTERS               
+                                   RECORDING MODE IS F                          
+                                   LABEL RECORDS ARE STANDARD.                  
+       COPY BP13F520.                                                           
+                                                                                
+       FD   BR10K010                                                            
+                                   RECORD CONTAINS 300 CHARACTERS.              
+       COPY BR10K010.                                                           
+                                                                                
+       FD   BP13K648                                                            
+                                   RECORD CONTAINS 500 CHARACTERS.              
+       COPY BP13K648.                                                           
+                                                                                
+       FD  P13F520A                BLOCK  CONTAINS 0 RECORDS                    
+                                   RECORD CONTAINS 500 CHARACTERS               
+                                   RECORDING MODE IS F                          
+                                   LABEL RECORDS ARE STANDARD.                  
+       01  P13F520A-REC            PIC X(500).                                  
+                                                                                
+       FD  BP13L520                BLOCK  CONTAINS 0 RECORDS                    
+                                   RECORD CONTAINS 132 CHARACTERS               
+                                   RECORDING MODE IS F                          
+                                   LABEL RECORDS ARE STANDARD.                  
+       01  BP13L520-REC            PIC X(132).                                  
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  BR10K010-STATUS             PIC 9(2)    VALUE ZEROES.                
+       01  BP13K648-STATUS             PIC 9(2)    VALUE ZEROES.                
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F520-READ            PIC 9(8)    VALUE ZEROES.                
+           05  WS-F558-READ            PIC 9(8)    VALUE ZEROES.                
+           05  WS-MATCH                PIC 9(8)    VALUE ZEROES.                
+           05  WS-F558-NOTMATCH        PIC 9(8)    VALUE ZEROES.                
+           05  WS-F520-NOTMATCH        PIC 9(8)    VALUE ZEROES.                
+           05  WS-F520A-WRITE          PIC 9(8)    VALUE ZEROES.                
+           05  WS-K648-WRITE           PIC 9(8)    VALUE ZEROES.                
+           05  WS-K648-UPDATE          PIC 9(8)    VALUE ZEROES.                
+                                                                                
+       01  WS-TAGS.                                                             
+           05  WS-K010-EOF             PIC X       VALUE 'N'.                   
+           05  WS-PPO-TAG              PIC X       VALUE 'N'.                   
+           05  WS-UPG-FT               PIC X       VALUE 'N'.                   
+                                                                                
+       01  WS-FLAT-VARIABLES.                                                   
+           05  WS-FLAT-DETR            PIC X(2)    VALUE SPACES.                
+           05  WS-KEEP-FLAT-DETR       PIC X(2)    VALUE SPACES.                
+           05  WS-CDE-FLAT-TYPE        PIC X(2)    VALUE SPACES.                
+           05  WS-CONV-RM-TYPE         PIC X(2)    VALUE SPACES.                
+           05  WS-LATEST-DATE          PIC X(8)    VALUE SPACES.                
+           05  WS-CHK-RM-TYPE          PIC X(2)    VALUE SPACES.                
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-SUB-LOANS            PIC 9(2)    VALUE ZEROES.                
+           05  WS-HIGH-SUB             PIC 9(2)    VALUE ZEROES.                
+           05  WS-RSL-STATUS-CDE       PIC X(3)    VALUE SPACES.                
+           05  WS-SUBLN-TAG            PIC X(1)    VALUE SPACES.                
+           05  WS-PUBMARK              PIC X(1)    VALUE SPACES.                
+           05  WS-POLICY-CDE           PIC X(2)    VALUE SPACES.                
+           05  WS-LOAN-TAG             PIC X(1)    VALUE SPACES.                
+           05  WS-LN-TAG               PIC X(1)    VALUE SPACES.                
+           05  WS-CUR-DATE             PIC X(8)    VALUE SPACES.                
+           05  WS-NRIC-TABLE OCCURS 16 TIMES.                                   
+               10 WS-TBL-NRIC-NO       PIC X(9).                                
+               10 WS-TBL-SUBLN-TAG     PIC 9(2).                                
+               10 WS-TBL-PPO-TAG       PIC X(1).                                
+               10 WS-TBL-FT-SMS        PIC X(2).                                
+               10 WS-TBL-FT-RSL        PIC X(1).                                
+               10 WS-TBL-FT-TRF        PIC X(1).                                
+               10 WS-TBL-RSL-STAT      PIC X(3).                                
+               10 WS-TBL-FT-MAM        PIC X(2).                                
+               10 WS-TBL-FT-SLS        PIC X(2).                                
+           05  WS-CNT                  PIC 9(2)    VALUE ZEROES.                
+                                                                                
+           05 WS-CNT-LINE-ON-PAGE      PIC 9(8)    VALUE 66.                    
+           05 WS-CNT-PRINT-L520        PIC 9(8)    VALUE 1.                     
+           05 WS-CNT-WRITE-L520        PIC 9(8)    VALUE 0.                     
+           05 WS-NO-OF-PAGE            PIC 9(8)    VALUE 0.                     
+                                                                                
+      *-----------------------------------------------------------*             
+      *    BP13L520 - LAYOUT                                      *             
+      *-----------------------------------------------------------*             
+                                                                                
+       01  L520-PR-HEAD-01.                                                     
+           05  FILLER                   PIC X(14) VALUE 'BP13L520'.             
+           05  FILLER                   PIC X(8)  VALUE 'HDBCAT 3'.             
+           05  FILLER                   PIC X(25) VALUE SPACES.                 
+           05  FILLER                   PIC X(39) VALUE                         
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER                   PIC X(13) VALUE SPACES.                 
+           05  FILLER                   PIC X(7)  VALUE 'DATE: '.               
+           05  L520-PRINT-DATE          PIC X(10) VALUE SPACES.                 
+           05  FILLER                   PIC X(1)  VALUE SPACES.                 
+           05  FILLER                   PIC X(7)  VALUE 'PAGE: '.               
+           05  L520-PRINT-PAGE          PIC ZZZ9.                               
+                                                                                
+       01  L520-PR-HEAD-02.                                                     
+           05  FILLER                   PIC X(45) VALUE SPACES.                 
+           05  FILLER                   PIC X(75) VALUE                         
+                'BEFORE & AFTER UPDATE OF THE BANK LOAN FILE'.                  
+                                                                                
+       01  L520-PR-HEAD-03.                                                     
+           05  FILLER           PIC X(05)  VALUE ' S-NO'.                       
+           05  FILLER           PIC X(01)  VALUE SPACES.                        
+           05  FILLER           PIC X(09)  VALUE 'REGN NO'.                     
+           05  FILLER           PIC X(16)  VALUE SPACES.                        
+           05  FILLER           PIC X(10)  VALUE 'BEFORE UPD'.                  
+           05  FILLER           PIC X(22)  VALUE SPACES.                        
+           05  FILLER           PIC X(10)  VALUE 'AFTER UPD'.                   
+                                                                                
+       01  L520-PR-HEAD-04.                                                     
+           05  FILLER           PIC X(22)  VALUE SPACES.                        
+           05  FILLER           PIC X(08)  VALUE 'LN TAG'.                      
+           05  FILLER           PIC X(10)  VALUE 'PREM CDE'.                    
+           05  FILLER           PIC X(12)  VALUE 'MRT LN PLCY'.                 
+           05  FILLER           PIC X(04)  VALUE SPACES.                        
+           05  FILLER           PIC X(08)  VALUE 'LN TAG'.                      
+           05  FILLER           PIC X(10)  VALUE 'PREM CDE'.                    
+           05  FILLER           PIC X(12)  VALUE 'MRT LN PLCY'.                 
+                                                                                
+       01  L520-PR-HEAD-05.                                                     
+           05  FILLER                PIC X(132) VALUE ALL '-'.                  
+                                                                                
+       01  L520-PR-DETAILS.                                                     
+           05  L520-NUMBER           PIC ZZZZ9.                                 
+           05  FILLER                PIC X(01)  VALUE SPACES.                   
+           05  L520-REGN-NO          PIC X(09)  VALUE SPACES.                   
+           05  FILLER                PIC X(09)  VALUE SPACES.                   
+           05  L520-LN-TAG-B         PIC X(01)  VALUE SPACES.                   
+           05  FILLER                PIC X(08)  VALUE SPACES.                   
+           05  L520-PRM-CDE-B        PIC X(02)  VALUE SPACES.                   
+           05  FILLER                PIC X(09)  VALUE SPACES.                   
+           05  L520-MRT-LN-PLCY-B    PIC X(02)  VALUE SPACES.                   
+           05  FILLER                PIC X(12)  VALUE SPACES.                   
+           05  L520-LN-TAG-A         PIC X(01)  VALUE SPACES.                   
+           05  FILLER                PIC X(08)  VALUE SPACES.                   
+           05  L520-PRM-CDE-A        PIC X(02)  VALUE SPACES.                   
+           05  FILLER                PIC X(08)  VALUE SPACES.                   
+           05  L520-MRT-LN-PLCY-A    PIC X(02)  VALUE SPACES.                   
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN-LOGIC.                                                         
+           PERFORM 1000-INITIALIZATION  THRU 1000-EXIT.                         
+           PERFORM 2000-READ-BP13F558   THRU 2000-EXIT.                         
+           PERFORM 3000-READ-BP13F520   THRU 3000-EXIT.                         
+           PERFORM 4000-PROCESS-RECORD  THRU 4000-EXIT                          
+              UNTIL F558-NUM-REGN = HIGH-VALUES                                 
+               AND  F520-NUM-REGN = HIGH-VALUES.                                
+           PERFORM 9999-CLOSE-FILES     THRU 9999-EXIT.                         
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       1000-INITIALIZATION.                                                     
+      *-------------------------------------------------------------            
+           OPEN INPUT  BP13F558                                                 
+                       BP13F520                                                 
+                       BR10K010                                                 
+                I-O    BP13K648                                                 
+               OUTPUT  P13F520A                                                 
+                       BP13L520.                                                
+                                                                                
+           IF BR10K010-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'BR10K010 - OPEN FILE ERROR, ' BR10K010-STATUS            
+              MOVE BR10K010-STATUS     TO RETURN-CODE                           
+              PERFORM 9999-CLOSE-FILES THRU 9999-EXIT                           
+           END-IF.                                                              
+                                                                                
+           IF BP13K648-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'BP13K648 - OPEN FILE ERROR, ' BP13K648-STATUS            
+              MOVE BP13K648-STATUS     TO RETURN-CODE                           
+              PERFORM 9999-CLOSE-FILES THRU 9999-EXIT                           
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE    TO WS-CUR-DATE.                        
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       2000-READ-BP13F558.                                                      
+      *-------------------------------------------------------------            
+           READ BP13F558 AT END                                                 
+               MOVE HIGH-VALUES TO F558-NUM-REGN                                
+               GO TO 2000-EXIT.                                                 
+                                                                                
+           ADD 1 TO WS-F558-READ.                                               
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       3000-READ-BP13F520.                                                      
+      *-------------------------------------------------------------            
+           READ BP13F520 AT END                                                 
+               MOVE HIGH-VALUES TO F520-NUM-REGN                                
+               GO TO 3000-EXIT.                                                 
+                                                                                
+           ADD 1 TO WS-F520-READ.                                               
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4000-PROCESS-RECORD.                                                     
+      *-------------------------------------------------------------            
+           MOVE SPACES TO WS-KEEP-FLAT-DETR                                     
+                          WS-RSL-STATUS-CDE.                                    
+           MOVE 'N'    TO WS-PPO-TAG.                                           
+           MOVE ZEROES TO WS-HIGH-SUB.                                          
+                                                                                
+           PERFORM 4100-INITIALIZE-TABLE  THRU 4100-EXIT                        
+                                                                                
+           MOVE SPACES                    TO   WS-CDE-FLAT-TYPE.                
+           MOVE F520-CDE-FLAT-TYPE        TO   WS-CDE-FLAT-TYPE.                
+           PERFORM 4200-DECODE-F520-FT    THRU 4200-EXIT.                       
+           MOVE WS-CONV-RM-TYPE           TO   WS-CHK-RM-TYPE.                  
+                                                                                
+           IF F558-NUM-REGN = F520-NUM-REGN                                     
+              ADD 1 TO WS-MATCH                                                 
+              MOVE ZEROES TO WS-CNT                                             
+              PERFORM 4500-GET-BP13F558      THRU 4500-EXIT                     
+                      UNTIL F520-NUM-REGN NOT = F558-NUM-REGN                   
+                                                                                
+              PERFORM 4830-CMP-CUR-DETR-FT    THRU 4830-EXIT                    
+              PERFORM 5000-GET-SUBLN-NRIC     THRU 5000-EXIT                    
+              PERFORM 5100-GET-LOAN-POLICY    THRU 5100-EXIT                    
+              PERFORM 5500-WRITE-BP13F520     THRU 5500-EXIT                    
+              PERFORM 6000-WRITE-BP13K648     THRU 6000-EXIT                    
+              PERFORM 3000-READ-BP13F520      THRU 3000-EXIT                    
+           ELSE                                                                 
+              IF F520-NUM-REGN  <  F558-NUM-REGN                                
+                 ADD  1         TO  WS-F520-NOTMATCH                            
+                 PERFORM 5500-WRITE-BP13F520  THRU 5500-EXIT                    
+                 PERFORM 3000-READ-BP13F520   THRU 3000-EXIT                    
+              ELSE                                                              
+                 ADD  1         TO  WS-F558-NOTMATCH                            
+                 PERFORM 2000-READ-BP13F558   THRU 2000-EXIT                    
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4100-INITIALIZE-TABLE.                                                   
+      *-------------------------------------------------------------            
+           PERFORM VARYING WS-CNT FROM 1 BY 1 UNTIL WS-CNT > 16                 
+              MOVE SPACES       TO WS-TBL-NRIC-NO(WS-CNT)                       
+                                   WS-TBL-PPO-TAG(WS-CNT)                       
+                                   WS-TBL-FT-SMS(WS-CNT)                        
+                                   WS-TBL-FT-RSL(WS-CNT)                        
+                                   WS-TBL-FT-TRF(WS-CNT)                        
+                                   WS-TBL-RSL-STAT(WS-CNT)                      
+                                   WS-TBL-FT-MAM(WS-CNT)                        
+                                   WS-TBL-FT-SLS(WS-CNT)                        
+              MOVE ZEROES       TO WS-TBL-SUBLN-TAG(WS-CNT)                     
+           END-PERFORM.                                                         
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4200-DECODE-F520-FT.                                                     
+      *-------------------------------------------------------------            
+            EVALUATE WS-CDE-FLAT-TYPE                                           
+                WHEN 'H'                                                        
+                     MOVE '07'   TO WS-CONV-RM-TYPE                             
+                WHEN 'E'                                                        
+                     MOVE '06'   TO WS-CONV-RM-TYPE                             
+                WHEN '5'                                                        
+                WHEN 'RF'                                                       
+                     MOVE '05'   TO WS-CONV-RM-TYPE                             
+                WHEN '4'                                                        
+                     MOVE '04'   TO WS-CONV-RM-TYPE                             
+                WHEN '3'                                                        
+                     MOVE '03'   TO WS-CONV-RM-TYPE                             
+                WHEN '2'                                                        
+                WHEN '2F'                                                       
+                     MOVE '02'   TO WS-CONV-RM-TYPE                             
+                WHEN '1'                                                        
+                WHEN '1F'                                                       
+                     MOVE '01'   TO WS-CONV-RM-TYPE                             
+                WHEN OTHER                                                      
+                     MOVE SPACES TO WS-CONV-RM-TYPE                             
+            END-EVALUATE.                                                       
+                                                                                
+       4200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       4500-GET-BP13F558.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           IF F558-NUM-SUBSD-LOAN NOT NUMERIC                                   
+              MOVE ZEROES  TO F558-NUM-SUBSD-LOAN                               
+           END-IF.                                                              
+                                                                                
+           IF F558-CDE-LESSEE-CHECK = 'Y'                                       
+              IF F558-NUM-SUBSD-LOAN > WS-HIGH-SUB                              
+                 MOVE F558-NUM-SUBSD-LOAN TO WS-HIGH-SUB                        
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 4600-GET-PPO-TAG   THRU 4600-EXIT.                           
+                                                                                
+           IF F558-CDE-FILE-STATUS-RSL = 'SN ' OR 'BSN' OR                      
+                       'CN ' OR 'BCN' OR '2N ' OR 'B2N' OR                      
+                       'ESN' OR 'ELP' OR 'ON ' OR 'BON' OR                      
+                       'AN ' OR 'BAN' OR 'PD '                                  
+              MOVE F558-CDE-FILE-STATUS-RSL TO WS-RSL-STATUS-CDE                
+           END-IF.                                                              
+                                                                                
+           PERFORM 4800-GET-UPG-FT    THRU 4800-EXIT.                           
+           PERFORM 4900-LOAD-TO-TABLE THRU 4900-EXIT.                           
+                                                                                
+           PERFORM 2000-READ-BP13F558 THRU 2000-EXIT.                           
+       4500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4600-GET-PPO-TAG.                                                        
+      *-------------------------------------------------------------            
+           MOVE SPACES                  TO K010-KEY-FLD.                        
+           MOVE 'N'                     TO WS-K010-EOF.                         
+           MOVE F558-NUM-NRIC           TO K010-NUM-UIN.                        
+                                                                                
+           START BR10K010  KEY >= K010-KEY-FLD.                                 
+                                                                                
+           IF BR10K010-STATUS = ZEROES                                          
+              PERFORM 4700-READNXT-BR10K010  THRU 4700-EXIT                     
+                 UNTIL K010-NUM-UIN NOT = F558-NUM-NRIC                         
+                    OR WS-K010-EOF = 'Y'                                        
+           ELSE                                                                 
+              IF BR10K010-STATUS = 23 OR 10                                     
+                 MOVE 'Y'               TO WS-K010-EOF                          
+              ELSE                                                              
+                 DISPLAY 'BR10K010 - STARTBR ERROR, ' BR10K010-STATUS           
+                 MOVE BR10K010-STATUS     TO RETURN-CODE                        
+                 PERFORM 9999-CLOSE-FILES THRU 9999-EXIT                        
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       4600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4700-READNXT-BR10K010.                                                   
+      *-------------------------------------------------------------            
+           READ BR10K010 NEXT AT END                                            
+                MOVE HIGH-VALUES TO K010-NUM-UIN                                
+                MOVE 'Y' TO WS-K010-EOF                                         
+                GO TO 4700-EXIT.                                                
+                                                                                
+           IF BR10K010-STATUS = ZEROES OR 02                                    
+              IF K010-NUM-UIN = F558-NUM-NRIC                                   
+                 MOVE  'Y'         TO WS-PPO-TAG                                
+              ELSE                                                              
+                 MOVE  'Y'         TO WS-K010-EOF                               
+              END-IF                                                            
+           ELSE                                                                 
+              IF BR10K010-STATUS = 23 OR 10                                     
+                 MOVE  'Y'         TO WS-K010-EOF                               
+              ELSE                                                              
+                 DISPLAY 'BR10K010 - READ ERROR, ' BR10K010-STATUS              
+                 MOVE BR10K010-STATUS     TO RETURN-CODE                        
+                 PERFORM 9999-CLOSE-FILES THRU 9999-EXIT                        
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       4700-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4800-GET-UPG-FT.                                                         
+      *-------------------------------------------------------------            
+            MOVE SPACES    TO WS-FLAT-DETR                                      
+                              WS-LATEST-DATE.                                   
+                                                                                
+            IF F558-CDE-FLAT-TYPE-SMS NOT = SPACES AND LOW-VALUES               
+               MOVE F558-CDE-FLAT-TYPE-SMS     TO   WS-FLAT-DETR                
+            ELSE                                                                
+               PERFORM 4820-CHK-RSL-TRF-MAM-SLS    THRU 4820-EXIT               
+            END-IF.                                                             
+                                                                                
+            IF WS-FLAT-DETR > WS-KEEP-FLAT-DETR                                 
+               MOVE WS-FLAT-DETR    TO WS-KEEP-FLAT-DETR                        
+            END-IF.                                                             
+                                                                                
+       4800-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       4820-CHK-RSL-TRF-MAM-SLS.                                                
+      *-------------------------------------------------------------            
+            IF F558-CDE-FT-RSL-LATEST NOT = SPACES AND LOW-VALUES               
+               IF F558-DTE-APPR-RSL-LATEST > WS-LATEST-DATE                     
+                  MOVE SPACES                   TO   WS-CDE-FLAT-TYPE           
+                  MOVE F558-CDE-FT-RSL-LATEST   TO   WS-CDE-FLAT-TYPE           
+                  PERFORM 4825-DECODE-FLAT-TYPE THRU 4825-EXIT                  
+                  MOVE WS-CONV-RM-TYPE          TO   WS-FLAT-DETR               
+                  MOVE F558-DTE-APPR-RSL-LATEST                                 
+                                                TO   WS-LATEST-DATE             
+               END-IF                                                           
+            END-IF.                                                             
+                                                                                
+            IF F558-CDE-FLAT-TYPE-TR NOT = SPACES AND LOW-VALUES                
+               IF F558-DTE-TRANSFER-TR > WS-LATEST-DATE                         
+                  MOVE SPACES                   TO   WS-CDE-FLAT-TYPE           
+                  MOVE F558-CDE-FLAT-TYPE-TR    TO   WS-CDE-FLAT-TYPE           
+                  PERFORM 4825-DECODE-FLAT-TYPE THRU 4825-EXIT                  
+                  MOVE WS-CONV-RM-TYPE          TO   WS-FLAT-DETR               
+                  MOVE F558-DTE-TRANSFER-TR     TO   WS-LATEST-DATE             
+               END-IF                                                           
+            END-IF.                                                             
+                                                                                
+            IF F558-CDE-FLAT-TYPE-SLS NOT = SPACES AND LOW-VALUES               
+               IF F558-DTE-EFF-SALES-SLS > WS-LATEST-DATE                       
+                  MOVE F558-CDE-FLAT-TYPE-SLS   TO   WS-FLAT-DETR               
+                  MOVE F558-DTE-EFF-SALES-SLS   TO   WS-LATEST-DATE             
+               END-IF                                                           
+            END-IF.                                                             
+                                                                                
+            IF F558-CDE-FLAT-TYPE-MAM NOT = SPACES AND LOW-VALUES               
+               IF F558-DTE-REVEST-MAM > WS-LATEST-DATE                          
+                  MOVE F558-CDE-FLAT-TYPE-MAM   TO   WS-FLAT-DETR               
+                  MOVE F558-DTE-REVEST-MAM      TO   WS-LATEST-DATE             
+               END-IF                                                           
+            END-IF.                                                             
+                                                                                
+       4820-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       4825-DECODE-FLAT-TYPE.                                                   
+      *-------------------------------------------------------------            
+            EVALUATE WS-CDE-FLAT-TYPE                                           
+                WHEN '7'                                                        
+                     MOVE '07'   TO WS-CONV-RM-TYPE                             
+                WHEN '6'                                                        
+                     MOVE '06'   TO WS-CONV-RM-TYPE                             
+                WHEN '5'                                                        
+                WHEN 'RF'                                                       
+                     MOVE '05'   TO WS-CONV-RM-TYPE                             
+                WHEN '4'                                                        
+                     MOVE '04'   TO WS-CONV-RM-TYPE                             
+                WHEN '3'                                                        
+                     MOVE '03'   TO WS-CONV-RM-TYPE                             
+                WHEN '2'                                                        
+                WHEN '2F'                                                       
+                     MOVE '02'   TO WS-CONV-RM-TYPE                             
+                WHEN '1'                                                        
+                WHEN '1F'                                                       
+                     MOVE '01'   TO WS-CONV-RM-TYPE                             
+                WHEN OTHER                                                      
+                     MOVE SPACES TO WS-CONV-RM-TYPE                             
+            END-EVALUATE.                                                       
+                                                                                
+       4825-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       4830-CMP-CUR-DETR-FT.                                                    
+      *-------------------------------------------------------------            
+      *    IF WS-CHK-RM-TYPE > WS-KEEP-FLAT-DETR                                
+      *       MOVE 'Y'    TO WS-UPG-FT                                          
+      *    ELSE                                                                 
+      *       MOVE 'N'    TO WS-UPG-FT                                          
+      *    END-IF.                                                              
+                                                                                
+      *==================================================*                      
+      * BP133837                                         *                      
+      * FOR REVISED 2ND CONC LOAN POLICY EFFECTIVE FROM  *                      
+      * 05 MARCH 2010                                    *                      
+      * A) 2ND CONC LOAN MADE AVAILABLE TO HH WHO WISH   *                      
+      *    TO UPGRADE/DOWNSIZE/MOVE TO SAME FT           *                      
+      * B) AFFECTED PARTIES                              *                      
+      *    BOOKING DATE AND HLE APPLICATION RECEIVED BY  *                      
+      *    HDB ON OR AFTER 05 MARCH 2010                 *                      
+      *================================================= *                      
+           MOVE 'Y'    TO WS-UPG-FT.                                            
+                                                                                
+       4830-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       4900-LOAD-TO-TABLE.                                                      
+      *-------------------------------------------------------------            
+           ADD  1                      TO WS-CNT.                               
+                                                                                
+           MOVE F558-NUM-NRIC          TO WS-TBL-NRIC-NO(WS-CNT).               
+           MOVE F558-NUM-SUBSD-LOAN    TO WS-TBL-SUBLN-TAG(WS-CNT).             
+           MOVE WS-PPO-TAG             TO WS-TBL-PPO-TAG(WS-CNT).               
+           MOVE F558-CDE-FLAT-TYPE-SMS TO WS-TBL-FT-SMS(WS-CNT).                
+           MOVE F558-CDE-FT-RSL-LATEST TO WS-TBL-FT-RSL(WS-CNT).                
+           MOVE F558-CDE-FLAT-TYPE-TR  TO WS-TBL-FT-TRF(WS-CNT).                
+           MOVE F558-CDE-FLAT-TYPE-MAM TO WS-TBL-FT-MAM(WS-CNT).                
+           MOVE F558-CDE-FLAT-TYPE-SLS TO WS-TBL-FT-SLS(WS-CNT).                
+                                                                                
+           IF F558-CDE-FILE-STATUS-RSL = 'SN ' OR 'BSN' OR                      
+                       'LN ' OR 'BLN' OR 'LNS' OR 'CN ' OR                      
+                       'BCN' OR '2N ' OR 'B2N' OR 'ESN' OR                      
+                       'ELN' OR 'ELP' OR 'ON ' OR 'BON' OR                      
+                       'AN ' OR 'BAN' OR 'PD '                                  
+              MOVE F558-CDE-FILE-STATUS-RSL TO WS-TBL-RSL-STAT(WS-CNT)          
+           END-IF.                                                              
+                                                                                
+       4900-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5000-GET-SUBLN-NRIC.                                                     
+      *-------------------------------------------------------------            
+           MOVE SPACES                 TO WS-SUBLN-TAG.                         
+                                                                                
+           EVALUATE WS-HIGH-SUB                                                 
+              WHEN 00                                                           
+                   MOVE '0'          TO WS-SUBLN-TAG                            
+              WHEN 01                                                           
+                   MOVE '1'          TO WS-SUBLN-TAG                            
+              WHEN 02                                                           
+                   MOVE '2'          TO WS-SUBLN-TAG                            
+              WHEN 03                                                           
+                   MOVE '3'          TO WS-SUBLN-TAG                            
+              WHEN 04                                                           
+                   MOVE '4'          TO WS-SUBLN-TAG                            
+              WHEN 05                                                           
+                   MOVE '5'          TO WS-SUBLN-TAG                            
+              WHEN 06                                                           
+                   MOVE '6'          TO WS-SUBLN-TAG                            
+              WHEN 07                                                           
+                   MOVE '7'          TO WS-SUBLN-TAG                            
+              WHEN 08                                                           
+                   MOVE '8'          TO WS-SUBLN-TAG                            
+              WHEN 09                                                           
+                   MOVE '9'          TO WS-SUBLN-TAG                            
+           END-EVALUATE.                                                        
+                                                                                
+           IF WS-SUBLN-TAG = SPACES OR LOW-VALUES                               
+              MOVE '0'      TO WS-SUBLN-TAG                                     
+           END-IF.                                                              
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5100-GET-LOAN-POLICY.                                                    
+      *-------------------------------------------------------------            
+           MOVE SPACES           TO WS-LOAN-TAG WS-POLICY-CDE                   
+                                    WS-PUBMARK.                                 
+      *    IF WS-SUBLN-TAG = '1' AND WS-UPG-FT = 'N' AND                        
+      *       F520-CDE-HOUSEHOLD = 'G'                                          
+      *       DISPLAY 'TEST R= ' F520-NUM-REGN                                  
+      *    END-IF.                                                              
+                                                                                
+           IF WS-SUBLN-TAG >= '2' OR WS-PPO-TAG = 'Y' OR                        
+              F520-NUM-SPR-TAG = 'Y'                                            
+               MOVE 'B'             TO WS-LOAN-TAG                              
+               MOVE 'M'             TO WS-PUBMARK                               
+           ELSE                                                                 
+               MOVE 'H'             TO WS-LOAN-TAG                              
+               MOVE 'P'             TO WS-PUBMARK                               
+           END-IF.                                                              
+                                                                                
+           IF WS-PUBMARK = 'P'                                                  
+              MOVE 'PO'    TO       WS-POLICY-CDE                               
+           ELSE                                                                 
+                                                                                
+              IF WS-SUBLN-TAG = '0' AND WS-PPO-TAG = 'N' AND                    
+                 F520-NUM-SPR-TAG = 'Y'                                         
+                 MOVE 'MO' TO       WS-POLICY-CDE                               
+              ELSE                                                              
+              IF WS-SUBLN-TAG = '0' AND WS-PPO-TAG = 'Y'                        
+                 MOVE 'MP' TO       WS-POLICY-CDE                               
+              ELSE                                                              
+              IF WS-SUBLN-TAG = '1' AND WS-PPO-TAG = 'Y' AND                    
+                 F520-CDE-HOUSEHOLD = 'G' AND WS-UPG-FT = 'N'                   
+                 MOVE '1P' TO        WS-POLICY-CDE                              
+              ELSE                                                              
+              IF WS-SUBLN-TAG = '1' AND WS-PPO-TAG = 'Y'                        
+                 MOVE 'MP' TO        WS-POLICY-CDE                              
+              ELSE                                                              
+              IF WS-SUBLN-TAG = '1' AND WS-PPO-TAG = 'N'                        
+                 MOVE 'M1' TO        WS-POLICY-CDE                              
+              ELSE                                                              
+              IF WS-SUBLN-TAG >= '2' AND WS-PPO-TAG = 'N'                       
+                 MOVE 'MS' TO        WS-POLICY-CDE                              
+              ELSE                                                              
+              IF WS-SUBLN-TAG >= '2' AND WS-PPO-TAG = 'Y'                       
+                 MOVE 'SP' TO        WS-POLICY-CDE                              
+           END-IF.                                                              
+                                                                                
+       5100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5500-WRITE-BP13F520.                                                     
+      *-------------------------------------------------------------            
+           MOVE SPACES               TO P13F520A-REC.                           
+           INITIALIZE                   P13F520A-REC.                           
+                                                                                
+           MOVE   WS-RSL-STATUS-CDE  TO F520-NUM-PREM-CDE.                      
+           MOVE   WS-POLICY-CDE      TO F520-NUM-MORT-LOAN-POLICY.              
+                                                                                
+           IF WS-POLICY-CDE = 'PO'                                              
+              MOVE SPACES            TO F520-NUM-ELIG-LOAN-POLICY               
+           ELSE                                                                 
+              MOVE WS-POLICY-CDE     TO F520-NUM-ELIG-LOAN-POLICY               
+           END-IF.                                                              
+                                                                                
+           IF (F520-DTE-REQUEST < '20030101') AND                               
+              (F520-NUM-ALLO-CAT NOT = 'BTO' AND 'BE ')                         
+              MOVE SPACES            TO F520-NUM-LOAN-TAG                       
+           ELSE                                                                 
+              IF F520-DTE-BALLOT < '202310'                                     
+                 MOVE WS-LOAN-TAG         TO F520-NUM-ORIG-LOAN-TAG             
+                 IF WS-LOAN-TAG  = 'B' OR 'N'                                   
+                     MOVE WS-LOAN-TAG            TO F520-NUM-LOAN-TAG           
+                 ELSE                                                           
+                     MOVE F520-NUM-APPL-LOAN-REQ TO F520-NUM-LOAN-TAG           
+                 END-IF                                                         
+              ELSE                                                              
+                  MOVE F520-NUM-APPL-LOAN-REQ TO F520-NUM-LOAN-TAG              
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+                                                                                
+           IF F520-NUM-PPO NOT = 'Y'                                            
+              MOVE WS-PPO-TAG        TO F520-NUM-PPO                            
+           END-IF.                                                              
+                                                                                
+           WRITE  P13F520A-REC       FROM BP13F520-REC.                         
+                                                                                
+           ADD  1    TO WS-F520A-WRITE.                                         
+       5500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       6000-WRITE-BP13K648.                                                     
+      *-------------------------------------------------------------            
+           MOVE SPACES                TO BP13K648-TRANS-REC.                    
+           MOVE ZEROES                TO K648-NUM-PREMIUM-RATE.                 
+                                                                                
+           MOVE WS-CUR-DATE           TO K648-NUM-DTE-UPDATE.                   
+           MOVE 'P13C520'             TO K648-NUM-USERID.                       
+                                                                                
+           MOVE F520-NUM-REGN         TO K648-NUM-REGN.                         
+           MOVE F520-CDE-ELIG-TAG     TO K648-NUM-ELIG-TAG.                     
+           MOVE F520-CDE-ZONE         TO K648-NUM-ZONE.                         
+           MOVE F520-CDE-HOUSEHOLD    TO K648-NUM-HOUSEHOLD-NEW.                
+           MOVE F520-CDE-NT1          TO K648-NUM-NT.                           
+           MOVE F520-CDE-FLAT-TYPE    TO K648-NUM-FLAT-TYPE.                    
+           MOVE F520-NUM-CA-TAG       TO K648-NUM-CA-TAG.                       
+           MOVE F520-NUM-SPR-TAG      TO K648-NUM-SPR.                          
+           MOVE WS-UPG-FT             TO K648-NUM-FLAT-UPGRADE.                 
+           MOVE WS-SUBLN-TAG          TO K648-NUM-SUBSIDISED-LOAN.              
+           MOVE WS-PUBMARK            TO K648-NUM-LOAN-OPTION.                  
+           MOVE WS-LOAN-TAG           TO K648-NUM-LOAN-TAG.                     
+           MOVE WS-RSL-STATUS-CDE     TO K648-NUM-PREM-CODE.                    
+           MOVE WS-POLICY-CDE         TO K648-NUM-MORT-LOAN-POLICY.             
+                                                                                
+           PERFORM VARYING WS-CNT FROM 1 BY 1 UNTIL WS-CNT > 16                 
+              IF WS-TBL-NRIC-NO(WS-CNT) NOT = SPACES AND LOW-VALUES             
+                 MOVE WS-TBL-NRIC-NO(WS-CNT)    TO                              
+                                     K648-NUM-NRIC(WS-CNT)                      
+                 MOVE WS-TBL-SUBLN-TAG(WS-CNT)  TO                              
+                                     K648-NUM-SUBLN-TAG(WS-CNT)                 
+                 MOVE WS-TBL-PPO-TAG(WS-CNT)    TO                              
+                                     K648-NUM-PPO-TAG(WS-CNT)                   
+                 MOVE WS-TBL-FT-SMS(WS-CNT)     TO                              
+                                     K648-NUM-FT-SMS(WS-CNT)                    
+                 MOVE WS-TBL-FT-RSL(WS-CNT)  TO                                 
+                                     K648-NUM-FT-RSL(WS-CNT)                    
+                 MOVE WS-TBL-FT-TRF(WS-CNT)  TO                                 
+                                     K648-NUM-FT-TRF(WS-CNT)                    
+                 MOVE WS-TBL-RSL-STAT(WS-CNT)   TO                              
+                                     K648-NUM-RSL-STATUS(WS-CNT)                
+                 MOVE WS-TBL-FT-MAM(WS-CNT)  TO                                 
+                                     K648-NUM-FT-MAM(WS-CNT)                    
+                 MOVE WS-TBL-FT-SLS(WS-CNT)  TO                                 
+                                     K648-NUM-FT-SLS(WS-CNT)                    
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           WRITE BP13K648-TRANS-REC.                                            
+                                                                                
+           IF BP13K648-STATUS = 00                                              
+              ADD 1 TO WS-K648-WRITE                                            
+           ELSE                                                                 
+              IF BP13K648-STATUS = 22                                           
+                 PERFORM 6050-READ-K648    THRU 6050-EXIT                       
+                 PERFORM 6100-PRINT-REPORT THRU 6100-EXIT                       
+              ELSE                                                              
+                 DISPLAY ' ERROR WRITING TO BP13K648 TRANS REC '                
+                         ' STATUS ' BP13K648-STATUS                             
+                 DISPLAY ' KEY IS ' K648-NUM-REGN                               
+                 PERFORM 9999-CLOSE-FILES THRU 9999-EXIT                        
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       6050-READ-K648.                                                          
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES           TO K648-NUM-REGN.                              
+           MOVE F520-NUM-REGN    TO K648-NUM-REGN.                              
+                                                                                
+           READ BP13K648.                                                       
+                                                                                
+           EVALUATE BP13K648-STATUS                                             
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY ' ERROR READING BP13K648 TRANS REC '                   
+                         ' STATUS ' BP13K648-STATUS                             
+                 DISPLAY ' KEY IS ' K648-NUM-REGN                               
+                 PERFORM 9999-CLOSE-FILES THRU 9999-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       6050-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       6100-PRINT-REPORT.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           IF (K648-NUM-LOAN-TAG         NOT = WS-LOAN-TAG       OR             
+               K648-NUM-PREM-CODE        NOT = WS-RSL-STATUS-CDE OR             
+               K648-NUM-MORT-LOAN-POLICY NOT = WS-POLICY-CDE)                   
+                                                                                
+              PERFORM 6200-MOVE-DATA      THRU 6200-EXIT                        
+              PERFORM 6500-REWRITE-K648   THRU 6500-EXIT                        
+           END-IF.                                                              
+                                                                                
+       6100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       6200-MOVE-DATA.                                                          
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE K648-NUM-REGN                TO L520-REGN-NO.                   
+                                                                                
+           MOVE K648-NUM-LOAN-TAG            TO L520-LN-TAG-B.                  
+           MOVE K648-NUM-PREM-CODE           TO L520-PRM-CDE-B.                 
+           MOVE K648-NUM-MORT-LOAN-POLICY    TO L520-MRT-LN-PLCY-B.             
+                                                                                
+           MOVE WS-LOAN-TAG                  TO L520-LN-TAG-A.                  
+           MOVE WS-RSL-STATUS-CDE            TO L520-PRM-CDE-A.                 
+           MOVE WS-POLICY-CDE                TO L520-MRT-LN-PLCY-A.             
+                                                                                
+           PERFORM 6300-WRITE-BP13L520       THRU 6300-EXIT.                    
+                                                                                
+       6200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       6300-WRITE-BP13L520.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           IF WS-CNT-LINE-ON-PAGE > 53                                          
+              PERFORM 6400-PRINT-HEADING THRU 6400-EXIT                         
+              MOVE 1 TO WS-CNT-LINE-ON-PAGE                                     
+           END-IF.                                                              
+                                                                                
+           MOVE WS-CNT-PRINT-L520  TO    L520-NUMBER.                           
+                                                                                
+           WRITE BP13L520-REC      FROM  L520-PR-DETAILS   AFTER 1.             
+                                                                                
+           ADD   1                 TO    WS-CNT-LINE-ON-PAGE                    
+                                         WS-CNT-PRINT-L520                      
+                                         WS-CNT-WRITE-L520.                     
+                                                                                
+           MOVE  SPACES            TO    L520-PR-DETAILS.                       
+                                                                                
+       6300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       6400-PRINT-HEADING.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           ADD  1                TO     WS-NO-OF-PAGE.                          
+           MOVE WS-NO-OF-PAGE    TO     L520-PRINT-PAGE.                        
+                                                                                
+           MOVE SPACES           TO     BP13L520-REC.                           
+                                                                                
+           WRITE BP13L520-REC    AFTER  PAGE.                                   
+           WRITE BP13L520-REC    FROM   L520-PR-HEAD-01 AFTER 1.                
+           WRITE BP13L520-REC    FROM   L520-PR-HEAD-02 AFTER 1.                
+           WRITE BP13L520-REC    FROM   L520-PR-HEAD-03 AFTER 2.                
+           WRITE BP13L520-REC    FROM   L520-PR-HEAD-04 AFTER 1.                
+           WRITE BP13L520-REC    FROM   L520-PR-HEAD-05 AFTER 1.                
+                                                                                
+           MOVE 5  TO WS-CNT-LINE-ON-PAGE.                                      
+                                                                                
+       6400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       6500-REWRITE-K648.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE WS-LOAN-TAG           TO K648-NUM-LOAN-TAG.                     
+           MOVE WS-RSL-STATUS-CDE     TO K648-NUM-PREM-CODE.                    
+           MOVE WS-POLICY-CDE         TO K648-NUM-MORT-LOAN-POLICY.             
+           MOVE WS-UPG-FT             TO K648-NUM-FLAT-UPGRADE.                 
+                                                                                
+           REWRITE BP13K648-TRANS-REC.                                          
+                                                                                
+           EVALUATE BP13K648-STATUS                                             
+              WHEN 00                                                           
+                 ADD 1 TO  WS-K648-UPDATE                                       
+              WHEN OTHER                                                        
+                 DISPLAY ' ERROR UPDATING TO BP13K648 TRANS REC '               
+                         ' STATUS ' BP13K648-STATUS                             
+                 DISPLAY ' KEY IS ' K648-NUM-REGN                               
+                 PERFORM 9999-CLOSE-FILES THRU 9999-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       6500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       9999-CLOSE-FILES.                                                        
+      *-------------------------------------------------------------            
+           DISPLAY '* ------------ BP13C520 ------------- * '.                  
+           DISPLAY 'NO OF REC READ BP13F558     = ' WS-F558-READ.               
+           DISPLAY 'NO OF REC READ BP13F520     = ' WS-F520-READ.               
+           DISPLAY 'NO OF REC MATCH             = ' WS-MATCH.                   
+           DISPLAY 'NO OF REC NOT MATCH IN F558 = ' WS-F558-NOTMATCH.           
+           DISPLAY 'NO OF REC NOT MATCH IN F520 = ' WS-F520-NOTMATCH.           
+           DISPLAY 'NO OF REC WRITTEN IN F520A  = ' WS-F520A-WRITE.             
+           DISPLAY 'NO OF REC WRITTEN IN K648   = ' WS-K648-WRITE.              
+           DISPLAY 'NO OF REC UPDATE  IN K648   = ' WS-K648-UPDATE.             
+                                                                                
+           CLOSE BP13F558                                                       
+                 BP13F520                                                       
+                 BP13K648                                                       
+                 BR10K010                                                       
+                 P13F520A                                                       
+                 BP13L520.                                                      
+                                                                                
+           IF BR10K010-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'BR10K010 - CLOSE FILE ERROR, ' BR10K010-STATUS           
+              MOVE BR10K010-STATUS TO RETURN-CODE                               
+           END-IF.                                                              
+                                                                                
+           IF BP13K648-STATUS NOT = 00                                          
+              DISPLAY 'BP13K648 - CLOSE FILE ERROR, ' BP13K648-STATUS           
+              MOVE BP13K648-STATUS TO RETURN-CODE                               
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+       9999-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+

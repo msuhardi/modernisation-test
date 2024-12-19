@@ -1,0 +1,104 @@
+//BP13D105  JOB (BP13P),'BP13D105',MSGCLASS=N,CLASS=I,MSGLEVEL=(1,1),           
+//       NOTIFY=CSD0071                                                         
+//JOBLIB   DD  DSN=BP13.BATCH.LOADCOB,DISP=SHR                                  
+//*================================================================== *         
+//* DAILY JOB DBSS FLAT - CHECK BALANCING FILE                                  
+//*================================================================== *         
+//* BP132772 020506 LSB DBSS JOB                                                
+//* BP133051 090507 LSB LUMPSUM INSTALMENT                                      
+//* BP133171 061107 LSB TAKE OUT BP13.F125.PAYDEVLP IN STEP15                   
+//* BP133468 120209 LSB BYPASS TOP CASES FOR BP13C105                           
+//* BP133588 290409 JB8 BYPASS SUBTRF & JVP CASES FOR BP13C105                  
+//* BP133612 160909 JB8 OMIT DBSS-TOP=Z FOR BP13C105                            
+//* BP134607 160712 LSB OMIT JVP FOR BP13C105, NO UPDATE BP13K160               
+//*-------------------------------------------------------------------*         
+//* TO SEND DYNAMIC JDE AHEAD OF THE PRINT DATASETS                   *         
+//* PRT02 : 1 COPY                           (MA&B)                   *         
+//*-------------------------------------------------------------------*         
+//PRT01    EXEC PGM=IEBGENER                                                    
+//SYSUT1   DD *                                                                 
+$DJDE$ JDE=BP13D,JDL=BP13,END;                                                  
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EAAARS1A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID)                                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*                                                                             
+//*-----------------------------------------------------------------            
+//*  TO CHECK DATE BALANCE CLOSE AGAINST THE PREVIOUS MONTH.                    
+//*  RETURNS '99' IF THE DATES ARE NOT EQUAL.                                   
+//*-----------------------------------------------------------------            
+//STEP00 EXEC  PGM=BP13CC25,COND=(0,NE)                                         
+//SY02F001 DD  DSN=SY02.F001.DATE,DISP=SHR                                      
+//BP13KD65 DD  DSN=BP13.KD65.PDATE,DISP=SHR,                                    
+//             AMP=('BUFND=4','BUFNI=8')                                        
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//*                                                                             
+//*-------------------------------------------------------------------*         
+//* INCLUDE DBSS-TOP = Y TO SMS                                                 
+//*-------------------------------------- ----------------------------*         
+//STEP01   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F125.DBSPAYMT.DAILY(0),DISP=SHR                          
+//SORTOUT  DD DSN=BP13.F125.DBSPAYMT.DBSSTOP,DISP=MOD                           
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,2,A,5,19,A),FORMAT=CH                                         
+   INCLUDE COND=((1,2,CH,EQ,C'11',OR,1,2,CH,EQ,C'12'),AND,                      
+                 114,1,CH,EQ,C'Y')                                              
+//*-------------------------------------------------------------------*         
+//* INCLUDE ONLY LUMP SUM PAYMENT FOR PP, INS, AND LS                           
+//*-------------------------------------- ----------------------------*         
+//STEP15   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F125.DBSPAYMT.DAILY(+0),DISP=SHR                         
+//         DD DSN=BP13.F125.DBSSJV,DISP=SHR                                     
+//SORTOUT  DD DSN=&&F125C105,DISP=(,PASS),                                      
+//         DCB=(RECFM=FB,LRECL=150,BLKSIZE=0),                                  
+//         SPACE=(CYL,(30,10),RLSE)                                             
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,2,A,5,19,A),FORMAT=CH                                         
+   INCLUDE COND=(99,3,CH,EQ,C'PP ',OR,99,3,CH,EQ,C'INS',OR,                     
+                 99,3,CH,EQ,C'JVL',OR,99,3,CH,EQ,C'LS ')                        
+//*-------------------------------------------------------------------*         
+//* OMIT DBSS-TOP = Y                                                           
+//*-------------------------------------- ----------------------------*         
+//STEP16   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F125C105,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F125DBSS,DISP=(,PASS),                                      
+//         DCB=(RECFM=FB,LRECL=150,BLKSIZE=0),                                  
+//         SPACE=(CYL,(30,10),RLSE)                                             
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,2,A,5,19,A),FORMAT=CH                                         
+    OMIT COND=(114,1,CH,EQ,C'Y',OR,                                             
+               114,1,CH,EQ,C'Z',OR,                                             
+               (130,2,CH,EQ,C'TR',AND,99,3,CH,EQ,C'JVP'))                       
+//*-------------------------------------------------------------------*         
+//* UPDATE BALANCING FILE USING THE VALIDATE PAYMENT TRANS (PP, INS)  *         
+//*-------------------------------------------------------------------*         
+//STEP19   EXEC PGM=BP13C105,COND=(0,NE)                                        
+//BP13F125 DD DSN=&&F125DBSS,DISP=(OLD,PASS)                                    
+//BP13K160 DD DSN=BP13.K160.BALANCE.DBSS,DISP=SHR                               
+//BP13L105 DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*                                                                             
+//*-------------------------------------------------------------------*         
+//* PERFORM BALANCING FOR PP/INS UPDATED IN DBSS MASTER AND THE                 
+//* BALANCING FILE. COND CODE = 99 FOR ANY FEES NOT BALANCED                    
+//*-------------------------------------------------------------------*         
+//STEP20   EXEC PGM=BP13CC01,COND=(0,NE)                                        
+//BP13KD00 DD DSN=BP13.KD00.DBSMAST,DISP=SHR,                                   
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BP13K160 DD DSN=BP13.K160.BALANCE.DBSS,DISP=SHR                               
+//BP13LC01 DD SYSOUT=N                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*                                                                             
+//*-------------------------------------------------------------------*         
+//*-C107 ADD K130                                                               
+//*-------------------------------------------------------------------*         
+//*          E N D      O F     J O B                                 *         
+//*-------------------------------------------------------------------*         
+

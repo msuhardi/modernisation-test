@@ -1,0 +1,676 @@
+      *************************                                                 
+       IDENTIFICATION DIVISION.                                                 
+      *************************                                                 
+       PROGRAM-ID.    BP13CB91.                                                 
+      *AUTHOR.        PAULO CAMIA LEGASPI.                                      
+      *DATE-WRITTEN.  05/03/10.                                                 
+      *****************************************************************         
+      *OBJECTIVE - TO CHECK QUEUE-NO IF OUTSIDE 300% FLAT SUPPLY,     *         
+      *            IF, UPDATE NOT-BOOKED COUNT.                       *         
+      *                                                               *         
+      *     INPUT FILE : 1. BP13F595                                  *         
+      *                  2. BP13K595                                  *         
+      *                  3. BP13F205                                  *         
+      *                                                               *         
+      *     OUTPUT FILE: 1. P13F595A                                  *         
+      *                                                               *         
+      *---------------------------------------------------------------*         
+      * REF NO   DATE       BY   AMENDMENTS/ENHANCEMENTS              *         
+      * -------- ---------- ---- -----------------------              *         
+      * BP133835 22/02/2010 PCL3 NEW PROGRAM                          *         
+      * BP133835 20/04/2010 PCL3 CHANGE PERCENTAGE TO 300%            *         
+      * BP133921 16/06/2010 PCL3 ADD CHECK ON BK-STAT = NS            *         
+      * BP133921 07/09/2010 PCL3 TO CATER FOR DTE-END OF JUNPGBTO     *         
+      * BP134011 21/10/2010 LSB1 201006 > 300% THEN ONLY -1 NOTBK CNT *         
+      * BP134081 19/11/2010 LSB1 201006 ADD IN NF,NC,SF,SC            *         
+      * BP134205 03/05/2011 PCL3 201104 TO READ BP13K813              *         
+      * BP134255 08/07/2011 LSB1 DEDUCT NE-CNT FROM BTO-CNT           *         
+      * BP134255 12/07/2011 LSB1 DEDUCT NUM-NE, HARDLUCK FROM BTO-CNT *         
+      *                          HARDLUCK COMPUTE IN BP13CB71         *         
+      *                          DROP BP13CB90, REQUEST-STATUS=S      *         
+      *                          IN COMPUTED, JCL TO OMIT IF >00      *         
+      *                          BP13K813 NOT IN USED                 *         
+      * BP134277 14/07/2011 LSB1 TO CATER FOR OPT 16 (AY0H) & 18 (AY0J)*        
+      * BP134277 15/07/2011 LSB1 REQUEST-STATUS=S, BOOK-ST NOT= NE    *         
+      * BP134388 13/01/2012 ESA1 CATER FOR BOOK-STATUS 'LS' & 'WS'    *         
+      * BP134598 17/07/2012 LSB1 CHANGE 2009 TO 2011                  *         
+      * BP134780 08/01/2013 IMC1 REMOVE CUTOFF DATE HARDCODING        *         
+      * BP134780 08/01/2013 LSB1 BYPASS SA FOR STATUS=S CHECK         *         
+      * BP135002 18/07/2013 IMC1 CATER FOR AY0K JOB                   *         
+      * BP135039 16/12/2013 IMC1 ADD NEW BOOK-STATUS                  *         
+      * BP135190 04/12/2013 SMR2 EXPAND BP13K813 TO 1000              *         
+      * BP135340 09/05/2014 IMC1 REPLACE BP13K816 WITH BP13K813       *         
+      * BP135635 28/01/2015 LSB1 CATER FOR FTS BOOK-STATUS=LB, WB     *         
+      * BP136740 11/08/2017 FNP1 CATER FOR STS                        *         
+      * BP136866 14/08/2017 FNP1 CATER FOR SAP                        *         
+      * BP137734 12/04/2019 LSB1 HARDLUCK FOR WATERWAY AND NE COUNT   *         
+      *                          IS DONE AT CY92                      *         
+      *****************************************************************         
+                                                                                
+                                                                                
+      **********************                                                    
+       ENVIRONMENT DIVISION.                                                    
+      **********************                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT  BP13F205  ASSIGN        TO BP13F205.                         
+           SELECT  BP13F595  ASSIGN        TO BP13F595.                         
+           SELECT  P13F595A  ASSIGN        TO P13F595A.                         
+                                                                                
+           SELECT  BP13K813  ASSIGN        TO BP13K813                          
+                             ACCESS MODE   IS DYNAMIC                           
+                             ORGANIZATION  IS INDEXED                           
+                             RECORD KEY    IS K813-KEY-FLD                      
+                             FILE STATUS   IS WS-K813-STATUS.                   
+                                                                                
+           SELECT  BP13K595 ASSIGN TO BP13K595                                  
+                            ORGANIZATION   IS INDEXED                           
+                            ACCESS MODE    IS DYNAMIC                           
+                            RECORD KEY     IS K595-KEY-FLD                      
+                  ALTERNATE RECORD KEY     IS K595-NUM-NRIC1                    
+                  ALTERNATE RECORD KEY     IS K595-NUM-NRIC2                    
+                            FILE STATUS    IS WS-K595-STATUS.                   
+                                                                                
+      ***************                                                           
+       DATA DIVISION.                                                           
+      ***************                                                           
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F205         BLOCK CONTAINS 0 RECORDS                           
+                             RECORD CONTAINS 80 CHARACTERS                      
+                             LABEL RECORDS ARE STANDARD                         
+                             RECORDING MODE IS F.                               
+       COPY BP13F205.                                                           
+                                                                                
+       FD   BP13K813                                                            
+            RECORD CONTAINS 1000 CHARACTERS.                                    
+       COPY BP13K813.                                                           
+                                                                                
+       FD   BP13K595                                                            
+            RECORD CONTAINS  500 CHARACTERS.                                    
+       COPY BP13K595.                                                           
+                                                                                
+       FD   BP13F595                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       01   BP13F595-REC.                                                       
+            05  FILLER                    PIC X(32).                            
+            05  F595-NUM-REF              PIC X(08).                            
+            05  F595-NUM-NRIC1            PIC X(09).                            
+            05  FILLER                    PIC X(32).                            
+            05  F595-NUM-NRIC2            PIC X(09).                            
+            05  FILLER                    PIC X(96).                            
+            05  F595-CDE-NT1              PIC X(03).                            
+            05  FILLER                    PIC X(21).                            
+            05  F595-CDE-FLAT-TYPE        PIC X(02).                            
+            05  F595-CDE-ALLOC-SCH        PIC X(03).                            
+            05  FILLER                    PIC X(19).                            
+            05  F595-NUM-NT-FT-QUEUE      PIC X(05).                            
+            05  FILLER                    PIC X(08).                            
+            05  F595-CDE-ELIG-SCH         PIC X(03).                            
+            05  FILLER                    PIC X(39).                            
+            05  F595-NUM-BOOK-STATUS      PIC X(02).                            
+            05  FILLER                    PIC X(42).                            
+            05  F595-DTE-BALLOT           PIC X(06).                            
+            05  FILLER                    PIC X(36).                            
+            05  F595-ALLO-CAT             PIC X(03).                            
+            05  FILLER                    PIC X(97).                            
+            05  F595-NUM-SCH-ACC          PIC X(09).                            
+            05  F595-DTE-BK-APPT          PIC X(08).                            
+            05  F595-NUM-ALLOC-TAG        PIC X(02).                            
+            05  FILLER                    PIC X(06).                            
+                                                                                
+       FD   P13F595A                                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            RECORDING MODE IS F.                                                
+       01   P13F595A-REC.                                                       
+            05  FILLER                    PIC X(464).                           
+            05  F595A-NUM-BE-CNT          PIC 9(02).                            
+            05  F595A-NUM-BTO-CNT         PIC 9(02).                            
+            05  F595A-NUM-BK-TAG          PIC X(01).                            
+            05  F595A-NUM-BK-CNT          PIC 9(02).                            
+            05  F595A-NUM-REST-CNT        PIC 9(02).                            
+            05  F595A-NUM-BTO-ADD         PIC 9(02).                            
+            05  F595A-NUM-SCH-ACC         PIC X(09).                            
+            05  F595A-NUM-FN-CNT          PIC 9(02).                            
+            05  F595A-NUM-STAT-S          PIC 9(02).                            
+            05  FILLER                    PIC X(01).                            
+            05  F595A-NUM-AF-QUE          PIC 9(02).                            
+            05  F595A-NUM-BUY-STATUS      PIC X(01).                            
+            05  F595A-NUM-ALLOC-TAG       PIC X(02).                            
+            05  F595A-NUM-NE-CNT          PIC 9(02).                            
+            05  F595A-NUM-BK-ADD          PIC 9(02).                            
+            05  F595A-NUM-HARDLUCK        PIC 9(02).                            
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      ******************************************************************        
+      *                   WORKING-STORAGE AREA                         *        
+      ******************************************************************        
+       01  FILE-VARIABLES.                                                      
+           05  WS-EOF-F595             PIC X(1)  VALUE 'N'.                     
+           05  WS-EOF-K595             PIC X(1)  VALUE 'N'.                     
+           05  WS-K813-STATUS          PIC 9(02) VALUE ZEROES.                  
+           05  WS-K595-STATUS          PIC 9(02) VALUE ZEROES.                  
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F595-READ            PIC 9(07) VALUE ZEROES.                  
+           05  WS-F595A-WRITE          PIC 9(07) VALUE ZEROES.                  
+           05  WS-BK-CNT               PIC 9(02) VALUE ZEROES.                  
+           05  WS-BTO-CNT              PIC 9(02) VALUE ZEROES.                  
+           05  WS-BYPASS-CNT           PIC 9(07) VALUE ZEROES.                  
+           05  WS-NRIC-NOTBK-CNT       PIC 9(07) VALUE ZEROES.                  
+           05  WS-NRIC-NOTBK-BAL       PIC 9(07) VALUE ZEROES.                  
+           05  WS-NRIC-NOTBK-TAG       PIC 9(07) VALUE ZEROES.                  
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-SYSTEM-DATE          PIC 9(08) VALUE ZEROES.                  
+           05  WS-NUM-NRIC             PIC X(09) VALUE SPACES.                  
+           05  WS-K813-BYPASS          PIC X(01) VALUE 'N'.                     
+           05  WS-BK-TAG               PIC X(01) VALUE 'N'.                     
+           05  WS-K595-READ            PIC X(01) VALUE 'N'.                     
+           05  WS-F595-CUR-REC         PIC X(500).                              
+           05  WS-F595-BK-REC          PIC X(500).                              
+           05  WS-PCT-RND              PIC 9(1)V99 VALUE ZEROES.                
+           05  WS-SUPPLY-RND           PIC 9(5)    VALUE ZEROES.                
+           05  WS-UNIT-OFFER           PIC 9(4)    VALUE ZEROES.                
+           05  WS-PCT                  PIC 9(5)    VALUE 300.                   
+           05  WS-QUEUE-PCT            PIC 9(5)    VALUE ZEROES.                
+           05  WS-QUEUE-RND            PIC 9(5)    VALUE ZEROES.                
+           05  WS-K595-QUEUE           PIC 9(5)    VALUE ZEROES.                
+           05  WS-HARDLUCK             PIC 9(2)    VALUE ZEROS.                 
+           05  WS-FINAL-BK             PIC S9(2)   VALUE ZEROS.                 
+           05  WS-FINAL-BTO            PIC S9(2)   VALUE ZEROS.                 
+           05  WS-STAT-S               PIC 9(2)    VALUE ZEROS.                 
+                                                                                
+      ******************************************************************        
+      *                   P R O G R A M     B O D Y                    *        
+      ******************************************************************        
+                                                                                
+      ********************                                                      
+       PROCEDURE DIVISION.                                                      
+      ********************                                                      
+                                                                                
+      ******************************************************************        
+       0000-MAIN.                                                               
+      ******************************************************************        
+                                                                                
+           PERFORM 1000-OPEN-ROUTINE       THRU 1000-EXIT.                      
+           PERFORM 1500-READ-BP13F205      THRU 1500-EXIT.                      
+                                                                                
+           PERFORM 2000-READ-BP13F595      THRU 2000-EXIT.                      
+                                                                                
+           PERFORM 3000-PROCESS-RECORDS    THRU 3000-EXIT                       
+             UNTIL WS-EOF-F595 = 'Y'.                                           
+                                                                                
+           PERFORM 9999-CLOSE-ROUTINE      THRU  9999-EXIT.                     
+                                                                                
+       0000-EXIT.  EXIT.                                                        
+                                                                                
+      ******************************************************************        
+       1000-OPEN-ROUTINE.                                                       
+      ******************************************************************        
+                                                                                
+           OPEN INPUT  BP13F595                                                 
+                       BP13F205                                                 
+                       BP13K595                                                 
+                       BP13K813                                                 
+              OUTPUT   P13F595A.                                                
+                                                                                
+           IF WS-K813-STATUS  NOT =  00 AND 97                                  
+              DISPLAY 'ERROR OPENING - BP13K813 : ' WS-K813-STATUS              
+              MOVE     WS-K813-STATUS            TO RETURN-CODE                 
+              PERFORM  9999-CLOSE-ROUTINE      THRU 9999-EXIT                   
+           END-IF.                                                              
+                                                                                
+           IF WS-K595-STATUS  NOT =  00 AND 97                                  
+              DISPLAY 'ERROR OPENING - BP13K595 : ' WS-K595-STATUS              
+              MOVE     WS-K595-STATUS            TO RETURN-CODE                 
+              PERFORM  9999-CLOSE-ROUTINE      THRU 9999-EXIT                   
+           END-IF.                                                              
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       1500-READ-BP13F205.                                                      
+      ******************************************************************        
+                                                                                
+           READ BP13F205           AT END                                       
+                GO                 TO 9999-CLOSE-ROUTINE.                       
+                                                                                
+       1500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       2000-READ-BP13F595.                                                      
+      ******************************************************************        
+                                                                                
+           READ BP13F595           AT   END                                     
+                MOVE 'Y'           TO   WS-EOF-F595                             
+                GO                 TO   2000-EXIT.                              
+                                                                                
+           ADD  1                  TO   WS-F595-READ.                           
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3000-PROCESS-RECORDS.                                                    
+      ******************************************************************        
+                                                                                
+           MOVE 'N'                            TO WS-BK-TAG                     
+           MOVE ZEROES                         TO WS-BK-CNT                     
+                                                  WS-BTO-CNT.                   
+           MOVE ZEROS                          TO WS-HARDLUCK.                  
+           MOVE ZEROS                          TO WS-FINAL-BK.                  
+           MOVE ZEROS                          TO WS-FINAL-BTO.                 
+           MOVE ZEROS                          TO WS-STAT-S.                    
+                                                                                
+           PERFORM 3500-PROCESS-NRIC         THRU 3500-EXIT.                    
+           PERFORM 4000-WRITE-NOTBK          THRU 4000-EXIT.                    
+           PERFORM 2000-READ-BP13F595        THRU 2000-EXIT.                    
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ****************************************************************          
+       3500-PROCESS-NRIC.                                                       
+      ****************************************************************          
+                                                                                
+            MOVE SPACES                              TO P13F595A-REC            
+            INITIALIZE                                  P13F595A-REC.           
+                                                                                
+            MOVE BP13F595-REC                        TO P13F595A-REC.           
+            MOVE 'Y'                                 TO WS-K595-READ.           
+            PERFORM 3800-START-BP13K595            THRU 3800-EXIT.              
+                                                                                
+            IF WS-BK-CNT = 0 OR WS-STAT-S = 0                                   
+               MOVE 'N'                              TO WS-K595-READ            
+               PERFORM 3800-START-BP13K595         THRU 3800-EXIT               
+            END-IF.                                                             
+                                                                                
+       3500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3600-READ-BP13K813.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                                TO BP13K813-REC.          
+           INITIALIZE                                    BP13K813-REC.          
+                                                                                
+           MOVE K595-CDE-NT1              TO K813-NUM-ZONE.                     
+      *    MOVE K595-CDE-FLAT-TYPE        TO K813-NUM-FLAT-TYPE.                
+      *    MOVE K595-DTE-BALLOT           TO K813-DTE-BALLOT.                   
+                                                                                
+           START BP13K813 KEY >= K813-KEY-FLD                                   
+                                                                                
+           EVALUATE WS-K813-STATUS                                              
+               WHEN 00                                                          
+                    READ BP13K813 NEXT RECORD                                   
+                    IF K813-NUM-ZONE = K595-CDE-NT1                             
+                       PERFORM 3700-CHECK-PCT-SUPPLY   THRU 3700-EXIT           
+                    ELSE                                                        
+                       DISPLAY 'BP13K813 NOT FND: ' K595-CDE-NT1                
+                    END-IF                                                      
+               WHEN 23                                                          
+                    CONTINUE                                                    
+                                                                                
+               WHEN OTHER                                                       
+                    MOVE WS-K813-STATUS               TO RETURN-CODE            
+                    DISPLAY 'ERROR READING BP13K813: ' WS-K813-STATUS           
+                            ' KEY : ' K813-NUM-ZONE                             
+                    PERFORM  9999-CLOSE-ROUTINE THRU 9999-EXIT                  
+           END-EVALUATE.                                                        
+                                                                                
+       3600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3700-CHECK-PCT-SUPPLY.                                                   
+      ******************************************************************        
+                                                                                
+           MOVE ZEROES                           TO WS-PCT-RND                  
+                                                    WS-SUPPLY-RND               
+                                                    WS-UNIT-OFFER.              
+                                                                                
+           IF K813-NUM-UNIT-OFFER NOT NUMERIC                                   
+              MOVE ZEROES                        TO K813-NUM-UNIT-OFFER         
+           END-IF.                                                              
+                                                                                
+           MOVE K813-NUM-UNIT-OFFER              TO WS-UNIT-OFFER.              
+                                                                                
+                                                                                
+           COMPUTE WS-PCT-RND = WS-PCT / 100.                                   
+                                                                                
+           COMPUTE WS-SUPPLY-RND ROUNDED                                        
+                              = WS-UNIT-OFFER * WS-PCT-RND.                     
+                                                                                
+           MOVE WS-SUPPLY-RND               TO WS-QUEUE-PCT.                    
+                                                                                
+       3700-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3800-START-BP13K595.                                                     
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                     TO BP13K595-REC.                     
+           INITIALIZE                         BP13K595-REC.                     
+                                                                                
+           MOVE 'N'                        TO WS-EOF-K595.                      
+                                                                                
+           IF WS-K595-READ = 'Y'                                                
+              MOVE F595-NUM-NRIC1          TO K595-NUM-NRIC1                    
+              START BP13K595 KEY >= K595-NUM-NRIC1                              
+           ELSE                                                                 
+              MOVE F595-NUM-NRIC1          TO K595-NUM-NRIC2                    
+              START BP13K595 KEY >= K595-NUM-NRIC2                              
+           END-IF.                                                              
+                                                                                
+           EVALUATE WS-K595-STATUS                                              
+               WHEN 00                                                          
+               WHEN 02                                                          
+                    PERFORM 3810-READNEXT-BP13K595 THRU 3810-EXIT               
+                    PERFORM 3820-PROCESS-BP13K595  THRU 3820-EXIT               
+                            UNTIL WS-EOF-K595 = 'Y'                             
+               WHEN 20                                                          
+               WHEN 23                                                          
+                    CONTINUE                                                    
+               WHEN OTHER                                                       
+                  DISPLAY 'START ERROR BP13K595 : ' WS-K595-STATUS              
+                          ' NRIC : ' K595-NUM-NRIC1                             
+                  PERFORM 9999-CLOSE-ROUTINE       THRU 9999-EXIT               
+           END-EVALUATE.                                                        
+                                                                                
+       3800-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3810-READNEXT-BP13K595.                                                  
+      ******************************************************************        
+                                                                                
+           READ BP13K595 NEXT RECORD                                            
+                         AT END MOVE 'Y' TO WS-EOF-K595.                        
+                                                                                
+       3810-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3820-PROCESS-BP13K595.                                                   
+      ******************************************************************        
+                                                                                
+           IF WS-K595-READ = 'Y'                                                
+              MOVE K595-NUM-NRIC1                       TO WS-NUM-NRIC          
+           ELSE                                                                 
+              MOVE K595-NUM-NRIC2                       TO WS-NUM-NRIC          
+           END-IF.                                                              
+                                                                                
+           IF WS-NUM-NRIC = F595-NUM-NRIC1                                      
+                                                                                
+               IF (K595-CDE-REQUEST-STATUS = 'C') OR                            
+                  (K595-CDE-FLAT-TYPE = '1A' OR 'SP')                           
+                  PERFORM 3810-READNEXT-BP13K595 THRU 3810-EXIT                 
+                  GO TO 3820-EXIT                                               
+               END-IF                                                           
+                                                                                
+               IF WS-BK-CNT = 0                                                 
+                  PERFORM 3830-COMPUTE-BTO-COUNT THRU 3830-EXIT                 
+               END-IF                                                           
+                                                                                
+               IF WS-STAT-S = ZEROS                                             
+                  PERFORM 5000-CHECK-REQUEST-S      THRU 5000-EXIT              
+               END-IF                                                           
+                                                                                
+               PERFORM 3810-READNEXT-BP13K595    THRU 3810-EXIT                 
+           ELSE                                                                 
+              MOVE 'Y'                             TO WS-EOF-K595               
+           END-IF.                                                              
+                                                                                
+       3820-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       3830-COMPUTE-BTO-COUNT.                                                  
+                                                                                
+           IF  K595-DTE-BALLOT > F205-DTE-END(1:6)                              
+               AND (K595-NUM-NT-FT-QUEUE NOT = SPACES AND LOW-VALUES            
+                                                      AND ZEROES)               
+               AND (K595-NUM-ALLO-CAT = 'BTO')                                  
+               ADD 1                           TO WS-NRIC-NOTBK-BAL             
+               PERFORM 3600-READ-BP13K813      THRU 3600-EXIT                   
+                                                                                
+               IF K813-NUM-MATURE-EST-TAG NOT = 'Y'                             
+                  ADD 1                        TO WS-NRIC-NOTBK-TAG             
+                  PERFORM 3900-CHECK-QUEUE-NO  THRU 3900-EXIT                   
+               END-IF                                                           
+           ELSE                                                                 
+               IF (K595-DTE-BALLOT > F205-DTE-END(1:6)) AND                     
+                  (K595-DTE-BALLOT     >= '201004')     AND                     
+                  (K595-NUM-BOOK-STATUS =                                       
+                   'NV' OR 'NS' OR 'NF' OR 'NC' OR 'SF' OR 'SC') AND            
+                  (K595-NUM-ALLO-CAT    = 'BTO')                                
+                     ADD 1                         TO WS-BK-CNT                 
+                                                      WS-BTO-CNT                
+               END-IF                                                           
+           END-IF.                                                              
+                                                                                
+                                                                                
+       3830-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3900-CHECK-QUEUE-NO.                                                     
+      ******************************************************************        
+                                                                                
+           IF K595-NUM-NT-FT-QUEUE(1:1) NOT NUMERIC                             
+              MOVE ZEROES                   TO K595-NUM-NT-FT-QUEUE(1:1)        
+           END-IF.                                                              
+                                                                                
+           IF K595-NUM-NT-FT-QUEUE      NOT NUMERIC                             
+              MOVE ZEROES                   TO K595-NUM-NT-FT-QUEUE             
+           END-IF.                                                              
+                                                                                
+           MOVE K595-NUM-NT-FT-QUEUE                 TO WS-K595-QUEUE.          
+                                                                                
+           IF (WS-K595-QUEUE >  WS-QUEUE-PCT)                                   
+               PERFORM 4100-READ-BP13K813          THRU 4100-EXIT               
+                                                                                
+               IF WS-K813-BYPASS = 'Y'                                          
+                  IF K595-DTE-BALLOT >= F205-DTE-REQUEST(1:6)                   
+                     ADD 1                        TO WS-HARDLUCK                
+                  END-IF                                                        
+               ELSE                                                             
+                  ADD 1                           TO WS-BK-CNT                  
+                                                     WS-BTO-CNT                 
+               END-IF                                                           
+           END-IF.                                                              
+                                                                                
+       3900-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       4000-WRITE-NOTBK.                                                        
+      ******************************************************************        
+                                                                                
+           IF F595A-NUM-NE-CNT IS NOT NUMERIC                                   
+              MOVE ZEROS TO F595A-NUM-NE-CNT                                    
+           END-IF.                                                              
+           IF F595A-NUM-FN-CNT IS NOT NUMERIC                                   
+              MOVE ZEROS TO F595A-NUM-FN-CNT                                    
+           END-IF.                                                              
+           IF F595A-NUM-BK-CNT IS NOT NUMERIC                                   
+              MOVE ZEROS TO  F595A-NUM-BK-CNT                                   
+           END-IF.                                                              
+           IF F595A-NUM-BTO-CNT IS NOT NUMERIC                                  
+              MOVE ZEROS TO  F595A-NUM-BTO-CNT                                  
+           END-IF.                                                              
+           IF F595A-NUM-HARDLUCK IS NOT NUMERIC                                 
+              MOVE ZEROS TO  F595A-NUM-HARDLUCK                                 
+           END-IF.                                                              
+                                                                                
+           COMPUTE WS-FINAL-BK      = F595A-NUM-BK-CNT                          
+                                      + WS-BK-CNT                               
+                                      - F595A-NUM-HARDLUCK                      
+                                      - F595A-NUM-NE-CNT.                       
+      **                                                                        
+      ** CHG ON 12/04/2019                                                      
+      **                                                                        
+      **   COMPUTE WS-FINAL-BTO       = F595A-NUM-BTO-CNT                       
+      **                              + WS-BTO-CNT                              
+      **                              - F595A-NUM-HARDLUCK                      
+      **                              - F595A-NUM-NE-CNT.                       
+                                                                                
+           IF WS-FINAL-BK < 0                                                   
+              MOVE ZEROS TO F595A-NUM-BK-CNT                                    
+           ELSE                                                                 
+              COMPUTE F595A-NUM-BK-CNT = WS-FINAL-BK                            
+           END-IF.                                                              
+      **                                                                        
+      ** CHG ON 12/04/2019                                                      
+      **                                                                        
+      **   IF WS-FINAL-BTO < 0                                                  
+      **      MOVE ZEROS TO F595A-NUM-BTO-CNT                                   
+      **   ELSE                                                                 
+      **      COMPUTE F595A-NUM-BTO-CNT = WS-FINAL-BTO                          
+      **   END-IF.                                                              
+                                                                                
+           MOVE WS-BK-CNT                TO F595A-NUM-BK-ADD.                   
+           MOVE WS-BTO-CNT               TO F595A-NUM-BTO-ADD.                  
+           MOVE WS-STAT-S                TO F595A-NUM-STAT-S.                   
+                                                                                
+           WRITE P13F595A-REC.                                                  
+           ADD 1                         TO WS-F595A-WRITE.                     
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4100-READ-BP13K813.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                          TO BP13K813-REC.                
+           INITIALIZE                              BP13K813-REC.                
+                                                                                
+           MOVE 'N'                             TO WS-K813-BYPASS.              
+           MOVE K595-CDE-NT1                    TO K813-NUM-ZONE.               
+      *    MOVE K595-CDE-FLAT-TYPE              TO K813-NUM-FLAT-TYPE.          
+      *    MOVE K595-DTE-BALLOT                 TO K813-DTE-BALLOT.             
+                                                                                
+           START BP13K813 KEY >= K813-KEY-FLD                                   
+                                                                                
+           EVALUATE WS-K813-STATUS                                              
+               WHEN 00                                                          
+                    READ BP13K813 NEXT RECORD                                   
+                    IF K595-CDE-NT1 = K813-NUM-ZONE                             
+                       IF K813-NUM-HARDLUCK-BYPASS = 'Y'                        
+                          MOVE 'Y'                 TO WS-K813-BYPASS            
+                       END-IF                                                   
+                    ELSE                                                        
+                       MOVE 'N'                    TO WS-K813-BYPASS            
+                    END-IF                                                      
+               WHEN 23                                                          
+                    MOVE 'N'                    TO WS-K813-BYPASS               
+                                                                                
+               WHEN OTHER                                                       
+                    MOVE WS-K813-STATUS               TO RETURN-CODE            
+                    DISPLAY 'ERROR READING BP13K813: ' WS-K813-STATUS           
+                            ' KEY : ' K813-KEY-FLD                              
+                    PERFORM  9999-CLOSE-ROUTINE THRU 9999-EXIT                  
+           END-EVALUATE.                                                        
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5000-CHECK-REQUEST-S.                                                    
+                                                                                
+           IF F205-NUM-OPTION = 'YH' OR 'YJ' OR 'YK'                            
+              IF K595-DTE-BALLOT <  F205-DTE-REQUEST(1:6)                       
+                  GO TO 5000-EXIT.                                              
+                                                                                
+           IF K595-NUM-BOOK-STATUS = 'BF' OR 'LF' OR 'WF' OR                    
+                                     'LS' OR 'WS' OR 'LA' OR                    
+                                     'WA' OR 'LG' OR 'WG' OR                    
+                                     'LB' OR 'WB'                               
+              IF (F595-CDE-ALLOC-SCH = 'FTS' OR 'STS') OR                       
+                 ((F595-CDE-ALLOC-SCH = 'SAP') AND                              
+                 (F595-CDE-ELIG-SCH   = 'SSC' OR 'JSS' OR 'NCS' OR              
+                                         'SSE' OR 'JSE' OR 'NSE'))              
+                  IF K595-NUM-BOOK-STATUS = 'BF' OR 'LB' OR 'WB'                
+                     ADD 1                TO WS-STAT-S                          
+                  END-IF                                                        
+              ELSE                                                              
+                  IF K595-NUM-BOOK-STATUS = 'BF' OR 'LF' OR 'WF' OR             
+                                            'LS' OR 'WS' OR 'LA' OR             
+                                            'WA' OR 'LG' OR 'WG'                
+                      ADD 1               TO WS-STAT-S                          
+                  END-IF                                                        
+              END-IF                                                            
+           ELSE                                                                 
+             IF K595-NUM-BOOK-STATUS = 'NC' OR 'NF' OR 'NV' OR                  
+                                       'NS' OR 'SC' OR 'SF' OR                  
+                                       'NE'                                     
+                CONTINUE                                                        
+             ELSE                                                               
+                IF (K595-NUM-ALLO-CAT = 'BTO' OR 'BE ' OR 'SBF') AND            
+                   (K595-CDE-REQUEST-STATUS = 'S' OR 'P') AND                   
+                   (K595-DTE-BALLOT >= F205-DTE-ALLOCN AND                      
+                    K595-DTE-BALLOT <= F205-DTE-END)                            
+                      ADD 1            TO WS-STAT-S                             
+                END-IF                                                          
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       9999-CLOSE-ROUTINE.                                                      
+      ******************************************************************        
+                                                                                
+                                                                                
+           DISPLAY '*************** CONTROL    TOTALS ***************'.         
+           DISPLAY 'PROGRAM-ID : BP13CB91.'                                     
+           DISPLAY '-------------------------------------------------'.         
+           DISPLAY '(1) NO OF BP13F595 RECORDS READ ........ : '                
+                    WS-F595-READ.                                               
+           DISPLAY '(2) NO OF P13F595A RECORDS WRITTEN ..... : '                
+                    WS-F595A-WRITE.                                             
+           DISPLAY '(2) NO OF NOTBK95A RECORDS WRITTEN ..... : '                
+                    WS-F595A-WRITE.                                             
+           DISPLAY '(3) NO OF NOT BOOKED NRICS ............. : '                
+                    WS-NRIC-NOTBK-CNT.                                          
+           DISPLAY '(3) NO OF NOT BOOKED NRICS UNDER CUTOFF   : '               
+                    WS-NRIC-NOTBK-BAL.                                          
+           DISPLAY '(4) NO OF NOT BOOKED NRICS UNDER CUTOFF   : '.              
+           DISPLAY '    W/ MATURE-EST-TAG = Y  ...............:'                
+                    WS-NRIC-NOTBK-TAG.                                          
+                                                                                
+           CLOSE BP13F595                                                       
+                 BP13F205                                                       
+                 BP13K595                                                       
+                 BP13K813                                                       
+                 P13F595A.                                                      
+                                                                                
+           IF WS-K813-STATUS  NOT =  00 AND 97                                  
+              DISPLAY 'ERROR CLOSING - BP13K813 : ' WS-K813-STATUS              
+              MOVE     WS-K813-STATUS            TO RETURN-CODE                 
+           END-IF.                                                              
+                                                                                
+           IF WS-K595-STATUS  NOT =  00 AND 97                                  
+              DISPLAY 'ERROR CLOSING - BP13K595 : ' WS-K595-STATUS              
+              MOVE     WS-K595-STATUS            TO RETURN-CODE                 
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9999-EXIT.  EXIT.                                                        
+

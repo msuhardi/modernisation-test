@@ -1,0 +1,657 @@
+      ******************************************************************        
+       IDENTIFICATION DIVISION.                                                 
+      ******************************************************************        
+                                                                                
+       PROGRAM-ID.    BP13C128.                                                 
+      *AUTHOR.        ERWIN GAW.                                                
+      *DATE-WRITTEN.  25/03/96.                                                 
+      *DATE-COMPILED.                                                           
+      *REMARKS.                                                                 
+      ******************************************************************        
+      *                                                                *        
+      *   SYSTEM NAME  :    SYSTEM OF COMMITMENT   (SOC)               *        
+      *                                                                *        
+      *   SYSTEM ID    :    BP13                                       *        
+      *                                                                *        
+      *   OBJECTIVE    :    TO UPDATE BP13K885 AFTER SUB-TRANSFER      *        
+      *                     REFUND IS MADE.                            *        
+      *                                                                *        
+      *   INPUT FILES  :    BP13K885                                   *        
+      *                     BP13K800                                   *        
+      *                     BP13F125                                   *        
+      *                                                                *        
+      *   REPORT       :    1. BP13L128                                *        
+      *                                                                *        
+      *   MODIFICATION HISTORY:                                        *        
+      *   =====================                                        *        
+      *   CHGE-NO  BY    DATE   DESCRIPTION                            *        
+      *   -------  ---  ------  -------------------------------------  *        
+      * BP130103   EG1  25031996 TO CATER FOR SUB-TRANSFER MODULE.     *        
+      * BP130418   NOR  01071998 MAKE PGRM Y2K COMPLAINT               *        
+      * BP130690   LSB  26071999 A)MRTG LOAN APPL.B)CTRL S'DULE        *        
+      *                          C)CD COLLECTED D)CEASE NOTICE         *        
+      * BP130690   LSB  28071999 A)MRTG LOAN APPL.B)CTRL S'DULE        *        
+      *                          C)CD COLLECTED D)CEASE NOTICE         *        
+      * BP130790   SCK  02022000 TO ADD IN IN-SOURCE DOCUMENTATION     *        
+      * BP133850   JB8  16042010 TO REMOVE CHECK ON K800 SUSPENSE AMOUNT        
+      *                          WHEN UPDATE K800                      *        
+      * BP133850   JB8  11052010 TO CATER FOR K885-AMT-SUSPENSE AND    *        
+      *                          F125-AMT-RECEIPT NOT TALLY            *        
+      * BP135576   ESD1 30012015 TO ADD AMT-INT-REFUND COMPUTATION     *        
+      ******************************************************************        
+                                                                                
+       ENVIRONMENT    DIVISION.                                                 
+      ******************************************************************        
+      *================================================================*        
+       CONFIGURATION  SECTION.                                                  
+      *================================================================*        
+       SOURCE-COMPUTER.   IBM-3090.                                             
+       OBJECT-COMPUTER.   IBM-3090.                                             
+                                                                                
+      *================================================================*        
+       INPUT-OUTPUT SECTION.                                                    
+      *================================================================*        
+      *----------------------------------------------------------------*        
+       FILE-CONTROL.                                                            
+      *----------------------------------------------------------------*        
+                                                                                
+           SELECT BP13F125  ASSIGN       TO BP13F125.                           
+           SELECT BP13K885  ASSIGN       TO BP13K885                            
+                            ORGANIZATION IS INDEXED                             
+                            ACCESS MODE  IS DYNAMIC                             
+                            RECORD KEY   IS K885-KEY-FLD                        
+                            FILE STATUS  IS K885-STATUS.                        
+           SELECT BP13K800  ASSIGN       TO BP13K800                            
+                            ORGANIZATION IS INDEXED                             
+                            ACCESS MODE  IS DYNAMIC                             
+                            RECORD KEY   IS K800-NUM-REGN                       
+                            FILE STATUS  IS K800-STATUS.                        
+           SELECT BP13L128  ASSIGN       TO BP13L128.                           
+                                                                                
+      ******************************************************************        
+       DATA DIVISION.                                                           
+      ******************************************************************        
+      *================================================================*        
+       FILE SECTION.                                                            
+      *================================================================*        
+                                                                                
+       FD   BP13F125                                                            
+            RECORDING MODE  IS  F                                               
+            RECORD CONTAINS 150 CHARACTERS.                                     
+       COPY BP13F125.                                                           
+                                                                                
+       FD   BP13K885                                                            
+            RECORD CONTAINS 400 CHARACTERS.                                     
+       COPY BP13K885.                                                           
+                                                                                
+       FD   BP13K800                                                            
+            RECORD CONTAINS 2000 CHARACTERS.                                    
+       COPY BP13K800.                                                           
+                                                                                
+       FD   BP13L128                                                            
+            RECORDING MODE  IS  F                                               
+            RECORD CONTAINS 132 CHARACTERS.                                     
+       01   L128-REC            PIC X(132).                                     
+                                                                                
+      *================================================================*        
+       WORKING-STORAGE SECTION.                                                 
+      *================================================================*        
+      *----------------------------------------------------------------*        
+      *     ERROR VARIABLES                                            *        
+      *----------------------------------------------------------------*        
+       01  WS-ERR-MSG                     PIC X(80).                            
+                                                                                
+      *----------------------------------------------------------------*        
+      *     FLAG VARIABLES                                             *        
+      *----------------------------------------------------------------*        
+       01  WS-FLAGS.                                                            
+           05  WS-F125-EOF                PIC X(1)   VALUE 'N'.                 
+           05  WS-K885-EOF                PIC X(1)   VALUE 'N'.                 
+                                                                                
+       01  WS-FILE-STATUS.                                                      
+           05  K885-STATUS                PIC X(2).                             
+           05  K800-STATUS                PIC X(2).                             
+                                                                                
+       01  WS-ERROR-FL                    PIC X(1)   VALUE SPACE.               
+                                                                                
+      *----------------------------------------------------------------*        
+      *    COUNTER VARIABLES                                           *        
+      *----------------------------------------------------------------*        
+       01  WS-COUNTERS.                                                         
+           05  WS-CNT-F125-READ           PIC 9(8)   VALUE ZEROES.              
+           05  WS-CNT-K800-REWRITE        PIC 9(8)   VALUE ZEROES.              
+           05  WS-CNT-K885-REWRITE        PIC 9(8)   VALUE ZEROES.              
+           05  WS-CNT-L128-WRITE          PIC 9(8)   VALUE ZEROES.              
+                                                                                
+      *----------------------------------------------------------------*        
+      *    PRINTING VARIABLES                                          *        
+      *----------------------------------------------------------------*        
+       01  WS-PRINT-VARIABLES.                                                  
+           05  WS-K885-NOTFD              PIC X(1)   VALUE SPACES.              
+           05  WS-K885-READ               PIC 9(3)   VALUE ZEROES.              
+           05  WS-SEQ-CNT                 PIC 9(2)   VALUE ZEROES.              
+           05  WS-PAGE-CNT                PIC 9(5)   VALUE 0.                   
+           05  WS-LINE-CNT                PIC 9(2)   VALUE 0.                   
+                                                                                
+      *----------------------------------------------------------------*        
+      *  MISCELLEANEOUS VARIABLES                                      *        
+      *----------------------------------------------------------------*        
+       01  WS-IDX                         PIC 9(2).                             
+       01  WS-STRING-POINTER              PIC 9(2).                             
+       01  WS-COMPUTE-VARIABLES.                                                
+           05  WS-AMT-SUSPENSE            PIC S9(8)V99 VALUE +0.                
+           05  WS-AMT-INTEREST            PIC S9(8)V99 VALUE +0.                
+           05  WS-AMT-INT-REMAINDER       PIC S9(8)V99 VALUE +0.                
+           05  WS-AMT-REFUND              PIC S9(8)V99 VALUE +0.                
+           05  WS-AMT-REF-INT             PIC S9(8)V99 VALUE +0.                
+                                                                                
+       01  WS-CURRENT-DATE.                                                     
+           05  WS-CUR-CCYYMMDD.                                                 
+               10  WS-CURR-CCYY           PIC X(4).                             
+               10  WS-CURR-MM             PIC X(2).                             
+               10  WS-CURR-DD             PIC X(2).                             
+                                                                                
+      *----------------------------------------------------------------*        
+      *    REPORT LAYOUT OF  VOUCHER LIST.                             *        
+      *----------------------------------------------------------------*        
+       01  L128-PRT-HDR-1.                                                      
+           05  FILLER                     PIC X      VALUE SPACE.               
+           05  FILLER                     PIC X(8)   VALUE 'BP13L128'.          
+           05  FILLER                     PIC X(5)   VALUE SPACES.              
+           05  FILLER                     PIC X(4)   VALUE 'HDB3'.              
+           05  FILLER                     PIC X(28)  VALUE SPACES.              
+           05  FILLER                     PIC X(39)                             
+               VALUE 'S Y S T E M   O F   C O M M I T M E N T'.                 
+           05  FILLER                     PIC X(05)  VALUE SPACES.              
+           05  FILLER                     PIC X(9)   VALUE 'PAGE   : '.         
+           05  L128-PRT-PAGE              PIC ZZZZ9.                            
+           05  FILLER                     PIC X(1)   VALUE SPACES.              
+           05  FILLER                     PIC X(7)   VALUE 'DATE : '.           
+           05  L128-PRT-DATE              PIC X(10)  VALUE SPACES.              
+                                                                                
+       01  L128-PRT-HDR-2.                                                      
+           05  FILLER                     PIC X(38)  VALUE SPACES.              
+           05  FILLER                     PIC X(52)                             
+           VALUE 'ERROR LIST ON REFUND UPDATE OF BP13K885 AND BP13K800'.        
+                                                                                
+       01  L128-PRT-HDR-3.                                                      
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  FILLER                     PIC X(05)  VALUE ' S/N '.             
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  FILLER                     PIC X(08)  VALUE 'REGN NO.'.          
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  FILLER                     PIC X(10)  VALUE 'DATE  POST'.        
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  FILLER                     PIC X(08)  VALUE 'CNT HIST'.          
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  FILLER                     PIC X(17)                             
+               VALUE 'ERROR DESCRIPTION'.                                       
+                                                                                
+       01  L128-PRT-HDR-4.                                                      
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  FILLER                     PIC X(05)  VALUE '====='.             
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  FILLER                     PIC X(08)  VALUE '========'.          
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  FILLER                     PIC X(10)  VALUE '=========='.        
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  FILLER                     PIC X(08)  VALUE '========'.          
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  FILLER                     PIC X(70)  VALUE ALL '='.             
+                                                                                
+       01  L128-PRT-DETAIL.                                                     
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  L128-SER-NO                PIC ZZZZ9.                            
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  L128-REGN-NO               PIC X(08).                            
+           05  FILLER                     PIC X(02)  VALUE SPACES.              
+           05  L128-DTE-POST              PIC X(10).                            
+           05  FILLER                     PIC X(04)  VALUE SPACES.              
+           05  L128-COUNT-HISTORY         PIC X(03).                            
+           05  FILLER                     PIC X(05)  VALUE SPACES.              
+           05  L128-REMARKS               PIC X(70).                            
+                                                                                
+      ******************************************************************        
+       PROCEDURE DIVISION.                                                      
+      ******************************************************************        
+      *================================================================*        
+       0000-MAIN-ROUTINE.                                                       
+      *================================================================*        
+                                                                                
+           PERFORM 1000-INITIALIZATION      THRU 1000-EXIT.                     
+           PERFORM 2000-PROCESS-ROUTINE     THRU 2000-EXIT                      
+                   UNTIL WS-F125-EOF = 'Y'.                                     
+           PERFORM 9999-CLOSE-FILES         THRU 9999-EXIT.                     
+                                                                                
+       0000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *================================================================*        
+       1000-INITIALIZATION.                                                     
+      *================================================================*        
+           OPEN INPUT  BP13F125                                                 
+                I-O    BP13K800                                                 
+                       BP13K885                                                 
+                OUTPUT BP13L128.                                                
+                                                                                
+           IF K885-STATUS NOT EQUAL 00 AND 97                                   
+              STRING 'BP13K885 OPENING ERROR (' K885-STATUS ')'                 
+                     DELIMITED BY SIZE INTO WS-ERR-MSG                          
+              PERFORM 9900-HANDLE-ABEND THRU 9900-EXIT                          
+           END-IF.                                                              
+                                                                                
+           IF K800-STATUS NOT EQUAL 00 AND 97                                   
+              STRING 'BP13K800 OPENING ERROR (' K800-STATUS ')'                 
+                     DELIMITED BY SIZE INTO WS-ERR-MSG                          
+              PERFORM 9900-HANDLE-ABEND THRU 9900-EXIT                          
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8) TO  WS-CUR-CCYYMMDD.                 
+           STRING WS-CURR-DD '/' WS-CURR-MM '/' WS-CURR-CCYY                    
+                  DELIMITED BY SIZE INTO L128-PRT-DATE.                         
+                                                                                
+           READ  BP13F125 AT END                                                
+                 MOVE 'Y'          TO  WS-F125-EOF.                             
+                                                                                
+           IF WS-F125-EOF = 'Y'                                                 
+              STRING 'NO INPUT F125 RECORDS FOUND'                              
+                     DELIMITED BY SIZE INTO WS-ERR-MSG                          
+              PERFORM 9999-CLOSE-FILES         THRU 9999-EXIT                   
+      *       PERFORM 9900-HANDLE-ABEND            THRU 9900-EXIT               
+           ELSE                                                                 
+              ADD 1                TO WS-CNT-F125-READ                          
+              COMPUTE F125-AMT-RECEIPT = -1 * F125-AMT-RECEIPT                  
+           END-IF.                                                              
+           MOVE 60                 TO WS-LINE-CNT.                              
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *================================================================*        
+       2000-PROCESS-ROUTINE.                                                    
+      *================================================================*        
+           PERFORM 3000-VLD-TRANS-TYPE   THRU 3000-EXIT.                        
+           IF F125-CDE-PAYMENT-TYPE = 'SUS'                                     
+              IF F125-CDE-TRANS-TYPE = '15' OR '16'                             
+                 PERFORM 2100-PROCESS-CASH-PYMT THRU 2100-EXIT                  
+              ELSE                                                              
+                 IF F125-CDE-TRANS-TYPE = '13' OR '14'                          
+                    PERFORM 2200-PROCESS-CPF-PYMT THRU 2200-EXIT                
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           READ  BP13F125 AT END                                                
+                 MOVE 'Y'        TO WS-F125-EOF                                 
+                 GO  TO 2000-EXIT                                               
+                 END-READ.                                                      
+                                                                                
+           ADD   1                   TO WS-CNT-F125-READ.                       
+           COMPUTE F125-AMT-RECEIPT = -1 * F125-AMT-RECEIPT.                    
+           MOVE  SPACE               TO WS-ERROR-FL.                            
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *================================================================*        
+       2100-PROCESS-CASH-PYMT.                                                  
+      *================================================================*        
+           MOVE SPACES                     TO K885-KEY-FLD.                     
+           MOVE F125-NUM-REGN              TO K885-NUM-REGN.                    
+           PERFORM 8000-READ-BP13K885      THRU 8000-EXIT.                      
+           IF WS-K885-NOTFD = 'Y'                                               
+              MOVE F125-NUM-NRIC              TO K885-NUM-NRIC                  
+              MOVE F125-NUM-REGN              TO K885-NUM-REGN                  
+              PERFORM 8000-READ-BP13K885      THRU 8000-EXIT                    
+              IF WS-K885-NOTFD = 'Y'                                            
+                  STRING 'BP13K885 READ ERROR CODE(' K885-STATUS ')'            
+                      DELIMITED BY SIZE INTO WS-ERR-MSG                         
+                  PERFORM 9900-HANDLE-ABEND  THRU 9900-EXIT                     
+              END-IF                                                            
+           END-IF.                                                              
+      *    IF K885-NUM-PRINT-STATUS NOT = 'Y'                                   
+      *       MOVE 'VOUCHER NOT PRINTED FOR RECORD!'                            
+      *                                TO L128-REMARKS                          
+      *       PERFORM 6000-PRINT-ERR-LIST THRU 6000-EXIT                        
+      *           GO TO 2100-EXIT                                               
+      *    END-IF.                                                              
+           DISPLAY '2100  '  K885-NUM-REGN                                      
+                   ' INT = ' K885-AMT-INTEREST                                  
+                   ' SUS= ' K885-AMT-SUSPENSE                                   
+                   ' FN= '  K885-AMT-REFUND                                     
+                   ' F125= ' F125-AMT-RECEIPT.                                  
+           IF K885-AMT-INTEREST > 0                                             
+              COMPUTE WS-AMT-REFUND = F125-AMT-RECEIPT -                        
+                                      K885-AMT-INTEREST                         
+              IF (WS-AMT-REFUND = K885-AMT-REFUND) AND                          
+                 (F125-AMT-RECEIPT = K885-AMT-SUSPENSE)                         
+                 INITIALIZE K885-AMT-REFUND                                     
+                 INITIALIZE K885-AMT-SUSPENSE                                   
+                 PERFORM 2300-PROCESS-K800-INT THRU 2300-EXIT                   
+                 IF WS-ERROR-FL NOT = 'Y'                                       
+                    PERFORM 8300-REWRITE-BP13K800  THRU 8300-EXIT               
+                 END-IF                                                         
+              ELSE                                                              
+                 MOVE 'F125-AMT-RECEIPT AND K885 VALUES NOT EQUAL'              
+                                             TO L128-REMARKS                    
+                 PERFORM 6000-PRINT-ERR-LIST THRU 6000-EXIT                     
+              END-IF                                                            
+           ELSE                                                                 
+      *       IF (F125-AMT-RECEIPT = K885-AMT-SUSPENSE) AND                     
+      *          (F125-AMT-RECEIPT = K885-AMT-REFUND)                           
+                 INITIALIZE K885-AMT-REFUND                                     
+                 INITIALIZE K885-AMT-SUSPENSE                                   
+      *       ELSE                                                              
+      *          MOVE 'F125-AMT-RECEIPT AND K885 VALUES NOT EQUAL'              
+      *                                      TO L128-REMARKS                    
+      *          PERFORM 6000-PRINT-ERR-LIST THRU 6000-EXIT                     
+      *       END-IF                                                            
+           END-IF.                                                              
+           IF WS-ERROR-FL NOT = 'Y'                                             
+              PERFORM 8200-REWRITE-BP13K885  THRU 8200-EXIT                     
+           END-IF.                                                              
+                                                                                
+       2100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *================================================================*        
+       2200-PROCESS-CPF-PYMT.                                                   
+      *================================================================*        
+           MOVE LOW-VALUES                 TO K885-KEY-FLD.                     
+           MOVE F125-NUM-NRIC              TO K885-NUM-NRIC.                    
+           MOVE F125-NUM-REGN              TO K885-NUM-REGN.                    
+           PERFORM 8000-READ-BP13K885      THRU 8000-EXIT.                      
+      *    IF K885-NUM-PRINT-STATUS NOT = 'Y'                                   
+      *       MOVE 'VOUCHER NOT PRINTED FOR RECORD!'                            
+      *                                  TO L128-REMARKS                        
+      *       PERFORM 6000-PRINT-ERR-LIST THRU 6000-EXIT                        
+      *       GO TO 2200-EXIT                                                   
+      *    END-IF                                                               
+           DISPLAY '2200  '  K885-NUM-REGN                                      
+                   ' INT = ' K885-AMT-INTEREST                                  
+                   ' SUS= ' K885-AMT-SUSPENSE                                   
+                   ' FN= '  K885-AMT-REFUND                                     
+                   ' F125= ' F125-AMT-RECEIPT.                                  
+           IF K885-AMT-INTEREST > 0                                             
+              COMPUTE WS-AMT-REFUND = F125-AMT-RECEIPT -                        
+                                      K885-AMT-INTEREST                         
+              IF (WS-AMT-REFUND = K885-AMT-REFUND) AND                          
+                 (F125-AMT-RECEIPT = K885-AMT-SUSPENSE)                         
+                 INITIALIZE K885-AMT-REFUND                                     
+                 INITIALIZE K885-AMT-SUSPENSE                                   
+              ELSE                                                              
+                 COMPUTE K885-AMT-REFUND = K885-AMT-REFUND -                    
+                                           F125-AMT-RECEIPT                     
+                 COMPUTE K885-AMT-SUSPENSE = K885-AMT-SUSPENSE -                
+                                             F125-AMT-RECEIPT                   
+                 IF K885-AMT-REFUND < 0                                         
+                    IF K885-AMT-INT-REFUND IS NOT NUMERIC                       
+                       MOVE ZEROES TO K885-AMT-INT-REFUND                       
+                    END-IF                                                      
+                    COMPUTE K885-AMT-INT-REFUND = K885-AMT-INT-REFUND           
+                                                  - K885-AMT-REFUND             
+                    COMPUTE K885-AMT-REFUND  = K885-AMT-SUSPENSE                
+                 ELSE                                                           
+                   NEXT SENTENCE                                                
+                 END-IF                                                         
+              END-IF                                                            
+              COMPUTE WS-AMT-REF-INT = K885-AMT-REFUND +                        
+                                       K885-AMT-INTEREST                        
+              IF WS-AMT-REF-INT = 0 AND K885-AMT-SUSPENSE = 0                   
+                 PERFORM 2300-PROCESS-K800-INT       THRU 2300-EXIT             
+                 IF WS-ERROR-FL NOT = 'Y'                                       
+                    PERFORM 8300-REWRITE-BP13K800 THRU 8300-EXIT                
+                 END-IF                                                         
+              END-IF                                                            
+           ELSE                                                                 
+              IF (F125-AMT-RECEIPT = K885-AMT-SUSPENSE) AND                     
+                 (F125-AMT-RECEIPT = K885-AMT-REFUND)                           
+                 INITIALIZE K885-AMT-REFUND                                     
+                 INITIALIZE K885-AMT-SUSPENSE                                   
+              ELSE                                                              
+                 MOVE 'F125-AMT-RECEIPT AND K885 VALUES NOT EQUAL'              
+                                             TO L128-REMARKS                    
+                 PERFORM 6000-PRINT-ERR-LIST THRU 6000-EXIT                     
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-ERROR-FL NOT = 'Y'                                             
+              PERFORM 8200-REWRITE-BP13K885  THRU 8200-EXIT                     
+           END-IF.                                                              
+                                                                                
+       2200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *================================================================*        
+       2300-PROCESS-K800-INT.                                                   
+      *================================================================*        
+           MOVE F125-NUM-REGN              TO K800-NUM-REGN.                    
+           PERFORM 8100-READ-BP13K800      THRU 8100-EXIT.                      
+           MOVE K885-AMT-INTEREST          TO WS-AMT-INT-REMAINDER.             
+           IF K800-AMT-SOC-CASH >= WS-AMT-INT-REMAINDER                         
+              COMPUTE K800-AMT-SOC-CASH = K800-AMT-SOC-CASH -                   
+                                          WS-AMT-INT-REMAINDER                  
+           ELSE                                                                 
+              COMPUTE WS-AMT-INT-REMAINDER = WS-AMT-INT-REMAINDER -             
+                                             K800-AMT-SOC-CASH                  
+              COMPUTE K800-AMT-SOC-CASH = 0                                     
+              IF K800-AMT-CPF1-PAID >= WS-AMT-INT-REMAINDER                     
+                 COMPUTE K800-AMT-CPF1-PAID = K800-AMT-CPF1-PAID -              
+                                              WS-AMT-INT-REMAINDER              
+              ELSE                                                              
+                 COMPUTE WS-AMT-INT-REMAINDER = WS-AMT-INT-REMAINDER -          
+                                                K800-AMT-CPF1-PAID              
+                 COMPUTE K800-AMT-CPF1-PAID = 0                                 
+                 IF K800-AMT-CPF2-PAID >= WS-AMT-INT-REMAINDER                  
+                    COMPUTE K800-AMT-CPF2-PAID = K800-AMT-CPF2-PAID -           
+                                                 WS-AMT-INT-REMAINDER           
+                 ELSE                                                           
+                    COMPUTE WS-AMT-INT-REMAINDER =                              
+                            WS-AMT-INT-REMAINDER - K800-AMT-CPF2-PAID           
+                    COMPUTE K800-AMT-CPF2-PAID = 0                              
+                    IF K800-AMT-CPF3-PAID >= WS-AMT-INT-REMAINDER               
+                       COMPUTE K800-AMT-CPF3-PAID =                             
+                               K800-AMT-CPF3-PAID - WS-AMT-INT-REMAINDER        
+                    ELSE                                                        
+                       COMPUTE WS-AMT-INT-REMAINDER =                           
+                               WS-AMT-INT-REMAINDER - K800-AMT-CPF3-PAID        
+                       COMPUTE K800-AMT-CPF3-PAID = 0                           
+                       IF K800-AMT-CPF4-PAID >= WS-AMT-INT-REMAINDER            
+                          COMPUTE K800-AMT-CPF4-PAID =                          
+                                  K800-AMT-CPF4-PAID -                          
+                                  WS-AMT-INT-REMAINDER                          
+                       ELSE                                                     
+                          COMPUTE WS-AMT-INT-REMAINDER =                        
+                                  WS-AMT-INT-REMAINDER -                        
+                                  K800-AMT-CPF4-PAID                            
+                          COMPUTE K800-AMT-CPF4-PAID = 0                        
+                          IF WS-AMT-INT-REMAINDER > 0                           
+                             MOVE 'K800 INTEREST OVERFLOW!'                     
+                                                        TO L128-REMARKS         
+                             PERFORM 6000-PRINT-ERR-LIST THRU 6000-EXIT         
+                          END-IF                                                
+                       END-IF                                                   
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       2300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *================================================================*        
+       3000-VLD-TRANS-TYPE.                                                     
+      *================================================================*        
+           IF F125-CDE-PAYMENT-TYPE = 'SUS'                                     
+              IF F125-CDE-TRANS-TYPE NOT = '13' AND '14' AND '15' AND           
+                                           '16'                                 
+                 STRING 'SUSPENSE PAYMENT WITH INVALID TRANS TYPE('             
+                        F125-CDE-TRANS-TYPE ')' DELIMITED BY SIZE               
+                                         INTO WS-ERR-MSG                        
+                 PERFORM 9900-HANDLE-ABEND THRU 9900-EXIT                       
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *================================================================*        
+       6000-PRINT-ERR-LIST.                                                     
+      *================================================================*        
+           ADD  1              TO WS-SEQ-CNT.                                   
+           MOVE WS-SEQ-CNT     TO L128-SER-NO.                                  
+           MOVE F125-NUM-REGN  TO L128-REGN-NO.                                 
+           STRING F125-DTE-POST(7:2) '/' F125-DTE-POST(5:2)                     
+                  '/' F125-DTE-POST(1:4) DELIMITED BY SIZE                      
+                               INTO L128-DTE-POST                               
+           MOVE F125-COUNT-HISTORY TO L128-COUNT-HISTORY.                       
+                                                                                
+           IF WS-LINE-CNT > 45                                                  
+              PERFORM 6050-PRT-HEADING  THRU 6050-EXIT                          
+           END-IF.                                                              
+                                                                                
+           WRITE L128-REC      FROM L128-PRT-DETAIL AFTER 2.                    
+           ADD   1             TO   WS-CNT-L128-WRITE.                          
+           ADD   2             TO   WS-LINE-CNT.                                
+           MOVE 'Y'            TO   WS-ERROR-FL.                                
+                                                                                
+       6000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *================================================================*        
+       6050-PRT-HEADING.                                                        
+      *================================================================*        
+           ADD   1                   TO WS-PAGE-CNT.                            
+           MOVE  WS-PAGE-CNT         TO L128-PRT-PAGE.                          
+                                                                                
+           WRITE L128-REC    FROM L128-PRT-HDR-1   AFTER PAGE.                  
+           WRITE L128-REC    FROM L128-PRT-HDR-2   AFTER 1.                     
+           WRITE L128-REC    FROM L128-PRT-HDR-3   AFTER 2.                     
+           WRITE L128-REC    FROM L128-PRT-HDR-4   AFTER 1.                     
+                                                                                
+           MOVE 5                    TO WS-LINE-CNT.                            
+                                                                                
+       6050-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *================================================================*        
+       8000-READ-BP13K885.                                                      
+      *================================================================*        
+            MOVE SPACES TO WS-K885-NOTFD.                                       
+            READ  BP13K885                                                      
+            IF K885-STATUS  = '00'                                              
+               ADD 1 TO WS-K885-READ                                            
+            ELSE                                                                
+            IF K885-STATUS  = '23'                                              
+               MOVE 'Y' TO WS-K885-NOTFD                                        
+               DISPLAY ' K885-KEY= ' K885-KEY-FLD                               
+                       ' STATUS= ' K885-STATUS                                  
+            ELSE                                                                
+               DISPLAY ' K885-KEY= ' K885-KEY-FLD                               
+                       ' STATUS= ' K885-STATUS                                  
+               STRING 'BP13K885 READ ERROR CODE(' K885-STATUS ')'               
+                      DELIMITED BY SIZE INTO WS-ERR-MSG                         
+               PERFORM 9900-HANDLE-ABEND  THRU 9900-EXIT                        
+            END-IF.                                                             
+                                                                                
+       8000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *================================================================*        
+       8100-READ-BP13K800.                                                      
+      *================================================================*        
+            READ  BP13K800                                                      
+                  INVALID KEY  STRING 'K800 RECORD NOT FOUND('                  
+                                       F125-KEY-FLD ')'                         
+                                       DELIMITED BY SIZE                        
+                                       INTO WS-ERR-MSG                          
+                               GO TO   9900-HANDLE-ABEND.                       
+                                                                                
+                                                                                
+            IF K800-STATUS NOT = '00'                                           
+               STRING 'BP13K800 READ ERROR CODE(' K800-STATUS ')'               
+                      DELIMITED BY SIZE INTO WS-ERR-MSG                         
+               PERFORM 9900-HANDLE-ABEND  THRU 9900-EXIT                        
+            END-IF.                                                             
+                                                                                
+       8100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *================================================================*        
+       8200-REWRITE-BP13K885.                                                   
+      *================================================================*        
+            REWRITE BP13K885-REC.                                               
+                                                                                
+            IF K885-STATUS NOT = '00'                                           
+               STRING 'BP13K885 REWRITE ERROR CODE(' K885-STATUS ')'            
+                      DELIMITED BY SIZE INTO WS-ERR-MSG                         
+               PERFORM 9900-HANDLE-ABEND  THRU 9900-EXIT                        
+            ELSE                                                                
+               ADD  1                     TO WS-CNT-K885-REWRITE                
+            END-IF.                                                             
+                                                                                
+       8200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *================================================================*        
+       8300-REWRITE-BP13K800.                                                   
+      *================================================================*        
+            REWRITE BP13K800-MASTER.                                            
+                                                                                
+            IF K800-STATUS NOT = '00'                                           
+               STRING 'BP13K800 REWRITE ERROR CODE(' K800-STATUS ')'            
+                      DELIMITED BY SIZE INTO WS-ERR-MSG                         
+               PERFORM 9900-HANDLE-ABEND  THRU 9900-EXIT                        
+            ELSE                                                                
+               ADD  1                     TO WS-CNT-K800-REWRITE                
+            END-IF.                                                             
+                                                                                
+       8300-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *================================================================*        
+       9900-HANDLE-ABEND.                                                       
+      *================================================================*        
+            CLOSE   BP13F125                                                    
+                    BP13K800                                                    
+                    BP13K885                                                    
+                    BP13L128.                                                   
+                                                                                
+            DISPLAY '***************************************'                   
+            DISPLAY '*    BP13C128  ABEND TOTAL            *'                   
+            DISPLAY '***************************************'                   
+            DISPLAY '* NO. OF F125 READ : ' WS-CNT-F125-READ.                   
+            DISPLAY '* NO. OF K885 REWR.: ' WS-CNT-K885-REWRITE.                
+            DISPLAY '* NO. OF K800 REWR.: ' WS-CNT-K800-REWRITE.                
+            DISPLAY '* NO. OF ERR  CASES: ' WS-CNT-L128-WRITE.                  
+            DISPLAY '***************************************'                   
+            DISPLAY '* ABEND DESC: ' WS-ERR-MSG.                                
+            MOVE '4095'               TO RETURN-CODE.                           
+                                                                                
+            STOP RUN.                                                           
+       9900-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *================================================================*        
+       9999-CLOSE-FILES.                                                        
+      *================================================================*        
+            CLOSE   BP13F125                                                    
+                    BP13K800                                                    
+                    BP13K885                                                    
+                    BP13L128.                                                   
+                                                                                
+            DISPLAY '***************************************'                   
+            DISPLAY '*    BP13C128  CONTROL TOTAL          *'                   
+            DISPLAY '***************************************'                   
+            DISPLAY '* NO. OF F125 READ : ' WS-CNT-F125-READ.                   
+            DISPLAY '* NO. OF K885 REWR.: ' WS-CNT-K885-REWRITE.                
+            DISPLAY '* NO. OF K800 REWR.: ' WS-CNT-K800-REWRITE.                
+            DISPLAY '* NO. OF ERR  CASES: ' WS-CNT-L128-WRITE.                  
+            DISPLAY '* ABEND DESC: ' WS-ERR-MSG.                                
+            DISPLAY '***************************************'                   
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9999-EXIT.                                                               
+            EXIT.                                                               
+

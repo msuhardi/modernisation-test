@@ -1,0 +1,570 @@
+      ***************************                                               
+       IDENTIFICATION DIVISION.                                                 
+      ***************************                                               
+       PROGRAM-ID.    BP13C73A.                                                 
+      *AUTHOR.        JIANG BO.                                                 
+      *DATE-WRITTEN.  24/11/2011.                                               
+                                                                                
+      ******************************************************************        
+      *    SYSTEM NAME :  SYSTEM OF COMMITMENT                         *        
+      *                                                                *        
+      *    SYSTEM ID   :  BP13                                         *        
+      *                                                                *        
+      *    OBJECTIVE   :  TO UPDATE K762-NUM-DEMAND FIELD IN BP13K762  *        
+      *                   BY SUMMING-UP BP13K730 FOR EACH UNIQUE       *        
+      *                   BTO CONTRACT AND FLAT TYPE.                  *        
+      *    INPUT FILES :                                               *        
+      *         1.  BP13FF01  -  SEQ. FILE OF BP13K730 SORTED BY       *        
+      *                          K730-CDE-NT1, K730-CDE-FLAT-TYPE AND  *        
+      *                          K730-CDE-HOUSEHOLD                    *        
+      *         2.  SY02F001  -  DATE FILE                             *        
+      *                                                                *        
+      *    I-O   FILES :                                               *        
+      *         1.  BP13K762  -  SUMMARY FILE FOR DEMAND/SUPPLY        *        
+      *                                                                *        
+      *    LISTING     :                                               *        
+      *         1.  BP13L730  -  UPDATE REPORT                         *        
+      *                                                                *        
+      *                                                                *        
+      ******************************************************************        
+      *    CHG-NO    BY      DATE     DESCRIPTION                      *        
+      *    -------   ---   --------   ------------------------------   *        
+      *    BP134406  JB8   24/11/11   SAME AS BP13C730                 *        
+      *    BP134636  IL5   11/09/12   EXPAND FILE LENGTH BP13FF01 FROM *        
+      *                               50 TO 100                        *        
+      *    BP134993  KAM   25/07/13   CATER FOR NUM-SINGLE-SCH         *        
+      *    BP135351  CCC5  23/05/14   CATER FOR EXEC FLAT              *        
+      *    BP136007  SMR2  11/11/15   CATER FOR 2 ROOM FLEXI FLAT      *        
+      *    BP136239  SMR2  16/05/16   UPDATE NEW FIELDS INTO BP13K762, *        
+      *                               MGPS/TCP/GRO/TPS                 *        
+      *    BP138163  CCC5  17/02/18   UPDATE K762 FIELDS LENGTH        *        
+      ******************************************************************        
+                                                                                
+      ************************                                                  
+       ENVIRONMENT DIVISION.                                                    
+      ************************                                                  
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13FF01  ASSIGN                TO  BP13FF01.                 
+                                                                                
+           SELECT BP13K762  ASSIGN                TO  BP13K762                  
+                            ACCESS                IS  RANDOM                    
+                            ORGANIZATION          IS  INDEXED                   
+                            RECORD KEY            IS  K762-KEY-FLD              
+                            FILE STATUS           IS  WS-K762-STATUS.           
+                                                                                
+           SELECT BP13L730  ASSIGN                TO  BP13L730.                 
+           SELECT SY02F001  ASSIGN                TO  SY02F001.                 
+                                                                                
+                                                                                
+      *****************                                                         
+       DATA DIVISION.                                                           
+      *****************                                                         
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13FF01                                                            
+            RECORDING MODE  IS  F                                               
+            RECORD CONTAINS 100 CHARACTERS.                                     
+       COPY BP13FF01.                                                           
+                                                                                
+       FD   BP13K762                                                            
+            RECORD CONTAINS 200 CHARACTERS.                                     
+       COPY BP13K762.                                                           
+                                                                                
+       FD   BP13L730                                                            
+            RECORDING MODE  IS  F                                               
+            RECORD CONTAINS 132 CHARACTERS.                                     
+       01   BP13L730-REC                   PIC X(132).                          
+                                                                                
+       COPY SY02F001.                                                           
+                                                                                
+                                                                                
+      ***************************                                               
+       WORKING-STORAGE SECTION.                                                 
+      ***************************                                               
+                                                                                
+       01  FILE-STATUS.                                                         
+           05  WS-K762-STATUS          PIC 9(2)   VALUE 00.                     
+                                                                                
+       01  WS-SWITCHES.                                                         
+           05  EOF-FF01-IND            PIC X      VALUE 'N'.                    
+               88  EOF-FF01                       VALUE 'Y'.                    
+                                                                                
+       01  WS-ACCUMULATORS.                                                     
+           05  WS-NUM-READ             PIC 9(4)   VALUE ZERO.                   
+           05  WS-UPDATE-CTR           PIC 9(4)   VALUE ZERO.                   
+           05  WS-NOUPDT-CTR           PIC 9(4)   VALUE ZERO.                   
+           05  WS-K762-READ            PIC 9(4)   VALUE ZERO.                   
+           05  WS-DEMAND-CTR           PIC 9(4)   VALUE ZERO.                   
+           05  WS-MAX-LINE-CTR         PIC 9(05)  VALUE 58.                     
+           05  WS-LINE-CTR             PIC 9(05)  VALUE 99.                     
+           05  WS-PAGE-CTR             PIC 9(05)  VALUE 0.                      
+           05  WS-TCP-MAX              PIC 9(03)  VALUE ZEROES.                 
+           05  WS-TPS-MAX              PIC 9(03)  VALUE ZEROES.                 
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-TEMP-ELDERLY         PIC 9(04)  VALUE ZEROES.                 
+           05  WS-TEMP-NONELD          PIC 9(04)  VALUE ZEROES.                 
+           05  WS-TEMP-NONELD-NEW      PIC 9(04)  VALUE ZEROES.                 
+           05  WS-TEMP-1ST-TIMER       PIC 9(05)  VALUE ZEROES.                 
+           05  WS-TEMP-2ND-TIMER       PIC 9(04)  VALUE ZEROES.                 
+           05  WS-TEMP-SINGLES         PIC 9(04)  VALUE ZEROES.                 
+                                                                                
+       01  WS-SYSTEM-DATETIME.                                                  
+           05  WS-SYS-DATE             PIC 9(08) VALUE ZEROES.                  
+           05  WS-SYS-TIME             PIC 9(08) VALUE ZEROES.                  
+           05  FILLER                  PIC X(05) VALUE SPACES.                  
+                                                                                
+       01  WS-F001-DTE-CURRENT.                                                 
+           05  WS-F001-CCYYMMDD        PIC X(08).                               
+                                                                                
+       01  WS-DISP-DATE.                                                        
+           05  WS-DISP-DD              PIC X(02) VALUE SPACES.                  
+           05  FILLER                  PIC X(01) VALUE '/'.                     
+           05  WS-DISP-MM              PIC X(02) VALUE SPACES.                  
+           05  FILLER                  PIC X(01) VALUE '/'.                     
+           05  WS-DISP-CCYY            PIC X(04) VALUE SPACES.                  
+                                                                                
+      *----------------------------------------------------------------*        
+      *                                                                *        
+      *         LAY-OUT FOR UPDATE REPORT                              *        
+      *                                                                *        
+      *----------------------------------------------------------------*        
+                                                                                
+       01  WS-LINER                 PIC X(132) VALUE ALL '~'.                   
+                                                                                
+       01  WS-L730-LINER1.                                                      
+           10  FILLER               PIC X(132) VALUE ALL "-".                   
+                                                                                
+       01  WS-L730-HEADER1.                                                     
+           10  FILLER               PIC X(05)  VALUE SPACES.                    
+           10  FILLER               PIC X(20)  VALUE                            
+               'NEW TOWN/FT/HH      '.                                          
+           10  FILLER               PIC X(32)  VALUE                            
+               '* NEW TOWN DESCRIPTION          '.                              
+           10  FILLER               PIC X(24)  VALUE                            
+               '*OLD DEMAND * NEW DEMAND'.                                      
+           10  FILLER               PIC X(51)  VALUE                            
+               '   R E M A R K S                '.                              
+                                                                                
+       01  WS-L730-TITLE1.                                                      
+           05  FILLER              PIC X(08)   VALUE 'BP13L730'.                
+           05  FILLER              PIC X(06)   VALUE SPACES.                    
+           05  FILLER              PIC X(04)   VALUE 'HDB3'.                    
+           05  FILLER              PIC X(36)   VALUE SPACES.                    
+           05  FILLER              PIC X(11)   VALUE 'SOC  SYSTEM'.             
+           05  FILLER              PIC X(32)   VALUE SPACES.                    
+           05  FILLER              PIC X(07)   VALUE 'DATE : '.                 
+           05  WS-L730-CUR-DATE.                                                
+              10  WS-L730-CUR-DD   PIC X(02).                                   
+              10  FILLER           PIC X(01)   VALUE '/'.                       
+              10  WS-L730-CUR-MM   PIC X(02).                                   
+              10  FILLER           PIC X(01)   VALUE '/'.                       
+              10  WS-L730-CUR-CC   PIC X(02).                                   
+              10  WS-L730-CUR-YY   PIC X(02).                                   
+           05  FILLER              PIC X(02)   VALUE SPACES.                    
+           05  FILLER              PIC X(07)   VALUE 'PAGE : '.                 
+           05  WS-L730-PAGENO      PIC ZZZZ.                                    
+                                                                                
+       01  WS-L730-TITLE2.                                                      
+           05  FILLER              PIC X(40)   VALUE SPACES.                    
+           05  FILLER              PIC X(41)   VALUE                            
+           '    SUMMARIZATION OF FLAT DEMAND REQUESTS'.                         
+           05  FILLER              PIC X(51)   VALUE SPACES.                    
+                                                                                
+       01  WS-L730-DETAIL1.                                                     
+           05  FILLER               PIC X(10)  VALUE SPACES.                    
+           05  WS-L730-KEY-FLD      PIC X(17).                                  
+           05  WS-L730-NT-DESC      PIC X(30).                                  
+           05  FILLER               PIC X(04)  VALUE SPACES.                    
+           05  WS-L730-OLD-DEMAND   PIC X(05).                                  
+           05  FILLER               PIC X(09)  VALUE SPACES.                    
+           05  WS-L730-NEW-DEMAND   PIC X(05).                                  
+           05  FILLER               PIC X(06)  VALUE SPACES.                    
+           05  WS-L730-REMARKS      PIC X(48).                                  
+                                                                                
+                                                                                
+      **********************                                                    
+       PROCEDURE DIVISION.                                                      
+      **********************                                                    
+                                                                                
+      *----------------------*                                                  
+       000-MAIN-ROUTINE.                                                        
+      *----------------------*                                                  
+           PERFORM  100-OPEN-ROUTINE      THRU   100-EXIT.                      
+           PERFORM  150-READ-SY02F001     THRU   150-EXIT.                      
+           PERFORM  200-READ-BP13FF01     THRU   200-EXIT.                      
+                                                                                
+           PERFORM  300-PROCESS-ROUTINE   THRU   300-EXIT                       
+                        UNTIL EOF-FF01.                                         
+           PERFORM  900-CLOSE-ROUTINE     THRU   900-EXIT.                      
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    OPENING FILES SECTION                                       *        
+      ******************************************************************        
+      *----------------------*                                                  
+       100-OPEN-ROUTINE.                                                        
+      *----------------------*                                                  
+           OPEN INPUT  BP13FF01                                                 
+                       SY02F001                                                 
+                I-O    BP13K762                                                 
+                OUTPUT BP13L730.                                                
+                                                                                
+           IF WS-K762-STATUS NOT = 00 AND 97                                    
+              DISPLAY ' OPENING BP13K762 ERROR  ' WS-K762-STATUS                
+              MOVE    WS-K762-STATUS  TO RETURN-CODE                            
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+           MOVE FUNCTION CURRENT-DATE   TO WS-SYSTEM-DATETIME.                  
+           DISPLAY 'WS-SYS-DATE = ' WS-SYS-DATE.                                
+                                                                                
+           MOVE WS-SYS-DATE(1:4)        TO WS-DISP-CCYY.                        
+           MOVE WS-SYS-DATE(5:2)        TO WS-DISP-MM.                          
+           MOVE WS-SYS-DATE(7:2)        TO WS-DISP-DD.                          
+           MOVE WS-DISP-DATE            TO WS-L730-CUR-DATE.                    
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    READ SYSTEM DATE FROM SY02F001                              *        
+      ******************************************************************        
+      *----------------------*                                                  
+       150-READ-SY02F001.                                                       
+      *----------------------*                                                  
+           READ SY02F001 AT END                                                 
+                DISPLAY 'SY02F001 - SYSTEM DATE FILE IS EMPTY'                  
+                MOVE 99 TO RETURN-CODE                                          
+                PERFORM 900-CLOSE-ROUTINE.                                      
+                                                                                
+            MOVE F001-DTE-CURRENT TO WS-F001-CCYYMMDD.                          
+            CLOSE SY02F001.                                                     
+                                                                                
+       150-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    READ SEQUENTIAL FILE BP13FF01 AT END SET EOF-IND TO 'Y'     *        
+      ******************************************************************        
+      *----------------------*                                                  
+       200-READ-BP13FF01.                                                       
+      *----------------------*                                                  
+           READ BP13FF01                                                        
+             AT END                                                             
+                MOVE 'Y'         TO EOF-FF01-IND                                
+                GO               TO 200-EXIT                                    
+           END-READ.                                                            
+                                                                                
+           ADD 1                 TO WS-NUM-READ.                                
+                                                                                
+           IF FF01-NUM-TOTAL NOT NUMERIC                                        
+              MOVE ZEROES     TO FF01-NUM-TOTAL.                                
+                                                                                
+           IF FF01-NUM-HH-FT NOT NUMERIC                                        
+              MOVE ZEROES     TO FF01-NUM-HH-FT.                                
+                                                                                
+           IF FF01-NUM-HH-FT-SINGLE NOT NUMERIC                                 
+              MOVE ZEROES     TO FF01-NUM-HH-FT-SINGLE.                         
+                                                                                
+           IF FF01-NUM-HH-ELDERLY NOT NUMERIC                                   
+              MOVE ZEROES     TO FF01-NUM-HH-ELDERLY.                           
+                                                                                
+           IF FF01-NUM-GRO NOT NUMERIC                                          
+              MOVE ZEROES     TO FF01-NUM-GRO.                                  
+                                                                                
+           IF FF01-NUM-MGPS NOT NUMERIC                                         
+              MOVE ZEROES     TO FF01-NUM-MGPS.                                 
+                                                                                
+           IF FF01-NUM-TCP NOT NUMERIC                                          
+              MOVE ZEROES     TO FF01-NUM-TCP.                                  
+                                                                                
+           IF FF01-NUM-TPS NOT NUMERIC                                          
+              MOVE ZEROES     TO FF01-NUM-TPS.                                  
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    PROCESS RECORD, ACCUMULATING EACH NEW-TOWN,FLAT-TYPE & HHLD *        
+      ******************************************************************        
+      *----------------------*                                                  
+       300-PROCESS-ROUTINE.                                                     
+      *----------------------*                                                  
+                                                                                
+           PERFORM 400-UPDATE-K762-DEMAND THRU 400-EXIT.                        
+                                                                                
+           PERFORM 200-READ-BP13FF01      THRU 200-EXIT.                        
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *----------------------*                                                  
+       400-UPDATE-K762-DEMAND.                                                  
+      *----------------------*                                                  
+                                                                                
+           MOVE SPACES                      TO K762-KEY-FLD.                    
+                                                                                
+           MOVE FF01-NUM-NT1                TO K762-NUM-CHOICE.                 
+           MOVE FF01-NUM-FT                 TO K762-NUM-FT.                     
+                                                                                
+           READ  BP13K762.                                                      
+                                                                                
+           EVALUATE WS-K762-STATUS                                              
+           WHEN 00                                                              
+              ADD  1                        TO WS-K762-READ                     
+              MOVE K762-NUM-DEMAND          TO WS-L730-OLD-DEMAND               
+              MOVE FF01-NUM-TOTAL           TO K762-NUM-DEMAND                  
+                                               WS-L730-NEW-DEMAND               
+              MOVE FF01-NUM-HH-FT           TO K762-NUM-1ST-TIMER               
+              MOVE FF01-NUM-HH-FT-SINGLE    TO K762-NUM-SINGLE-SCH              
+              MOVE FF01-NUM-HH-ELDERLY      TO K762-NUM-ELDERLY-SCH             
+              IF FF01-NUM-FT = '2F'                                             
+                 PERFORM 410-COMP-ELDERLY   THRU 410-EXIT                       
+              ELSE                                                              
+                 MOVE K762-NUM-1ST-TIMER-CNT-ORIG                               
+                                            TO K762-NUM-1ST-TIMER-CNT           
+                 MOVE K762-NUM-SINGLE-SCH-CNT-ORIG                              
+                                            TO K762-NUM-SINGLE-SCH-CNT          
+                 MOVE K762-NUM-ELDERLY-SCH-CNT-ORIG                             
+                                            TO K762-NUM-ELDERLY-SCH-CNT         
+              END-IF                                                            
+              PERFORM 420-COMP-PRIOSCH      THRU 420-EXIT                       
+                                                                                
+              STRING FF01-NUM-NT1 '/' FF01-NUM-FT(1:1)                          
+                     DELIMITED BY SIZE INTO WS-L730-KEY-FLD                     
+              END-STRING                                                        
+                                                                                
+              MOVE WS-SYS-DATE              TO K762-DTE-UPDATE                  
+              PERFORM 500-REWRITE-BP13K762 THRU 500-EXIT                        
+                                                                                
+           WHEN 23                                                              
+              DISPLAY ' BP13K762 RECORD NOT FOUND, KEY : ' K762-KEY-FLD         
+              ADD  1                        TO WS-NOUPDT-CTR                    
+              MOVE '    '                   TO WS-L730-OLD-DEMAND               
+              MOVE FF01-NUM-TOTAL           TO WS-L730-NEW-DEMAND               
+              STRING FF01-NUM-NT1 '/' FF01-NUM-FT(1:1)                          
+                     DELIMITED BY SIZE INTO WS-L730-KEY-FLD                     
+              END-STRING                                                        
+                                                                                
+              MOVE '*** NOT UPDATED, BP13K762 RECORD NOT FOUND'                 
+                                            TO WS-L730-REMARKS                  
+              PERFORM 800-PRT-REPORT THRU 800-EXIT                              
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY ' ERROR READING BP13K762    '  WS-K762-STATUS             
+              MOVE      WS-K762-STATUS TO RETURN-CODE                           
+              PERFORM   900-CLOSE-ROUTINE                                       
+           END-EVALUATE.                                                        
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *----------------------*                                                  
+       410-COMP-ELDERLY.                                                        
+      *----------------------*                                                  
+           MOVE ZEROES                      TO WS-TEMP-ELDERLY                  
+                                               WS-TEMP-NONELD                   
+                                               WS-TEMP-NONELD-NEW               
+                                               WS-TEMP-1ST-TIMER                
+                                               WS-TEMP-2ND-TIMER                
+                                               WS-TEMP-SINGLES.                 
+                                                                                
+           IF K762-NUM-ELDERLY-SCH >= K762-NUM-ELDERLY-SCH-CNT-ORIG             
+              MOVE K762-NUM-1ST-TIMER-CNT-ORIG                                  
+                                            TO K762-NUM-1ST-TIMER-CNT           
+              MOVE K762-NUM-SINGLE-SCH-CNT-ORIG                                 
+                                            TO K762-NUM-SINGLE-SCH-CNT          
+              MOVE K762-NUM-ELDERLY-SCH-CNT-ORIG                                
+                                            TO K762-NUM-ELDERLY-SCH-CNT         
+           ELSE                                                                 
+              COMPUTE WS-TEMP-ELDERLY = K762-NUM-ELDERLY-SCH-CNT-ORIG -         
+                                        K762-NUM-ELDERLY-SCH                    
+              COMPUTE WS-TEMP-NONELD = K762-NUM-SUPPLY -                        
+                                       K762-NUM-ELDERLY-SCH-CNT-ORIG            
+              COMPUTE WS-TEMP-NONELD-NEW = WS-TEMP-ELDERLY +                    
+                                           WS-TEMP-NONELD                       
+              IF FF01-NUM-SALE-MODE = 'SBF' AND K762-NUM-SUPPLY < 34            
+                 MOVE K762-NUM-1ST-TIMER-CNT-ORIG                               
+                                            TO K762-NUM-1ST-TIMER-CNT           
+                 ADD WS-TEMP-ELDERLY        TO K762-NUM-1ST-TIMER-CNT           
+                 MOVE K762-NUM-SINGLE-SCH-CNT-ORIG                              
+                                            TO K762-NUM-SINGLE-SCH-CNT          
+                 MOVE K762-NUM-ELDERLY-SCH  TO K762-NUM-ELDERLY-SCH-CNT         
+              ELSE                                                              
+                 EVALUATE TRUE                                                  
+                 WHEN FF01-NUM-MATURE-EST = 'N' AND                             
+                      FF01-NUM-SALE-MODE = 'BTO'                                
+                      COMPUTE WS-TEMP-SINGLES =                                 
+                             (WS-TEMP-NONELD-NEW * 50 / 100)                    
+                      COMPUTE WS-TEMP-2ND-TIMER =                               
+                             (WS-TEMP-NONELD-NEW * 30 / 100)                    
+                      COMPUTE WS-TEMP-1ST-TIMER = WS-TEMP-NONELD-NEW -          
+                              WS-TEMP-SINGLES - WS-TEMP-2ND-TIMER               
+                 WHEN FF01-NUM-MATURE-EST = 'N' AND                             
+                      FF01-NUM-SALE-MODE = 'SBF'                                
+                      COMPUTE WS-TEMP-SINGLES =                                 
+                             (WS-TEMP-NONELD-NEW * 5 / 100)                     
+                      COMPUTE WS-TEMP-2ND-TIMER =                               
+                             (WS-TEMP-NONELD-NEW * 5 / 100)                     
+                      COMPUTE WS-TEMP-1ST-TIMER = WS-TEMP-NONELD-NEW -          
+                              WS-TEMP-SINGLES - WS-TEMP-2ND-TIMER               
+                 WHEN FF01-NUM-MATURE-EST = 'Y'                                 
+                      COMPUTE WS-TEMP-2ND-TIMER =                               
+                             (WS-TEMP-NONELD-NEW * 5 / 100)                     
+                      COMPUTE WS-TEMP-1ST-TIMER = WS-TEMP-NONELD-NEW -          
+                              WS-TEMP-2ND-TIMER                                 
+                 END-EVALUATE                                                   
+                 MOVE WS-TEMP-1ST-TIMER     TO K762-NUM-1ST-TIMER-CNT           
+                 MOVE WS-TEMP-SINGLES       TO K762-NUM-SINGLE-SCH-CNT          
+                 MOVE K762-NUM-ELDERLY-SCH  TO K762-NUM-ELDERLY-SCH-CNT         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       410-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *----------------------*                                                  
+       420-COMP-PRIOSCH.                                                        
+      *----------------------*                                                  
+           MOVE ZEROES                      TO WS-TCP-MAX                       
+                                               WS-TPS-MAX.                      
+                                                                                
+           COMPUTE WS-TCP-MAX  = K762-NUM-SUPPLY * 0.05.                        
+           COMPUTE WS-TPS-MAX  = K762-NUM-SUPPLY * 0.10.                        
+                                                                                
+           IF FF01-NUM-TCP <= WS-TCP-MAX                                        
+              MOVE FF01-NUM-TCP             TO K762-NUM-TCP-SET-ASIDE           
+           ELSE                                                                 
+              MOVE WS-TCP-MAX               TO K762-NUM-TCP-SET-ASIDE           
+           END-IF.                                                              
+                                                                                
+           IF FF01-NUM-TPS <= WS-TPS-MAX                                        
+              MOVE FF01-NUM-TPS             TO K762-NUM-TPS-SET-ASIDE           
+           ELSE                                                                 
+              MOVE WS-TPS-MAX               TO K762-NUM-TPS-SET-ASIDE           
+           END-IF.                                                              
+                                                                                
+           IF K762-NUM-MGPS-QUOTA NOT NUMERIC                                   
+              MOVE ZEROES                   TO K762-NUM-MGPS-QUOTA              
+           END-IF.                                                              
+                                                                                
+           IF K762-NUM-GRO-SET-ASIDE NOT NUMERIC                                
+              MOVE ZEROES                   TO K762-NUM-GRO-SET-ASIDE           
+           END-IF.                                                              
+                                                                                
+           IF K762-NUM-MGPS-QUOTA = ZEROES OR LOW-VALUES                        
+              MOVE FF01-NUM-MGPS            TO K762-NUM-MGPS-SET-ASIDE          
+           ELSE                                                                 
+              IF FF01-NUM-MGPS <= K762-NUM-MGPS-QUOTA                           
+                 MOVE FF01-NUM-MGPS         TO K762-NUM-MGPS-SET-ASIDE          
+              ELSE                                                              
+                 MOVE K762-NUM-MGPS-QUOTA   TO K762-NUM-MGPS-SET-ASIDE          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           COMPUTE K762-NUM-PRIORITY-QUOTA = K762-NUM-TCP-SET-ASIDE  +          
+                                             K762-NUM-MGPS-SET-ASIDE +          
+                                             K762-NUM-TPS-SET-ASIDE  +          
+                                             K762-NUM-GRO-SET-ASIDE.            
+                                                                                
+           COMPUTE K762-NUM-PA-QUOTA = K762-NUM-SUPPLY -                        
+                                       K762-NUM-PRIORITY-QUOTA.                 
+                                                                                
+       420-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    UPDATE K762-NUM-DEMAND                                      *        
+      ******************************************************************        
+      *----------------------*                                                  
+       500-REWRITE-BP13K762.                                                    
+      *----------------------*                                                  
+           REWRITE BP13K762-REC.                                                
+                                                                                
+           EVALUATE WS-K762-STATUS                                              
+           WHEN 00                                                              
+                ADD 1                          TO WS-UPDATE-CTR                 
+                MOVE 'UPDATED SUCCESSFULLY'    TO WS-L730-REMARKS               
+                PERFORM 800-PRT-REPORT THRU 800-EXIT                            
+                                                                                
+           WHEN OTHER                                                           
+                ADD 1                          TO WS-NOUPDT-CTR                 
+                DISPLAY 'BP13K762 - ERROR REWRITING RECORD, STATUS: '           
+                         WS-K762-STATUS                                         
+                MOVE 'NOT UPDATED, BP13K762 - ERROR REWRITING REC'              
+                                               TO WS-L730-REMARKS               
+                PERFORM 800-PRT-REPORT THRU 800-EXIT                            
+                                                                                
+           END-EVALUATE.                                                        
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *----------------------*                                                  
+       800-PRT-REPORT.                                                          
+      *----------------------*                                                  
+           IF WS-LINE-CTR > WS-MAX-LINE-CTR                                     
+              ADD 1              TO   WS-PAGE-CTR                               
+              MOVE WS-PAGE-CTR   TO   WS-L730-PAGENO                            
+              WRITE BP13L730-REC FROM WS-L730-TITLE1  AFTER PAGE                
+              WRITE BP13L730-REC FROM WS-L730-TITLE2  AFTER 1                   
+              WRITE BP13L730-REC FROM WS-L730-LINER1  AFTER 2                   
+              WRITE BP13L730-REC FROM WS-L730-HEADER1 AFTER 1                   
+              WRITE BP13L730-REC FROM WS-L730-LINER1  AFTER 1                   
+              MOVE 5             TO   WS-LINE-CTR                               
+           END-IF.                                                              
+                                                                                
+           WRITE BP13L730-REC    FROM WS-L730-DETAIL1 AFTER 1.                  
+           ADD 1                 TO   WS-LINE-CTR.                              
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    -  DISPLAY NECESSARY STATISTICS                             *        
+      *    -  CLOSE ALL FILES   AND   STOP RUN                         *        
+      ******************************************************************        
+      *----------------------*                                                  
+       900-CLOSE-ROUTINE.                                                       
+      *----------------------*                                                  
+           DISPLAY 'PROGRAM ID   : BP13C73A'.                                   
+           DISPLAY 'CURRENT-DATE : ' WS-DISP-DATE.                              
+           DISPLAY SPACES.                                                      
+                                                                                
+           DISPLAY 'NO OF RECS READ    FROM BP13FF01:' WS-NUM-READ.             
+           DISPLAY 'NO OF RECS READ    FROM BP13K762:' WS-K762-READ.            
+           DISPLAY 'NO OF RECS UPDATED INTO BP13K762:' WS-UPDATE-CTR.           
+           DISPLAY 'NO OF RECS NOT UPDATED- BP13K762:' WS-NOUPDT-CTR.           
+           DISPLAY 'SYSTEM DATE USED TO UPDATE  K762:' WS-F001-CCYYMMDD.        
+                                                                                
+           CLOSE BP13FF01                                                       
+                 BP13K762                                                       
+                 BP13L730.                                                      
+                                                                                
+           IF WS-K762-STATUS NOT = 00                                           
+              DISPLAY ' CLOSING BP13K762 ERROR  ' WS-K762-STATUS                
+              MOVE WS-K762-STATUS TO RETURN-CODE.                               
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+

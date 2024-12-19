@@ -1,0 +1,362 @@
+      ***************************                                               
+       IDENTIFICATION DIVISION.                                                 
+      ***************************                                               
+       PROGRAM-ID.    BP13C390.                                                 
+       AUTHOR.        M.PRINCE.                                                 
+       DATE-WRITTEN.  05/12/98.                                                 
+      ******************************************************************        
+      *                                                                *        
+      *   SYSTEM NAME :  SYSTEM OF COMMITMENT  (SOC)                   *        
+      *                                                                *        
+      *   SYSTEM ID   :  BP13                                          *        
+      *                                                                *        
+      *   OBJECTIVE   :  1.  PROGRAM TO OUTPUT RECORD TO MOE ON BOOKED *        
+      *                      FLAT WITH KEY ISSUE WITHIN THE ONE YEAR   *        
+      *                      JOB RUN ON JAN YY (FROM FEB PREV YR TO JAN*        
+      *                      CURRENT YEAR. GET ESTIMATED COMPLETION    *        
+      *                      DATE FROM LIS.                            *        
+      *                                                                *        
+      *                  2.  TO BE RUN ON 1 FEB OF THE YEAR            *        
+      *                                                                *        
+      * CHGE-NO  BY   DATE    DESCRIPTION                              *        
+      * -------  --- ------   ---------------------------------------- *        
+      * BP130604 MPA 051298   NEW PROGRAM                              *        
+      *          SRN 040199   CHGE THE PGM TO READ BM06K100 ONLY WHEN  *        
+      *                       THERE IS A CHANGE IN F120-AIX1           *        
+      * BP130770 SRA 071299   MOVE NEW-TOWN TO BP13F216 FROM BM06K100  *        
+      * BP130899 MCC 240700   TAG RECS BOOKED/ISSUED NOT WITHIN 1 YR   *        
+      *                       NUM-KEY-ISSUED AS '3'.                   *        
+      * BP132295 MCC 290103   CATER FOR K100-DTE-PACD                  *        
+      ******************************************************************        
+                                                                                
+      ************************                                                  
+       ENVIRONMENT DIVISION.                                                    
+      ************************                                                  
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BM06F120  ASSIGN        TO BM06F120.                          
+                                                                                
+           SELECT BM06K100  ASSIGN        TO BM06K100                           
+                  ACCESS MODE  IS RANDOM                                        
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY   IS K100-KEY-FLD                                  
+                  FILE STATUS  IS BM06K100-STATUS.                              
+                                                                                
+           SELECT BB14K500  ASSIGN        TO BB14K500                           
+                  ACCESS MODE  IS RANDOM                                        
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY   IS K500-CDE-BLK                                  
+                  FILE STATUS  IS BB14K500-STATUS.                              
+                                                                                
+           SELECT BP13F216  ASSIGN        TO BP13F216.                          
+                                                                                
+      *****************                                                         
+       DATA DIVISION.                                                           
+      *****************                                                         
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BM06F120                                                            
+            RECORDING MODE  IS  F                                               
+            RECORD CONTAINS 700 CHARACTERS.                                     
+       COPY BM06F120.                                                           
+                                                                                
+       FD   BM06K100                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BM06K100.                                                           
+                                                                                
+       FD   BB14K500                                                            
+            RECORD CONTAINS 400 CHARACTERS.                                     
+       COPY BB14K500.                                                           
+                                                                                
+       FD   BP13F216                                                            
+            RECORDING MODE  IS  F                                               
+            RECORD CONTAINS 100 CHARACTERS.                                     
+       COPY BP13F216.                                                           
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  BB14K500-STATUS              PIC X(2)  VALUE SPACES.                 
+       01  BM06K100-STATUS              PIC X(2)  VALUE SPACES.                 
+                                                                                
+       01  WS-F120-READ-CNT             PIC 9(6)  VALUE 0.                      
+       01  WS-K100-READ-CNT             PIC 9(6)  VALUE 0.                      
+       01  WS-K500-READ-CNT             PIC 9(6)  VALUE 0.                      
+       01  WS-K500-NOTFD-CNT            PIC 9(6)  VALUE 0.                      
+       01  WS-F120-KEY-CNT              PIC 9(6)  VALUE 0.                      
+       01  WS-F120-NOKEY-CNT            PIC 9(6)  VALUE 0.                      
+       01  WS-AFKEY-CNT                 PIC 9(6)  VALUE 0.                      
+       01  WS-WRITE-CNT                 PIC 9(6)  VALUE 0.                      
+       01  WS-F120-EOF                  PIC X(1)  VALUE 'N'.                    
+                                                                                
+       01  WS-F120-AIX1                 PIC X(16)  VALUE SPACES.                
+                                                                                
+       01  WS-DTE-PACD                   PIC X(8) VALUE SPACES.                 
+       01  WS-CUR-DATE                   PIC X(8) VALUE SPACES.                 
+                                                                                
+       01  WS-RUN-DATE  REDEFINES WS-CUR-DATE.                                  
+           05  WS-RUN-CCYY               PIC 9(4).                              
+           05  WS-RUN-MM                 PIC 9(2).                              
+           05  WS-RUN-DD                 PIC 9(2).                              
+                                                                                
+       01  WS-LOWER-LIMIT.                                                      
+           05  WS-LOW-CCYY               PIC 9(4) VALUE 0.                      
+           05  WS-LOW-MM                 PIC 9(2) VALUE 0.                      
+           05  WS-LOW-DD                 PIC 9(2) VALUE 0.                      
+                                                                                
+      **********************                                                    
+       PROCEDURE DIVISION.                                                      
+      **********************                                                    
+      ******************************************************************        
+       000-MAIN-ROUTINE.                                                        
+      ******************************************************************        
+                                                                                
+           PERFORM  100-OPEN-FILES        THRU    100-EXIT.                     
+           PERFORM  200-READ-BM06F120     THRU    200-EXIT                      
+           PERFORM  300-READ-INPUT        THRU    300-EXIT                      
+                        UNTIL WS-F120-EOF = 'Y'.                                
+           PERFORM  1000-CLOSE-ROUTINE    THRU    1000-EXIT.                    
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       100-OPEN-FILES.                                                          
+      ******************************************************************        
+           OPEN INPUT  BM06F120                                                 
+                       BM06K100                                                 
+                       BB14K500                                                 
+                OUTPUT BP13F216.                                                
+                                                                                
+           IF BM06K100-STATUS NOT = 00 AND 97                                   
+               DISPLAY 'OPENING ERROR, BM06K100-STATUS ' BM06K100-STATUS        
+               MOVE     BM06K100-STATUS TO RETURN-CODE                          
+               PERFORM  1000-CLOSE-ROUTINE.                                     
+           IF BB14K500-STATUS NOT = 00 AND 97                                   
+               DISPLAY 'OPENING ERROR, BB14K500-STATUS ' BB14K500-STATUS        
+               MOVE     BB14K500-STATUS TO RETURN-CODE                          
+               PERFORM  1000-CLOSE-ROUTINE.                                     
+                                                                                
+           MOVE ZEROES                     TO WS-RUN-DATE                       
+                                              WS-LOWER-LIMIT.                   
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8) TO WS-CUR-DATE.                      
+                                                                                
+                                                                                
+           COMPUTE  WS-LOW-CCYY = WS-RUN-CCYY - 1.                              
+           MOVE WS-RUN-MM         TO WS-LOW-MM                                  
+                                                                                
+           IF WS-RUN-MM > 1                                                     
+              SUBTRACT 1       FROM  WS-RUN-MM                                  
+           ELSE                                                                 
+              MOVE 12          TO    WS-RUN-MM                                  
+              MOVE WS-LOW-CCYY TO    WS-RUN-CCYY                                
+           END-IF.                                                              
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *============================================================*            
+      *                                                            *            
+      *    1. READ FILE BM06F120.                                  *            
+      *    2. CHECK F120-DTE-ACCEPTANCE = FEB PREV YEAR TO JAN THIS*            
+      *       YEAR.                                                *            
+      *    3. OUTPUT RECORD                                        *            
+      *    4. USE F120-AIX1 TO READ BM06K100 TO GET CDE-BLK        *            
+      *    5. USE K100-CDE-BLK TO READ BB14K500 TO GET ECD         *            
+      *    6. OUTPUT RECORD                                        *            
+      *                                                            *            
+      *============================================================*            
+                                                                                
+      ******************************************************************        
+       200-READ-BM06F120.                                                       
+      ******************************************************************        
+      *--------------------------------------------------------*                
+      *    READ BM06F120 UNTIL EOF                             *                
+      *--------------------------------------------------------*                
+           READ BM06F120                                                        
+                AT END MOVE 'Y'  TO  WS-F120-EOF                                
+                       GO TO 200-EXIT.                                          
+           ADD  1                   TO WS-F120-READ-CNT.                        
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       300-READ-INPUT.                                                          
+      ******************************************************************        
+      *--------------------------------------------------------*                
+      *    TO GET INPUT FOR PROCESSING                         *                
+      *--------------------------------------------------------*                
+            PERFORM 350-OUTPUT-RECORD  THRU 350-EXIT.                           
+                                                                                
+            IF F120-AIX1 NOT = WS-F120-AIX1                                     
+               PERFORM 400-READ-BM06K100   THRU  400-EXIT                       
+               MOVE    F120-AIX1           TO   WS-F120-AIX1                    
+            END-IF.                                                             
+                                                                                
+            MOVE K100-NT-CODE              TO   F216-NUM-NEW-TOWN               
+            MOVE WS-DTE-PACD               TO F216-DTE-EST-COMPLETION           
+                                                                                
+            PERFORM 600-WRITE-BP13F216     THRU  600-EXIT                       
+            PERFORM 200-READ-BM06F120      THRU  200-EXIT.                      
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       350-OUTPUT-RECORD.                                                       
+                                                                                
+           MOVE  SPACES             TO  BP13F216-REC.                           
+           MOVE F120-REGN-NO        TO F216-NUM-REGN.                           
+           MOVE F120-SCH-ACC-NO     TO F216-NUM-SCH-ACC.                        
+           MOVE F120-DTE-ACCEPTANCE TO F216-DTE-ACCEPT.                         
+           MOVE F120-DTE-KEY-ISSUED TO F216-DTE-KEY-ISSUED.                     
+           MOVE F120-POSTAL-CODE    TO F216-NUM-POSTAL.                         
+                                                                                
+       350-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       400-READ-BM06K100.                                                       
+      ******************************************************************        
+                                                                                
+           MOVE SPACES        TO WS-DTE-PACD.                                   
+           MOVE F120-AIX1     TO K100-KEY-FLD.                                  
+                                                                                
+           READ BM06K100.                                                       
+                                                                                
+           IF BM06K100-STATUS = 00                                              
+              ADD 1 TO WS-K100-READ-CNT                                         
+              IF K100-DTE-PACD NOT = SPACES AND LOW-VALUES AND ZEROES           
+                 MOVE K100-DTE-PACD  TO WS-DTE-PACD                             
+              ELSE                                                              
+                 PERFORM  500-READ-BB14K500    THRU 500-EXIT                    
+              END-IF                                                            
+           ELSE                                                                 
+              IF BM06K100-STATUS = 23                                           
+                 DISPLAY 'K100 RECORD NOT FOUND, K100-KEY-FLD  = '              
+                          K100-KEY-FLD                                          
+              ELSE                                                              
+                 DISPLAY 'ERROR READING, BM06K100 = ' BM06K100-STATUS           
+                 MOVE     BM06K100-STATUS TO RETURN-CODE                        
+                 PERFORM  1000-CLOSE-ROUTINE.                                   
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       500-READ-BB14K500.                                                       
+      ******************************************************************        
+                                                                                
+           INITIALIZE BB14K500-REC.                                             
+                                                                                
+           MOVE K100-CDE-BLK               TO     K500-KEY-FLD.                 
+                                                                                
+           READ BB14K500.                                                       
+                                                                                
+           IF BB14K500-STATUS = 00                                              
+              ADD 1                        TO WS-K500-READ-CNT                  
+              MOVE K500-DTE-BLDG-COMPLETE  TO WS-DTE-PACD                       
+           ELSE                                                                 
+              ADD 1                        TO WS-K500-NOTFD-CNT                 
+             IF BB14K500-STATUS = 23                                            
+                 DISPLAY 'BB14K500 RECORD NOT FOUND. KEY FIELD IS  = '          
+                          K500-KEY-FLD                                          
+             ELSE                                                               
+                 DISPLAY 'ERROR READING, BB14K500 = ' BB14K500-STATUS           
+                 MOVE     BB14K500-STATUS TO RETURN-CODE                        
+                 PERFORM  1000-CLOSE-ROUTINE.                                   
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       600-WRITE-BP13F216.                                                      
+      ******************************************************************        
+           IF F120-DTE-ACCEPTANCE NOT NUMERIC                                   
+              MOVE 0 TO F120-DTE-ACCEPTANCE.                                    
+                                                                                
+           IF F120-DTE-KEY-ISSUED NOT NUMERIC                                   
+              MOVE 0 TO F120-DTE-KEY-ISSUED.                                    
+                                                                                
+           IF F120-DTE-ACCEPTANCE = SPACES OR LOW-VALUES OR ZEROES              
+              GO TO 600-EXIT.                                                   
+                                                                                
+                                                                                
+           IF F120-DTE-KEY-ISSUED > ZEROS                                       
+             IF F120-DTE-KEY-ISSUED(1:6) < WS-LOWER-LIMIT(1:6)                  
+                OR > WS-RUN-DATE(1:6)                                           
+                GO TO 600-EXIT.                                                 
+                                                                                
+           IF  F120-DTE-KEY-ISSUED > ZEROS                                      
+               IF F120-DTE-ACCEPTANCE(1:6) >= WS-LOWER-LIMIT(1:6)               
+                  AND <= WS-RUN-DATE(1:6)                                       
+                  ADD 1    TO WS-F120-KEY-CNT                                   
+                  MOVE '2' TO F216-NUM-KEY-ISSUED                               
+               ELSE                                                             
+                  ADD 1    TO WS-AFKEY-CNT                                      
+                  MOVE '3' TO F216-NUM-KEY-ISSUED                               
+               END-IF                                                           
+           ELSE                                                                 
+               ADD 1    TO WS-F120-NOKEY-CNT                                    
+               MOVE '1' TO F216-NUM-KEY-ISSUED                                  
+           END-IF.                                                              
+                                                                                
+           WRITE BP13F216-REC.                                                  
+           ADD 1                          TO WS-WRITE-CNT.                      
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       1000-CLOSE-ROUTINE.                                                      
+      ******************************************************************        
+                                                                                
+           CLOSE BM06F120                                                       
+                 BM06K100                                                       
+                 BB14K500                                                       
+                 BP13F216.                                                      
+                                                                                
+           IF BM06K100-STATUS NOT = 00                                          
+              DISPLAY 'CLOSING ERROR, BM06K100-STATUS ' BM06K100-STATUS.        
+           IF BB14K500-STATUS NOT = 00                                          
+              DISPLAY 'CLOSING ERROR, BB14K500-STATUS ' BB14K500-STATUS.        
+                                                                                
+           DISPLAY '                                    '.                      
+           DISPLAY '***** BP13C390 CONTROL TOTALS ***** '.                      
+           DISPLAY '                                    '.                      
+           DISPLAY ' DATA BASED ON KEY ISSUED FROM  '                           
+                     WS-LOWER-LIMIT(1:6)                                        
+                   ' TO ' WS-RUN-DATE(1:6).                                     
+           DISPLAY '                                    '.                      
+           DISPLAY 'NO OF RECORDS READ FROM               (BM06F120) = '        
+                    WS-F120-READ-CNT.                                           
+           DISPLAY 'NO OF RECORDS READ FROM               (BM06K100) = '        
+                    WS-K100-READ-CNT.                                           
+           DISPLAY 'NO OF RECORDS READ FROM               (BB14K500) = '        
+                    WS-K500-READ-CNT.                                           
+           DISPLAY 'NO OF RECORDS NOT FOUND               (BB14K500) = '        
+                    WS-K500-NOTFD-CNT.                                          
+           DISPLAY 'NO OF RECORD  WRITTEN                 (BP13F216) = '        
+                    WS-WRITE-CNT.                                               
+           DISPLAY 'NO OF RECORD  WRITTEN WITHOUT KEY ISS (BP13F216) = '        
+                    WS-F120-NOKEY-CNT.                                          
+           DISPLAY 'NO OF RECORD  WRITTEN WITH KEY ISSUED (BP13F216) = '        
+                    WS-F120-KEY-CNT.                                            
+           DISPLAY 'NO OF RECORD BOOKD/KEY-ISSUED NOT WITHIN ONE YEAR= '        
+                    WS-AFKEY-CNT.                                               
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       1000-EXIT.                                                               
+            EXIT.                                                               
+

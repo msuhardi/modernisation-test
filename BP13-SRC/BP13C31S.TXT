@@ -1,0 +1,418 @@
+      **************************                                                
+       IDENTIFICATION DIVISION.                                                 
+      **************************                                                
+       PROGRAM-ID.    BP13C31S.                                                 
+      *AUTHOR.        KARL ANDRUS CABUG.                                        
+      *DATE-WRITTEN.  01/03/23.                                                 
+      * ======================================================= *               
+      *                                                         *               
+      *   OBJECTIVE  :                                          *               
+      *    1. PROCESS AG07 INTERFACE FILE                       *               
+      *       UPDATE K650-CDE-PRINT TO 'L' AND UPDATE BP13K650  *               
+      *                                                         *               
+      *    2. CREATE A RECORD IN FINANCIAL HISTORY TRANS FILE   *               
+      *       WITH TRANS-TYP '15'.                              *               
+      *   INPUT FILES :                                         *               
+      *    1. AG07F640 - VOUCHER INTERFACE FILE                 *               
+      *    2. BM06K110 - BM06.K110.FLATINV                      *               
+      *    3. BP13K410 - BP13.K410.ACCUMSO                      *               
+      *                                                         *               
+      *   I/OUTPUT FILE :                                       *               
+      *    1. BP13K650 - BP13.K650.PREPVRCH                     *               
+      *    2. BP13K130 - BP13.K130.CDHIST                       *               
+      *    3. BP13L31S - LIST OF REC(S) NOT FOUND IN K410/K650  *               
+      * ======================================================= *               
+      * CHG REF   BY    DATE   DESCRIPTION                      *               
+      * -------- ---- -------- ----------                       *               
+      * BP139526 KAC1 28/02/23 NEW PROGRAM                      *               
+      * ======================================================= *               
+                                                                                
+      ***********************                                                   
+       ENVIRONMENT DIVISION.                                                    
+      ***********************                                                   
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT AG07F640   ASSIGN       TO AG07F640.                          
+                                                                                
+           SELECT  BM06K110  ASSIGN       TO BM06K110                           
+                             ACCESS MODE  IS RANDOM                             
+                             ORGANIZATION IS INDEXED                            
+                             RECORD KEY   IS K110-KEY-FLD                       
+                             FILE STATUS  IS BM06K110-STATUS.                   
+                                                                                
+           SELECT  BP13K130  ASSIGN       TO BP13K130                           
+                             ACCESS MODE  IS RANDOM                             
+                             ORGANIZATION IS INDEXED                            
+                             RECORD KEY   IS K130-KEY-FLD                       
+                             FILE STATUS  IS BP13K130-STATUS.                   
+                                                                                
+           SELECT  BP13K410  ASSIGN       TO BP13K410                           
+                             ORGANIZATION IS INDEXED                            
+                             ACCESS MODE  IS RANDOM                             
+                             RECORD KEY   IS K410-KEY-FLD                       
+                             FILE STATUS  IS K410-STATUS.                       
+                                                                                
+           SELECT  BP13K650  ASSIGN       TO BP13K650                           
+                             ORGANIZATION IS INDEXED                            
+                             ACCESS MODE  IS RANDOM                             
+                             RECORD KEY   IS K650-NUM-REGN                      
+                             FILE STATUS  IS BP13K650-STATUS.                   
+                                                                                
+           SELECT  BP13L31S  ASSIGN       TO BP13L31S.                          
+                                                                                
+      ***********************                                                   
+       DATA DIVISION.                                                           
+      ***********************                                                   
+       FILE SECTION.                                                            
+                                                                                
+       FD   BM06K110  RECORD CONTAINS 500  CHARACTERS.                          
+       COPY BM06K110.                                                           
+                                                                                
+       FD   BP13K130  RECORD CONTAINS 150  CHARACTERS.                          
+       COPY BP13K130.                                                           
+                                                                                
+       FD   BP13K650  RECORD CONTAINS 500  CHARACTERS.                          
+       COPY BP13K650.                                                           
+                                                                                
+       FD   BP13K410  RECORD CONTAINS 2000 CHARACTERS.                          
+       COPY BP13K410.                                                           
+                                                                                
+       FD   AG07F640  BLOCK CONTAINS  0 RECORDS                                 
+                      RECORD CONTAINS 100 CHARACTERS                            
+                      RECORDING MODE IS F                                       
+                      LABEL RECORDS ARE STANDARD.                               
+       COPY AG07F640.                                                           
+                                                                                
+       FD  BP13L31S   RECORD CONTAINS 133 CHARACTERS                            
+                      RECORDING MODE IS F                                       
+                      LABEL RECORDS ARE OMITTED.                                
+       01  BP13L31S-RECORD                     PIC X(133).                      
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+       01  WS-COUNTERS.                                                         
+           05  WS-PAGE                         PIC 9(04)  VALUE ZEROS.          
+           05  WS-CNT                          PIC 9(02)  VALUE ZEROS.          
+           05  WS-CNT-INPUT-REC                PIC 9(05)  VALUE ZEROS.          
+           05  WS-CNT-L31S-PROC                PIC 9(05)  VALUE ZEROS.          
+           05  WS-CNT-K130-WRITE               PIC 9(05)  VALUE ZEROS.          
+           05  WS-CNT-L31S-ERROR               PIC 9(05)  VALUE ZEROS.          
+                                                                                
+       01  WS-FLAGS.                                                            
+           05  EOF-F640                        PIC X(01)  VALUE SPACES.         
+           05  DTL1-SW                         PIC X(01)  VALUE SPACES.         
+           05  WS-K410-FND                     PIC X(01)  VALUE SPACES.         
+           05  WS-K650-FND                     PIC X(01)  VALUE SPACES.         
+           05  WS-WRITE-OK                     PIC X(01)  VALUE SPACES.         
+           05  WS-BM06-REGN-ERR                PIC X(01)  VALUE SPACES.         
+                                                                                
+       01  WS-CUR-DATE.                                                         
+           05  WS-YY                           PIC 9(4).                        
+           05  WS-MM                           PIC 99.                          
+           05  WS-DD                           PIC 99.                          
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  BP13K130-STATUS                 PIC 99     VALUE ZEROS.          
+           05  K410-STATUS                     PIC 99     VALUE ZEROS.          
+           05  BP13K650-STATUS                 PIC 99     VALUE ZEROS.          
+           05  BM06K110-STATUS                 PIC 99     VALUE ZEROS.          
+           05  WS-NUM-REGN                     PIC X(08)  VALUE SPACES.         
+           05  WS-OUTFILE-REC                  PIC X(133) VALUE SPACES.         
+                                                                                
+      ************************************************************              
+       PROCEDURE DIVISION.                                                      
+      ************************************************************              
+                                                                                
+      *---------------------*                                                   
+       0000-MAIN.                                                               
+      *---------------------*                                                   
+                                                                                
+           PERFORM 1000-OPEN-FILES             THRU 1000-EXIT.                  
+           PERFORM 1500-READ-AG07F640          THRU 1500-EXIT.                  
+           PERFORM 2000-PROCESS-RTN            THRU 2000-EXIT                   
+             UNTIL EOF-F640 = 'Y'.                                              
+                                                                                
+           GO TO 9000-CLOSE-ROUTINE.                                            
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *---------------------*                                                   
+       1000-OPEN-FILES.                                                         
+      *---------------------*                                                   
+           OPEN INPUT AG07F640                                                  
+                      BM06K110                                                  
+                      BP13K410                                                  
+               OUTPUT BP13L31S                                                  
+                  I-O BP13K650                                                  
+                      BP13K130.                                                 
+                                                                                
+           IF BM06K110-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'BM06K110 : OPEN ERROR, STATUS = ' BM06K110-STATUS        
+              MOVE     BM06K110-STATUS           TO RETURN-CODE                 
+              GO TO 9000-CLOSE-ROUTINE                                          
+           END-IF.                                                              
+                                                                                
+           IF BP13K130-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'BP13K130 : OPEN ERROR, STATUS = ' BP13K130-STATUS        
+              MOVE     BP13K130-STATUS           TO RETURN-CODE                 
+              GO TO 9000-CLOSE-ROUTINE                                          
+           END-IF.                                                              
+                                                                                
+           IF K410-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'BP13K410 : OPEN ERROR, STATUS = ' K410-STATUS            
+              MOVE K410-STATUS                   TO RETURN-CODE                 
+              GO TO 9000-CLOSE-ROUTINE                                          
+           END-IF.                                                              
+                                                                                
+           IF BP13K650-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'BP13K650 : OPEN ERROR, STATUS = ' BP13K650-STATUS        
+              MOVE BP13K650-STATUS               TO RETURN-CODE                 
+              GO TO 9000-CLOSE-ROUTINE                                          
+           END-IF.                                                              
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *---------------------*                                                   
+       1500-READ-AG07F640.                                                      
+      *---------------------*                                                   
+            READ AG07F640 AT END                                                
+                 MOVE 'Y' TO EOF-F640                                           
+                 GO TO 1500-EXIT.                                               
+                                                                                
+            ADD 1 TO WS-CNT-INPUT-REC.                                          
+       1500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *---------------------*                                                   
+       2000-PROCESS-RTN.                                                        
+      *---------------------*                                                   
+           MOVE 'N'                              TO WS-BM06-REGN-ERR.           
+                                                                                
+           IF (F640-NUM-TRANS-TYP = 'SSM') AND                                  
+              (F640-NUM-REJECT = SPACES  )                                      
+              IF F640-NUM-DDD-FILE-REF(11:1) NOT = SPACES AND LOW-VALUES        
+                 PERFORM 2100-READ-BM06K110    THRU 2100-EXIT                   
+              ELSE                                                              
+                 MOVE F640-NUM-DDD-FILE-REF(1:8) TO WS-NUM-REGN                 
+              END-IF                                                            
+                                                                                
+              IF WS-BM06-REGN-ERR = 'N'                                         
+                 MOVE SPACES                     TO WS-K410-FND                 
+                                                    WS-K650-FND                 
+                 PERFORM 2200-READ-BP13K410    THRU 2200-EXIT                   
+                 PERFORM 2300-READ-BP13K650    THRU 2300-EXIT                   
+                                                                                
+                 IF (WS-K410-FND NOT = 'Y') OR                                  
+                    (WS-K650-FND NOT = 'Y')                                     
+                    IF WS-K410-FND = 'N'                                        
+                       STRING F640-NUM-DDD-FILE-REF ' -  REGN NOT FND('         
+                              WS-NUM-REGN ') NOT FND IN BP13K410.'              
+                              DELIMITED BY SIZE INTO WS-OUTFILE-REC             
+                       END-STRING                                               
+                       WRITE BP13L31S-RECORD    FROM WS-OUTFILE-REC             
+                       ADD 1                      TO WS-CNT-L31S-ERROR          
+                    ELSE                                                        
+                       STRING F640-NUM-DDD-FILE-REF ' -  REGN NOT FND('         
+                              WS-NUM-REGN ') NOT FND IN BP13K650.'              
+                              DELIMITED BY SIZE INTO WS-OUTFILE-REC             
+                       END-STRING                                               
+                       WRITE BP13L31S-RECORD    FROM WS-OUTFILE-REC             
+                       ADD 1                      TO WS-CNT-L31S-ERROR          
+                    END-IF                                                      
+                 ELSE                                                           
+                    PERFORM 3000-PROCESS-UPDATE THRU 3000-EXIT                  
+                 END-IF                                                         
+              END-IF                                                            
+           ELSE                                                                 
+              ADD 1                               TO WS-CNT-L31S-ERROR          
+           END-IF.                                                              
+                                                                                
+           PERFORM 1500-READ-AG07F640           THRU 1500-EXIT.                 
+                                                                                
+       2000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *---------------------*                                                   
+       2100-READ-BM06K110.                                                      
+      *---------------------*                                                   
+           MOVE F640-NUM-DDD-FILE-REF            TO K110-KEY-FLD.               
+                                                                                
+           READ BM06K110.                                                       
+                                                                                
+           EVALUATE BM06K110-STATUS                                             
+               WHEN 00                                                          
+                    IF K110-REGN-NO(1:2) NOT = '##' AND SPACES                  
+                       MOVE K110-REGN-NO         TO WS-NUM-REGN                 
+                    ELSE                                                        
+                      MOVE SPACES                TO WS-OUTFILE-REC              
+                      STRING F640-NUM-DDD-FILE-REF ' - '                        
+                            'NO REGN FOUND IN FIS (BM06)'                       
+                            DELIMITED BY SIZE INTO WS-OUTFILE-REC               
+                      END-STRING                                                
+                      WRITE BP13L31S-RECORD    FROM WS-OUTFILE-REC              
+                      MOVE 'Y'                   TO WS-BM06-REGN-ERR            
+                    END-IF                                                      
+               WHEN 10                                                          
+               WHEN 23                                                          
+                    MOVE SPACES                  TO WS-OUTFILE-REC              
+                    STRING F640-NUM-DDD-FILE-REF ' - '                          
+                          'HDBREF NOTFND IN FIS (BM06)'                         
+                          DELIMITED BY SIZE INTO WS-OUTFILE-REC                 
+                    END-STRING                                                  
+                    WRITE BP13L31S-RECORD      FROM WS-OUTFILE-REC              
+                    MOVE 'Y'                     TO WS-BM06-REGN-ERR            
+               WHEN OTHER                                                       
+                    DISPLAY 'BM06K110 READ ERROR(' BM06K110-STATUS ')'          
+                    MOVE BM06K110-STATUS         TO RETURN-CODE                 
+                    GO TO 9000-CLOSE-ROUTINE                                    
+           END-EVALUATE.                                                        
+       2100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *---------------------*                                                   
+       2200-READ-BP13K410.                                                      
+      *---------------------*                                                   
+           MOVE SPACES                           TO K410-NUM-REGN.              
+           MOVE WS-NUM-REGN                      TO K410-NUM-REGN.              
+                                                                                
+           READ BP13K410.                                                       
+                                                                                
+           EVALUATE K410-STATUS                                                 
+               WHEN '00'                                                        
+                    MOVE 'Y'                     TO WS-K410-FND                 
+               WHEN '23'                                                        
+                    MOVE 'N'                     TO WS-K410-FND                 
+               WHEN OTHER                                                       
+                    DISPLAY 'BP13K410 READ ERROR(' K410-STATUS ')'              
+                    DISPLAY 'K410-KEY-FLD      = ' K410-NUM-REGN                
+                    MOVE K410-STATUS             TO RETURN-CODE                 
+                    GO TO 9000-CLOSE-ROUTINE                                    
+           END-EVALUATE.                                                        
+                                                                                
+       2200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *---------------------*                                                   
+       2300-READ-BP13K650.                                                      
+      *---------------------*                                                   
+           MOVE SPACES                           TO K650-NUM-REGN.              
+           MOVE WS-NUM-REGN                      TO K650-NUM-REGN.              
+                                                                                
+           READ BP13K650.                                                       
+                                                                                
+           EVALUATE BP13K650-STATUS                                             
+               WHEN '00'                                                        
+                    MOVE 'Y'                     TO WS-K650-FND                 
+               WHEN '23'                                                        
+                    MOVE 'N'                     TO WS-K650-FND                 
+               WHEN OTHER                                                       
+                    DISPLAY 'BP13K650 READ ERROR(' BP13K650-STATUS ')'          
+                    DISPLAY '     K650-KEY-FLD = ' K650-NUM-REGN                
+                    MOVE BP13K650-STATUS         TO RETURN-CODE                 
+                    GO TO 9000-CLOSE-ROUTINE                                    
+           END-EVALUATE.                                                        
+                                                                                
+       2300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *---------------------*                                                   
+       3000-PROCESS-UPDATE.                                                     
+      *---------------------*                                                   
+           MOVE 'L'                              TO K650-CDE-PRINT.             
+           PERFORM 3100-REWRITE-BP13K650       THRU 3100-EXIT.                  
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8)       TO WS-CUR-DATE.                
+           MOVE SPACES                           TO BP13K130-CDHIST.            
+                                                                                
+           MOVE '15'                             TO K130-TRANS-TYPE.            
+           MOVE WS-NUM-REGN                      TO K130-NUM-ORIG-REGN.         
+           MOVE WS-CUR-DATE                      TO K130-DTE-POST               
+                                                    K130-DTE-TRANS.             
+           MOVE 001                              TO K130-COUNT-HISTORY.         
+           MOVE K650-PAYABLE-NRIC1               TO K130-NUM-NRIC.              
+           MOVE F640-NUM-VR                      TO K130-NUM-RECPT-JRNO.        
+                                                                                
+           IF F640-AMT-CHEQUE NOT = ZEROES                                      
+              MOVE F640-AMT-CHEQUE               TO K130-AMT-CASH               
+           ELSE                                                                 
+              MOVE F640-AMT-IBG                  TO K130-AMT-CASH               
+           END-IF.                                                              
+                                                                                
+           MOVE 'SSM'                            TO K130-PAYMENT-TYPE.          
+           IF F640-NUM-DDD-FILE-REF(11:1) NOT = SPACES AND LOW-VALUES           
+              MOVE F640-NUM-DDD-FILE-REF(11:1)   TO K130-NUM-SCH-ACCT           
+           END-IF.                                                              
+                                                                                
+           MOVE 'N'                              TO WS-WRITE-OK.                
+           PERFORM 3200-WRITE-BP13K130         THRU 3200-EXIT                   
+              UNTIL WS-CNT > 20 OR                                              
+                    WS-WRITE-OK = 'Y'.                                          
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *---------------------*                                                   
+       3100-REWRITE-BP13K650.                                                   
+      *---------------------*                                                   
+           REWRITE BP13K650-REC.                                                
+                                                                                
+           EVALUATE BP13K650-STATUS                                             
+               WHEN 00                                                          
+                    ADD 1                        TO WS-CNT-L31S-PROC            
+               WHEN OTHER                                                       
+                    DISPLAY 'K650 FILE UPDT ERR(' BP13K650-STATUS ')'           
+                    MOVE BP13K650-STATUS         TO RETURN-CODE                 
+                    GO TO 9000-CLOSE-ROUTINE                                    
+           END-EVALUATE.                                                        
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *---------------------*                                                   
+       3200-WRITE-BP13K130.                                                     
+      *---------------------*                                                   
+                                                                                
+           WRITE BP13K130-CDHIST.                                               
+                                                                                
+           IF BP13K130-STATUS = 00                                              
+              ADD 1                              TO WS-CNT-K130-WRITE           
+              MOVE 'Y'                           TO WS-WRITE-OK                 
+           ELSE                                                                 
+             IF BP13K130-STATUS = 22                                            
+                ADD 1                            TO K130-COUNT-HISTORY          
+                                                    WS-CNT                      
+             ELSE                                                               
+                DISPLAY 'K130 FILE REWRITE ERROR(' BP13K130-STATUS ')'          
+                MOVE BP13K130-STATUS             TO RETURN-CODE                 
+                GO TO 9000-CLOSE-ROUTINE                                        
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *---------------------*                                                   
+       9000-CLOSE-ROUTINE.                                                      
+      *---------------------*                                                   
+           DISPLAY '*-------------------------------------*'                    
+           DISPLAY '*             BP13C31S                *'                    
+           DISPLAY '*-------------------------------------*'                    
+           DISPLAY ' TOTAL NUMBER OF INPUT  : ' WS-CNT-INPUT-REC                
+           DISPLAY ' NO OF PROCESSED   CASE : ' WS-CNT-L31S-PROC                
+           DISPLAY ' NO OF BP13K130 WRITE   : ' WS-CNT-K130-WRITE               
+           DISPLAY ' NO OF UNPROCESSED CASE : ' WS-CNT-L31S-ERROR               
+                                                                                
+           CLOSE AG07F640                                                       
+                 BM06K110                                                       
+                 BP13K410                                                       
+                 BP13K130                                                       
+                 BP13L31S                                                       
+                 BP13K650.                                                      
+           STOP RUN.                                                            
+       9000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+

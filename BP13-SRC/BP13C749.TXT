@@ -1,0 +1,420 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C749.                                                 
+       AUTHOR.        RAYATHATHA ASHOK.                                         
+                                                                                
+      **********************************************************                
+      *                                                        *                
+      *    SYSTEM NAME : SYSTEM OF COMMITMENT                  *                
+      *                                                        *                
+      *    SYSTEM ID : BP13                                    *                
+      *                                                        *                
+      *    OBJECTIVE  : COMPUTE FLAT SUPPLY FOR EACH NT/FT     *                
+      *                 BASED ON STANDARD EQUATION AND MINIMUM *                
+      *                 EQUATION.                              *                
+      *                                                        *                
+      *                 IF THE MINIMUM FLAT SET ASIDE COMPUTED *                
+      *                 FROM THE FORMALAR IS MORE THAN THE     *                
+      *                 TOTAL REQUEST FOR RESIDENT, THEN GIVE  *                
+      *                 THE EXTRA UNITS TO NON-RESIDENT.       *                
+      *                                                        *                
+      *            PR = PROPORTION OF REQUEST FROM RESIDENT    *                
+      *            PNR= PROPORTION OF REQUEST FROM NON-RESIDENT*                
+      *            X  = MINIMUM PROPORTION OF FLAT FOR RESIDENT*                
+      *            R  = MINIMUM NO OF FLAT ALLOC   FOR RESIDENT*                
+      *            N  = MAXIMUM NO OF FLAT ALLOC FOR NON-RES   *                
+      *            F  = NO OF FLATS FOR NT/FT/ALLOC0SCH        *                
+      *                 PA, MTF, RH, REN, CCC                  *                
+      *                                                        *                
+      *                   2 PR                                 *                
+      *            X = -------------                           *                
+      *                  PNR + 2PR                             *                
+      *                                                        *                
+      *            R = X * F                                   *                
+      *                                                        *                
+      *            N = F - R                                   *                
+      *                                                        *                
+      * CHG-NO   BY   ON     DESCRIPTION                       *                
+      *----------------------------------                      *                
+      * C930335 LSB 930317 - EXPAND BP13K010 FOR RDC           *                
+      * I920818 LJL 930401 - CONVERT TO COBOLII.               *                
+      * C950137 GD  950117 - ADD PROCESSING OF TCP SCHEME      *                
+      * C950199 GD  950207 - COMPUTE CCC BALANCE               *                
+      * C9506F9 LSB 950707 - COMPUTE CCC -30%/70% RES/NON-RES  *                
+      * BP134861 EAA1 130422 EXPAND BP13K010 TO 600            *                
+      **********************************************************                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER.     IBM-3090.                                           
+       OBJECT-COMPUTER.     IBM-3090.                                           
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13K720    ASSIGN TO BP13K720                                
+                              ORGANIZATION IS INDEXED                           
+                              ACCESS      IS SEQUENTIAL                         
+                              RECORD KEY IS K720-KEY-FLD                        
+                              FILE STATUS IS WS-K720-STATUS.                    
+                                                                                
+           SELECT BP13K010    ASSIGN TO BP13K010                                
+                              ORGANIZATION IS INDEXED                           
+                              ACCESS MODE  IS RANDOM                            
+                              RECORD KEY   IS K010-KEY-FLD                      
+                              FILE STATUS  IS WS-K010-STATUS.                   
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD  BP13K720                                                             
+                              RECORD CONTAINS 300 CHARACTERS.                   
+           COPY BP13K720.                                                       
+                                                                                
+       FD  BP13K010                                                             
+                              RECORD CONTAINS 600 CHARACTERS.                   
+           COPY BP13K010.                                                       
+                                                                                
+        WORKING-STORAGE SECTION.                                                
+        01  WS-VARIABLES.                                                       
+            05  WS-CNT-K720-READ         PIC 9(8)       VALUE 0.                
+            05  WS-CNT-K010-READ         PIC 9(8)       VALUE 0.                
+            05  WS-CNT-K720-REWRITE      PIC 9(8)       VALUE 0.                
+            05  WS-K720-STATUS           PIC 99         VALUE 0.                
+            05  WS-K010-STATUS           PIC 99         VALUE 0.                
+            05  WS-K720-EOF              PIC X          VALUE 'N'.              
+                88 K720-EOF                             VALUE 'Y'.              
+            05  WS-K720-REWRITE          PIC X          VALUE 'N'.              
+                88 K720-REWRITE                         VALUE 'Y'.              
+            05  WS-NUM-MIN-PROP          PIC 9(2)V99999 VALUE 0.                
+            05  WS-NUM-TOT-MTF           PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-CCC           PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-RH            PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-REN           PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-RDC           PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-PA            PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-TCP           PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-VAL           PIC 9(5)       VALUE 0.                
+            05  WS-BAL-CCC               PIC 9(5)       VALUE 0.                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+       0000-CONTROL-RTN.                                                        
+                                                                                
+           PERFORM 1000-OPEN-FILES       THRU 1000-EXIT.                        
+           PERFORM 2000-READ-BP13K720    THRU 2000-EXIT.                        
+           PERFORM 3000-MAIN-ROUTINE     THRU 3000-EXIT                         
+             UNTIL K720-EOF.                                                    
+                                                                                
+           PERFORM 9999-CLOSE-FILES      THRU 9999-EXIT.                        
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       1000-OPEN-FILES.                                                         
+                                                                                
+           OPEN INPUT  BP13K010                                                 
+                I-O    BP13K720.                                                
+                                                                                
+           IF WS-K720-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR OPENING BP13K720, STATUS ' WS-K720-STATUS          
+              MOVE WS-K720-STATUS        TO RETURN-CODE                         
+              GO TO 9999-CLOSE-FILES.                                           
+                                                                                
+           IF WS-K010-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR OPENING BP13K010, STATUS ' WS-K010-STATUS          
+              MOVE WS-K010-STATUS        TO RETURN-CODE                         
+              GO TO 9999-CLOSE-FILES.                                           
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       2000-READ-BP13K720.                                                      
+                                                                                
+           READ BP13K720 NEXT            AT END                                 
+           MOVE 'Y'                      TO WS-K720-EOF                         
+           GO TO 2000-EXIT.                                                     
+                                                                                
+           IF WS-K720-STATUS NOT = 00                                           
+              DISPLAY 'ERROR READING BP13K720, STATUS ' WS-K720-STATUS          
+              MOVE WS-K720-STATUS        TO RETURN-CODE                         
+              GO TO 9999-CLOSE-FILES.                                           
+                                                                                
+           ADD 1                         TO WS-CNT-K720-READ.                   
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       3000-MAIN-ROUTINE.                                                       
+                                                                                
+           PERFORM 3050-READ-TENDER-FILE THRU 3050-EXIT.                        
+                                                                                
+           IF WS-K010-STATUS = 00                                               
+               PERFORM 4000-COMPUTE-MTF-QUOTA THRU 4000-EXIT                    
+               PERFORM 4100-COMPUTE-CCC-QUOTA THRU 4100-EXIT                    
+               PERFORM 4200-COMPUTE-RH-QUOTA  THRU 4200-EXIT                    
+               PERFORM 4300-COMPUTE-REN-QUOTA THRU 4300-EXIT                    
+               PERFORM 4400-COMPUTE-PA-QUOTA  THRU 4400-EXIT                    
+               PERFORM 4500-COMPUTE-RDC-QUOTA THRU 4500-EXIT                    
+               PERFORM 4600-COMPUTE-TCP-QUOTA THRU 4600-EXIT                    
+               PERFORM 3080-REWRITE-BP13K720  THRU 3080-EXIT.                   
+                                                                                
+           MOVE 'N'                      TO WS-K720-REWRITE.                    
+           PERFORM 2000-READ-BP13K720    THRU 2000-EXIT.                        
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       3050-READ-TENDER-FILE.                                                   
+           MOVE K720-KEY-FLD             TO K010-KEY-FLD.                       
+           READ BP13K010.                                                       
+                                                                                
+           IF WS-K010-STATUS = 00                                               
+              ADD 1                      TO WS-CNT-K010-READ                    
+           ELSE                                                                 
+           IF WS-K010-STATUS = 23                                               
+              DISPLAY 'RECORD NOT FND BP13K010 STATUS ' WS-K010-STATUS          
+              DISPLAY '                        KEY IS ' K010-KEY-FLD            
+           ELSE                                                                 
+              DISPLAY 'ERROR READING BP13K010, STATUS ' WS-K010-STATUS          
+              DISPLAY '                        KEY IS ' K010-KEY-FLD            
+              MOVE WS-K010-STATUS        TO RETURN-CODE                         
+              GO TO 9999-CLOSE-FILES.                                           
+                                                                                
+       3050-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       3080-REWRITE-BP13K720.                                                   
+           IF K720-REWRITE                                                      
+              REWRITE BP13K720-RESIDENT                                         
+                                                                                
+              IF WS-K720-STATUS = 00 OR 02                                      
+                 ADD 1                   TO WS-CNT-K720-REWRITE                 
+              ELSE                                                              
+                 DISPLAY 'ERROR REWRITING BP13K720, STATUS '                    
+                                            WS-K720-STATUS                      
+                 DISPLAY '                          KEY IS '                    
+                                               K720-KEY-FLD                     
+                 MOVE WS-K720-STATUS        TO RETURN-CODE                      
+                 GO TO 9999-CLOSE-FILES.                                        
+                                                                                
+       3080-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4000-COMPUTE-MTF-QUOTA.                                                  
+           IF K720-NUM-APP-RES-MTF IS NUMERIC AND                               
+              K720-NUM-APP-NONRES-MTF IS NUMERIC AND                            
+              K010-NUM-TOT-MTF IS NUMERIC                                       
+              IF K720-NUM-APP-RES-MTF > 0 AND K010-NUM-TOT-MTF > 0              
+                 COMPUTE WS-NUM-MIN-PROP = ((2 * K720-NUM-APP-RES-MTF) /        
+                                           (K720-NUM-APP-NONRES-MTF +           
+                                          (2 * K720-NUM-APP-RES-MTF)))          
+                 COMPUTE WS-NUM-TOT-MTF = K010-NUM-TOT-MTF *                    
+                                          WS-NUM-MIN-PROP                       
+                 ADD WS-NUM-TOT-MTF 0.4 GIVING  WS-NUM-TOT-VAL ROUNDED          
+                 MOVE 'Y'                     TO WS-K720-REWRITE                
+                                                                                
+                 IF WS-NUM-TOT-VAL < K720-NUM-APP-RES-MTF                       
+                    MOVE WS-NUM-TOT-VAL       TO K720-NUM-FLAT-RES-MTF          
+                    COMPUTE K720-NUM-FLAT-NONRES-MTF =                          
+                            K010-NUM-TOT-MTF - WS-NUM-TOT-VAL                   
+                 ELSE                                                           
+                    MOVE K720-NUM-APP-RES-MTF TO K720-NUM-FLAT-RES-MTF          
+                    COMPUTE K720-NUM-FLAT-NONRES-MTF =                          
+                            K010-NUM-TOT-MTF - K720-NUM-APP-RES-MTF.            
+                                                                                
+           IF K720-NUM-APP-RES-MTF = 0                                          
+              MOVE 'Y'                   TO WS-K720-REWRITE                     
+              MOVE K010-NUM-TOT-MTF      TO K720-NUM-FLAT-NONRES-MTF.           
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4100-COMPUTE-CCC-QUOTA.                                                  
+                                                                                
+           IF K010-REG-CCC1           IS NUMERIC AND                            
+              K010-REG-CCC2           IS NUMERIC AND                            
+              K010-REG-CCC3           IS NUMERIC AND                            
+              K010-NUM-TOT-CCC IS NUMERIC                                       
+                                                                                
+              COMPUTE WS-BAL-CCC = K010-NUM-TOT-CCC -                           
+                         (K010-REG-CCC1 + K010-REG-CCC2 + K010-REG-CCC3)        
+                                                                                
+              MOVE 'Y'                     TO WS-K720-REWRITE                   
+              COMPUTE WS-NUM-TOT-VAL ROUNDED = (WS-BAL-CCC * 0.30)              
+              MOVE WS-NUM-TOT-VAL TO K720-NUM-FLAT-RES-CCC                      
+              COMPUTE K720-NUM-FLAT-NONRES-CCC =                                
+                      WS-BAL-CCC - K720-NUM-FLAT-RES-CCC.                       
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4200-COMPUTE-RH-QUOTA.                                                   
+           IF K720-NUM-APP-RES-RH  IS NUMERIC AND                               
+              K720-NUM-APP-NONRES-RH  IS NUMERIC AND                            
+              K010-NUM-TOT-RH  IS NUMERIC                                       
+              IF K720-NUM-APP-RES-RH  > 0 AND K010-NUM-TOT-RH  > 0              
+                 COMPUTE WS-NUM-MIN-PROP = ((2 * K720-NUM-APP-RES-RH) /         
+                                           (K720-NUM-APP-NONRES-RH +            
+                                          (2 * K720-NUM-APP-RES-RH)))           
+                 COMPUTE WS-NUM-TOT-RH  = K010-NUM-TOT-RH *                     
+                                          WS-NUM-MIN-PROP                       
+                 ADD WS-NUM-TOT-RH  0.4 GIVING  WS-NUM-TOT-VAL ROUNDED          
+                 MOVE 'Y'                     TO WS-K720-REWRITE                
+                                                                                
+                 IF WS-NUM-TOT-VAL < K720-NUM-APP-RES-RH                        
+                    MOVE WS-NUM-TOT-VAL       TO K720-NUM-FLAT-RES-RH           
+                    COMPUTE K720-NUM-FLAT-NONRES-RH  =                          
+                            K010-NUM-TOT-RH  - WS-NUM-TOT-VAL                   
+                 ELSE                                                           
+                    MOVE K720-NUM-APP-RES-RH  TO K720-NUM-FLAT-RES-RH           
+                    COMPUTE K720-NUM-FLAT-NONRES-RH  =                          
+                            K010-NUM-TOT-RH  - K720-NUM-APP-RES-RH.             
+                                                                                
+           IF K720-NUM-APP-RES-RH  = 0                                          
+              MOVE 'Y'                   TO WS-K720-REWRITE                     
+              MOVE K010-NUM-TOT-RH       TO K720-NUM-FLAT-NONRES-RH.            
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4300-COMPUTE-REN-QUOTA.                                                  
+           IF K720-NUM-APP-RES-REN IS NUMERIC AND                               
+              K720-NUM-APP-NONRES-REN IS NUMERIC AND                            
+              K010-NUM-TOT-REN IS NUMERIC                                       
+              IF K720-NUM-APP-RES-REN > 0 AND K010-NUM-TOT-REN > 0              
+                 COMPUTE WS-NUM-MIN-PROP = ((2 * K720-NUM-APP-RES-REN) /        
+                                           (K720-NUM-APP-NONRES-REN +           
+                                          (2 * K720-NUM-APP-RES-REN)))          
+                 COMPUTE WS-NUM-TOT-REN = K010-NUM-TOT-REN *                    
+                                          WS-NUM-MIN-PROP                       
+                 ADD WS-NUM-TOT-REN 0.4 GIVING  WS-NUM-TOT-VAL ROUNDED          
+                 MOVE 'Y'                     TO WS-K720-REWRITE                
+                                                                                
+                 IF WS-NUM-TOT-VAL < K720-NUM-APP-RES-REN                       
+                    MOVE WS-NUM-TOT-VAL       TO K720-NUM-FLAT-RES-REN          
+                    COMPUTE K720-NUM-FLAT-NONRES-REN =                          
+                            K010-NUM-TOT-REN - WS-NUM-TOT-VAL                   
+                 ELSE                                                           
+                    MOVE K720-NUM-APP-RES-REN TO K720-NUM-FLAT-RES-REN          
+                    COMPUTE K720-NUM-FLAT-NONRES-REN =                          
+                            K010-NUM-TOT-REN - K720-NUM-APP-RES-REN.            
+                                                                                
+           IF K720-NUM-APP-RES-REN = 0                                          
+              MOVE 'Y'                   TO WS-K720-REWRITE                     
+              MOVE K010-NUM-TOT-REN      TO K720-NUM-FLAT-NONRES-REN.           
+                                                                                
+       4300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4400-COMPUTE-PA-QUOTA.                                                   
+           IF K720-NUM-APP-RES-PA  IS NUMERIC AND                               
+              K720-NUM-APP-NONRES-PA  IS NUMERIC AND                            
+              K010-NUM-TOT-PA  IS NUMERIC                                       
+              IF K720-NUM-APP-RES-PA  > 0 AND K010-NUM-TOT-PA  > 0              
+                 COMPUTE WS-NUM-MIN-PROP = ((2 * K720-NUM-APP-RES-PA) /         
+                                           (K720-NUM-APP-NONRES-PA +            
+                                          (2 * K720-NUM-APP-RES-PA)))           
+                 COMPUTE WS-NUM-TOT-PA  = K010-NUM-TOT-PA *                     
+                                          WS-NUM-MIN-PROP                       
+                 ADD WS-NUM-TOT-PA  0.4 GIVING  WS-NUM-TOT-VAL ROUNDED          
+                 MOVE 'Y'                     TO WS-K720-REWRITE                
+                                                                                
+                 IF WS-NUM-TOT-VAL < K720-NUM-APP-RES-PA                        
+                    MOVE WS-NUM-TOT-VAL       TO K720-NUM-FLAT-RES-PA           
+                    COMPUTE K720-NUM-FLAT-NONRES-PA  =                          
+                            K010-NUM-TOT-PA  - WS-NUM-TOT-VAL                   
+                 ELSE                                                           
+                    MOVE K720-NUM-APP-RES-PA  TO K720-NUM-FLAT-RES-PA           
+                    COMPUTE K720-NUM-FLAT-NONRES-PA  =                          
+                            K010-NUM-TOT-PA  - K720-NUM-APP-RES-PA.             
+                                                                                
+           IF K720-NUM-APP-RES-PA  = 0                                          
+              MOVE 'Y'                   TO WS-K720-REWRITE                     
+              MOVE K010-NUM-TOT-PA       TO K720-NUM-FLAT-NONRES-PA.            
+                                                                                
+       4400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4500-COMPUTE-RDC-QUOTA.                                                  
+           IF K720-NUM-APP-RES-RDC IS NUMERIC AND                               
+              K720-NUM-APP-NONRES-RDC IS NUMERIC AND                            
+              K010-NUM-TOT-RDC IS NUMERIC                                       
+              IF K720-NUM-APP-RES-RDC > 0 AND K010-NUM-TOT-RDC > 0              
+                 COMPUTE WS-NUM-MIN-PROP = ((2 * K720-NUM-APP-RES-RDC) /        
+                                           (K720-NUM-APP-NONRES-RDC +           
+                                          (2 * K720-NUM-APP-RES-RDC)))          
+                 COMPUTE WS-NUM-TOT-RDC = K010-NUM-TOT-RDC *                    
+                                          WS-NUM-MIN-PROP                       
+                 ADD WS-NUM-TOT-RDC 0.4 GIVING  WS-NUM-TOT-VAL ROUNDED          
+                 MOVE 'Y'                     TO WS-K720-REWRITE                
+                                                                                
+                 IF WS-NUM-TOT-VAL < K720-NUM-APP-RES-RDC                       
+                    MOVE WS-NUM-TOT-VAL       TO K720-NUM-FLAT-RES-RDC          
+                    COMPUTE K720-NUM-FLAT-NONRES-RDC =                          
+                            K010-NUM-TOT-RDC - WS-NUM-TOT-VAL                   
+                 ELSE                                                           
+                    MOVE K720-NUM-APP-RES-RDC TO K720-NUM-FLAT-RES-RDC          
+                    COMPUTE K720-NUM-FLAT-NONRES-RDC =                          
+                            K010-NUM-TOT-RDC - K720-NUM-APP-RES-RDC.            
+                                                                                
+           IF K720-NUM-APP-RES-RDC = 0                                          
+              MOVE 'Y'                   TO WS-K720-REWRITE                     
+              MOVE K010-NUM-TOT-RDC      TO K720-NUM-FLAT-NONRES-RDC.           
+                                                                                
+       4500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4600-COMPUTE-TCP-QUOTA.                                                  
+           IF K720-NUM-APP-RES-TCP IS NUMERIC AND                               
+              K720-NUM-APP-NONRES-TCP IS NUMERIC AND                            
+              K010-NUM-TOT-TCP IS NUMERIC                                       
+              IF K720-NUM-APP-RES-TCP > 0 AND K010-NUM-TOT-TCP > 0              
+                 COMPUTE WS-NUM-MIN-PROP = ((2 * K720-NUM-APP-RES-TCP) /        
+                                           (K720-NUM-APP-NONRES-TCP +           
+                                          (2 * K720-NUM-APP-RES-TCP)))          
+                 COMPUTE WS-NUM-TOT-TCP = K010-NUM-TOT-TCP *                    
+                                          WS-NUM-MIN-PROP                       
+                 ADD WS-NUM-TOT-TCP 0.4 GIVING  WS-NUM-TOT-VAL ROUNDED          
+                 MOVE 'Y'                     TO WS-K720-REWRITE                
+                                                                                
+                 IF WS-NUM-TOT-VAL < K720-NUM-APP-RES-TCP                       
+                    MOVE WS-NUM-TOT-VAL       TO K720-NUM-FLAT-RES-TCP          
+                    COMPUTE K720-NUM-FLAT-NONRES-TCP =                          
+                            K010-NUM-TOT-TCP - WS-NUM-TOT-VAL                   
+                 ELSE                                                           
+                    MOVE K720-NUM-APP-RES-TCP TO K720-NUM-FLAT-RES-TCP          
+                    COMPUTE K720-NUM-FLAT-NONRES-TCP =                          
+                            K010-NUM-TOT-TCP - K720-NUM-APP-RES-TCP.            
+                                                                                
+           IF K720-NUM-APP-RES-TCP = 0                                          
+              MOVE 'Y'                   TO WS-K720-REWRITE                     
+              MOVE K010-NUM-TOT-TCP      TO K720-NUM-FLAT-NONRES-TCP.           
+                                                                                
+       4600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       9999-CLOSE-FILES.                                                        
+                                                                                
+           DISPLAY '>>>>>>>>>>>>>>>> BP13C749 <<<<<<<<<<<<<<<<<<'.              
+           DISPLAY '- COMPUTE MIN NO FLATS SET ASIDE FOR RESIDENT - '.          
+           DISPLAY '- AND NON-RESIDENT USING THE FORMULAR PROVIDED- '.          
+           DISPLAY '  '.                                                        
+           DISPLAY 'K720 RECORDS READ    : '  WS-CNT-K720-READ.                 
+           DISPLAY 'K010 RECORDS READ    : '  WS-CNT-K010-READ.                 
+           DISPLAY 'K720 RECORDS REWRITE : '  WS-CNT-K720-REWRITE.              
+           DISPLAY '  '.                                                        
+                                                                                
+           CLOSE BP13K720                                                       
+                 BP13K010.                                                      
+                                                                                
+           IF WS-K720-STATUS NOT = 00                                           
+               DISPLAY 'ERROR CLOSING BP13K720, STATUS ' WS-K720-STATUS         
+               MOVE WS-K720-STATUS       TO RETURN-CODE.                        
+                                                                                
+           IF WS-K010-STATUS NOT = 00                                           
+               DISPLAY 'ERROR CLOSING BP13K010, STATUS ' WS-K010-STATUS         
+               MOVE WS-K010-STATUS       TO RETURN-CODE.                        
+                                                                                
+       9999-EXIT.                                                               
+           STOP RUN.                                                            
+                                                                                
+

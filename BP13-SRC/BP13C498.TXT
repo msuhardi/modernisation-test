@@ -1,0 +1,1168 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C498.                                                 
+      *AUTHOR.        JERRY FU.                                                 
+      *DATE-WRITTEN.  16/12/93.                                                 
+      * ====================================================== *                
+      * SYSTEM OF COMMITMENT (BP13)                            *                
+      * ====================================================== *                
+      *                                                        *                
+      *    OBJECTIVE   :                                       *                
+      *      - EXTRACT SALE CANCELLED CASES > 6 MONTHS OLD.    *                
+      *      - DELETE THE CANCELLED RECORDS FROM BP13K800 &    *                
+      *        BP13K820 IF THE SOC AMOUNT FIELDS = 0.00.       *                
+      *      - UPDATE CANCEL REASON & DATE TO BP13K840.        *                
+      *      - WRITE RECORDS TO BP13K893 & BP13K895 BEFORE     *                
+      *        DELETION.                                       *                
+      *      - PRINT OUT CHECK LIST FOR DELETED RECORDS.       *                
+      *      - PRINT REPORT IF FINANCIAL AMT OUT-STANDING      *                
+      *                                                        *                
+      *    INPUT/OUTPUT FILES:                                 *                
+      *      1. BP13K800 (APPLICATION MASTER)                  *                
+      *      2. BP13K820 (OCCUPIER MASTER)                     *                
+      *      3. BP13K840 (HISTORY TRANSACTION LOG)             *                
+      *      4. BP13K893 (HISTORY TRANS OF BP13K800)           *                
+      *      5. BP13K895 (HISTORY TRANS OF BP13K820)           *                
+      *                                                        *                
+      *    OUTPUT :                                            *                
+      *      1. BP13L498 (CHECK LIST FOR DELETED RECORDS)      *                
+      *      2. P13L498A                                       *                
+      *      3. P13L498B                                       *                
+      *                                                        *                
+      * CHG-NO   DATE   BY   DESCRIPTION                       *                
+      * -------- ------ ---  -----------                       *                
+      * BP130109 960416 EVM  CHG UPDATE OF FILE BP13K840       *                
+      * BP130180 960912 SSS  INCL. IA COMMENTS                 *                
+      * BP130458 980320 LJL  RFS ENHANCEMENTS.                 *                
+      * BP130450 980326 LSB  IF NRIC=SPACES, MOVE #REGN TO K840*                
+      *          980406 LSB  IF REC NOTFD IN K840 CHECK BLANK  *                
+      *                      NRIC2-4                           *                
+      * BP130467 980409 LSB  IF REGN-DEPOSIT-PAID > 0, DO NOT  *                
+      *                      DELETE                            *                
+      * BP130418 980826 CLT  Y2K COMPLIANCE CHANGES            *                
+      * BP130418 981006 LSB  IF AMT-CD NOT = 0, DO NOT DELETE  *                
+      * BP130848 000513 AKT  TO PRINT REPORTS - P13L498A,      *                
+      *                      P13L498B,P13L498C,IF OUTSTANDING  *                
+      *                      AMT, DEL IF >6 MTH INSTEAD OF 3MTH*                
+      * BP131022 010702 SSS  REMOVE P13L498C                   *                
+      * BP132199 160802 ANC1 MOVE SYSTEM DATE TO DTE UPDATE IN *                
+      *                      K800 & K820 BEFORE WRITING.       *                
+      * BP132313 030403 SK   INCLUDE BP13K022 (OIC FILE)       *                
+      * BP132627 121104 GAN1 FROM F800/F820 TO K893/K895       *                
+      * ====================================================== *                
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+           SELECT BP13K800 ASSIGN TO BP13K800                                   
+                           ORGANIZATION IS INDEXED                              
+                           ACCESS MODE  IS SEQUENTIAL                           
+                           RECORD KEY   IS K800-NUM-REGN                        
+                           FILE STATUS  IS K800-STATUS.                         
+                                                                                
+           SELECT BP13K820 ASSIGN TO BP13K820                                   
+                           ORGANIZATION IS INDEXED                              
+                           ACCESS MODE  IS DYNAMIC                              
+                           RECORD KEY   IS K820-KEY-FLD                         
+                           FILE STATUS  IS K820-STATUS.                         
+                                                                                
+           SELECT BP13K840 ASSIGN TO BP13K840                                   
+                           ORGANIZATION IS INDEXED                              
+                           ACCESS MODE  IS DYNAMIC                              
+                           RECORD KEY   IS K840-KEY-FLD                         
+                           FILE STATUS  IS K840-STATUS.                         
+                                                                                
+           SELECT BP13K022 ASSIGN TO BP13K022                                   
+                           ORGANIZATION  IS INDEXED                             
+                           ACCESS MODE   IS DYNAMIC                             
+                           RECORD KEY    IS K022-KEY-FLD                        
+                           ALTERNATE KEY IS K022-NUM-REGN                       
+                           FILE STATUS   IS K022-STATUS.                        
+                                                                                
+           SELECT BP13K893 ASSIGN TO BP13K893                                   
+                           ORGANIZATION IS INDEXED                              
+                           ACCESS MODE  IS DYNAMIC                              
+                           RECORD KEY   IS K893-KEY-FLD                         
+                           FILE STATUS  IS K893-STATUS.                         
+                                                                                
+           SELECT BP13K895 ASSIGN TO BP13K895                                   
+                           ORGANIZATION IS INDEXED                              
+                           ACCESS MODE  IS DYNAMIC                              
+                           RECORD KEY   IS K895-KEY-FLD                         
+                           FILE STATUS  IS K895-STATUS.                         
+                                                                                
+           SELECT BP13L498 ASSIGN TO BP13L498.                                  
+           SELECT P13L498A ASSIGN TO P13L498A.                                  
+           SELECT P13L498B ASSIGN TO P13L498B.                                  
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD  BP13K800           RECORD CONTAINS 2000 CHARACTERS.                  
+       COPY BP13K800.                                                           
+                                                                                
+       FD  BP13K820           RECORD CONTAINS 400 CHARACTERS.                   
+       COPY BP13K820.                                                           
+                                                                                
+       FD  BP13K840           RECORD CONTAINS 500 CHARACTERS.                   
+       COPY BP13K840.                                                           
+                                                                                
+       FD  BP13K022           RECORD CONTAINS 100 CHARACTERS.                   
+       COPY BP13K022.                                                           
+                                                                                
+       FD  BP13K893           RECORD CONTAINS 2050 CHARACTERS.                  
+       COPY BP13K893.                                                           
+                                                                                
+       FD  BP13K895           RECORD CONTAINS 450 CHARACTERS.                   
+       COPY BP13K895.                                                           
+                                                                                
+       FD  BP13L498           RECORD CONTAINS 133 CHARACTERS                    
+                              LABEL RECORDS ARE OMITTED                         
+                              RECORDING MODE IS F.                              
+       01  L498-PRTREC        PIC X(133).                                       
+                                                                                
+       FD  P13L498A           RECORD CONTAINS 132 CHARACTERS                    
+                              LABEL RECORDS ARE OMITTED                         
+                              RECORDING MODE IS F.                              
+       01  P13L498A-REC       PIC X(132).                                       
+                                                                                
+       FD  P13L498B           RECORD CONTAINS 132 CHARACTERS                    
+                              LABEL RECORDS ARE OMITTED                         
+                              RECORDING MODE IS F.                              
+       01  P13L498B-REC       PIC X(132).                                       
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-TIME                  PIC X(6).                                   
+                                                                                
+       01  WS-DTE-SYSTEM.                                                       
+           05  WS-DTE-CURR-CCYY.                                                
+               10  WS-DTE-CURR-CC   PIC X(2).                                   
+               10  WS-DTE-CURR-YY   PIC X(2).                                   
+           05  WS-DTE-CURR-CCYY1 REDEFINES WS-DTE-CURR-CCYY  PIC 9(4).          
+           05  WS-DTE-CURR-MM       PIC X(2).                                   
+           05  WS-DTE-CURR-DD       PIC X(2).                                   
+                                                                                
+       01  WS-DTE-CLOSED.                                                       
+           05  WS-DTE-CLOS-CC       PIC X(2).                                   
+           05  WS-DTE-CLOS-YY       PIC X(2).                                   
+           05  WS-DTE-CLOS-MM       PIC X(2).                                   
+           05  WS-DTE-CLOS-DD       PIC X(2).                                   
+                                                                                
+       01  WS-DTE-CANCEL.                                                       
+           05  WS-DTE-CANCEL-CCYY   PIC 9(4).                                   
+           05  WS-DTE-CANCEL-MM     PIC 9(2).                                   
+           05  WS-DTE-CANCEL-DD     PIC 9(2).                                   
+                                                                                
+       01  WS-FILE-STATUS.                                                      
+           05  K800-STATUS          PIC 9(2)  VALUE ZEROS.                      
+           05  K820-STATUS          PIC 9(2)  VALUE ZEROS.                      
+           05  K830-STATUS          PIC 9(2)  VALUE ZEROS.                      
+           05  K840-STATUS          PIC 9(2)  VALUE ZEROS.                      
+           05  K022-STATUS          PIC 9(2)  VALUE ZEROS.                      
+           05  K893-STATUS          PIC 9(2)  VALUE ZEROS.                      
+           05  K895-STATUS          PIC 9(2)  VALUE ZEROS.                      
+       01  WS-K800-NRIC             PIC X(9)  VALUE SPACES.                     
+       01  WS-K820-NAME             PIC X(22) VALUE SPACES.                     
+       01  WS-OIC                   PIC X(5)  VALUE SPACES.                     
+                                                                                
+       01  WS-COUNTS.                                                           
+           05  WS-EOF-K800          PIC X        VALUE 'N'.                     
+           05  WS-K800-READ-CNT     PIC 9(6)     VALUE  0.                      
+           05  WS-K893-WRITE-CNT    PIC 9(6)     VALUE  0.                      
+           05  WS-K800-DELETE-CNT   PIC 9(6)     VALUE  0.                      
+           05  WS-K820-READ-CNT     PIC 9(6)     VALUE  0.                      
+           05  WS-K895-WRITE-CNT    PIC 9(6)     VALUE  0.                      
+           05  WS-K820-DELETE-CNT   PIC 9(6)     VALUE  0.                      
+           05  WS-K840-UPDATE-CNT   PIC 9(6)     VALUE  0.                      
+           05  WS-NUM-REGN          PIC X(8)     VALUE  SPACES.                 
+           05  WS-MM-ERR-TAG        PIC X        VALUE  SPACE.                  
+           05  WS-SOC-AMOUNT        PIC S9(8)V99 VALUE +0.                      
+           05  WS-AMOUNT-REGN       PIC S9(8)V99 VALUE +0.                      
+           05  WS-AMOUNT-CD         PIC S9(8)V99 VALUE +0.                      
+           05  WS-NUM-MONTH         PIC S9(5)    VALUE +0.                      
+           05  WS-NUM-TEMP-YYMM     PIC S9(5)    VALUE +0.                      
+           05  WS-NUM-CAN-YYMM      PIC S9(5)    VALUE +0.                      
+           05  WS-NUM-CUR-YYMM      PIC S9(5)    VALUE +0.                      
+           05  WS-YYMM-CNT          PIC S9(5)    VALUE +0.                      
+           05  WS-LINE-CNT-L498A    PIC 9(5)     VALUE 60.                      
+           05  WS-LINE-CNT-L498B    PIC 9(5)     VALUE 60.                      
+           05  WS-L498A-PRINTED     PIC 9(5)     VALUE 0.                       
+           05  WS-L498B-PRINTED     PIC 9(5)     VALUE 0.                       
+           05  WS-NUM-SER-A         PIC 9(5)     VALUE 0.                       
+           05  WS-NUM-SER-B         PIC 9(5)     VALUE 0.                       
+           05  WS-NUM-SER-C         PIC 9(5)     VALUE 0.                       
+           05  WS-NUM-PAGEA         PIC 9(5)     VALUE 0.                       
+           05  WS-NUM-PAGEB         PIC 9(5)     VALUE 0.                       
+           05  WS-NUM-PAGEC         PIC 9(5)     VALUE 0.                       
+                                                                                
+      *  LISTING LAYOUT                                                         
+      *-------------------------------------------------------------            
+       01  L498-HDG1.                                                           
+           05 LIST-ID               PIC X(8).                                   
+           05 FILLER                PIC X(35) VALUE SPACES.                     
+           05 FILLER                PIC X(61) VALUE                             
+              'S Y S T E M   O F   C O M M I T M E N T'.                        
+           05 FILLER                PIC X(11) VALUE 'RUN DATE :'.               
+           05 RUN-DATE              PIC X(10) VALUE SPACES.                     
+                                                                                
+       01  L498-HDG2.                                                           
+           05  FILLER               PIC X(4)  VALUE SPACES.                     
+           05  FILLER               PIC X(11) VALUE 'RUN TIME : '.              
+           05  RUN-TIME             PIC X(8).                                   
+           05  FILLER               PIC X(20) VALUE SPACES.                     
+           05  FILLER               PIC X(39) VALUE                             
+               'DELETION OF CANCELLED CASES FROM MASTER'.                       
+           05  FILLER               PIC X(28) VALUE SPACES.                     
+           05  FILLER               PIC X(7)  VALUE 'PAGE : '.                  
+           05  PAGE-NO              PIC ZZ9.                                    
+           05  FILLER               PIC X(12)  VALUE SPACES.                    
+                                                                                
+       01  SUMMARY1.                                                            
+           05  FILLER               PIC X(40) VALUE SPACES.                     
+           05  FILLER               PIC X(53) VALUE                             
+               'TOTAL SOC MASTER RECORDS (BP13K800) READ           = '.         
+           05  TOTAL-K800-READ      PIC ZZZZZ9.                                 
+           05  FILLER               PIC X(34) VALUE SPACES.                     
+                                                                                
+       01  SUMMARY2.                                                            
+           05  FILLER               PIC X(40) VALUE SPACES.                     
+           05  FILLER               PIC X(53) VALUE                             
+               'TOTAL SOC HISTORY RECORDS (BP13K893) WRITTEN       = '.         
+           05  TOTAL-K893-WRITE     PIC ZZZZZ9.                                 
+           05  FILLER               PIC X(34) VALUE SPACES.                     
+                                                                                
+       01  SUMMARY3.                                                            
+           05  FILLER               PIC X(40) VALUE SPACES.                     
+           05  FILLER               PIC X(53) VALUE                             
+               'TOTAL SOC MASTER RECORDS (BP13K800) DELETED        = '.         
+           05  TOTAL-K800-DELETE    PIC ZZZZZ9.                                 
+           05  FILLER               PIC X(34) VALUE SPACES.                     
+                                                                                
+       01  SUMMARY4.                                                            
+           05  FILLER               PIC X(40) VALUE SPACES.                     
+           05  FILLER               PIC X(53) VALUE                             
+               'TOTAL SOC OCCUPIER RECORDS (BP13K820) READ         = '.         
+           05  TOTAL-K820-READ      PIC ZZZZZ9.                                 
+           05  FILLER               PIC X(34) VALUE SPACES.                     
+                                                                                
+       01  SUMMARY5.                                                            
+           05  FILLER               PIC X(40) VALUE SPACES.                     
+           05  FILLER               PIC X(53) VALUE                             
+               'TOTAL SOC HISTORY RECORDS (BP13K895) WRITTEN       = '.         
+           05  TOTAL-K895-WRITE     PIC ZZZZZ9.                                 
+           05  FILLER               PIC X(34) VALUE SPACES.                     
+                                                                                
+       01  SUMMARY6.                                                            
+           05  FILLER               PIC X(40) VALUE SPACES.                     
+           05  FILLER               PIC X(53) VALUE                             
+               'TOTAL SOC OCCUPIER RECORDS (BP13K820) DELETED      = '.         
+           05  TOTAL-K820-DELETE    PIC ZZZZZ9.                                 
+           05  FILLER               PIC X(34) VALUE SPACES.                     
+                                                                                
+       01  SUMMARY7.                                                            
+           05  FILLER               PIC X(40) VALUE SPACES.                     
+           05  FILLER               PIC X(53) VALUE                             
+               'TOTAL SOC HISTORY RECORDS (BP13K840) UPDATED       = '.         
+           05  TOTAL-K840-UPDATE    PIC ZZZZZ9.                                 
+           05  FILLER               PIC X(34) VALUE SPACES.                     
+                                                                                
+       01  SUMMARY8.                                                            
+           05  FILLER               PIC X(40) VALUE SPACES.                     
+           05  FILLER               PIC X(53) VALUE                             
+               'TOTAL P13L498A RECORDS PRINTED                     = '.         
+           05  WS-L498A-PRINT-ED    PIC ZZZZZ9.                                 
+           05  FILLER               PIC X(34) VALUE SPACES.                     
+                                                                                
+       01  SUMMARY9.                                                            
+           05  FILLER               PIC X(40) VALUE SPACES.                     
+           05  FILLER               PIC X(53) VALUE                             
+               'TOTAL P13L498B RECORDS PRINTED                     = '.         
+           05  WS-L498B-PRINT-ED    PIC ZZZZZ9.                                 
+           05  FILLER               PIC X(34) VALUE SPACES.                     
+                                                                                
+       01  L498-TITLE1.                                                         
+           05  L498-SYS-ID               PIC X(8).                              
+           05  FILLER                    PIC X(5)  VALUE SPACES.                
+           05  FILLER                    PIC X(7)  VALUE 'HDB3'.                
+           05  FILLER                    PIC X(18) VALUE SPACES.                
+           05  FILLER                    PIC X(43) VALUE                        
+                 'S Y S T E M    O F   C O M M I T M E N T'.                    
+           05  FILLER                    PIC X(14) VALUE SPACES.                
+           05  FILLER                    PIC X(7)  VALUE 'DATE : '.             
+           05  L498-DATE                 PIC X(10) VALUE SPACES.                
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  FILLER                    PIC X(7)  VALUE 'PAGE : '.             
+           05  L498-NUM-PAGE             PIC Z(4).                              
+                                                                                
+                                                                                
+      *  REPORT LAYOUT                                                          
+      *-------------------------------------------------------------            
+       01  L498-TEAM-TITLE.                                                     
+           05  FILLER                         PIC X(95) VALUE SPACES.           
+           05  FILLER                         PIC X(30) VALUE                   
+                  'SALES UNIT SYSTEM SUPPORT TEAM'.                             
+           05  FILLER                         PIC X(07) VALUE SPACES.           
+                                                                                
+       01  L498-MAIN-TITLE.                                                     
+           05  FILLER                         PIC X(15) VALUE SPACES.           
+           05  FILLER                         PIC X(98) VALUE                   
+               'MONTHLY REPORT ON CANCELLED APPLICATION WHERE THE FEES I        
+      -    'S STILL OUTSTANDING FOR MORE THAN 6 MONTHS'.                        
+           05  FILLER                         PIC X(19) VALUE SPACES.           
+                                                                                
+       01  L498A-TITLE.                                                         
+           05  FILLER                         PIC X(42) VALUE SPACES.           
+           05  FILLER                         PIC X(41) VALUE                   
+               '( APPLICATION CANCELLED BEFORE BOOKING )'.                      
+           05  FILLER                         PIC X(21) VALUE SPACES.           
+           05  FILLER                         PIC X(25) VALUE SPACES.           
+                                                                                
+       01  L498B-TITLE.                                                         
+           05  FILLER                         PIC X(42) VALUE SPACES.           
+           05  FILLER                         PIC X(45) VALUE                   
+               '( APPLICATION CANCELLED AFTER BOOKING )'.                       
+           05  FILLER                         PIC X(21) VALUE SPACES.           
+           05  FILLER                         PIC X(25) VALUE SPACES.           
+                                                                                
+       01  L498-HEADER-LINE.                                                    
+           05  FILLER                    PIC X(4)  VALUE ' S/N'.                
+           05  FILLER                    PIC X(1)  VALUE SPACES.                
+           05  FILLER                    PIC X(7)  VALUE 'REGN NO'.             
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  FILLER                    PIC X(4)  VALUE 'ZONE'.                
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  FILLER                    PIC X(2)  VALUE                        
+               'FT'.                                                            
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  FILLER                    PIC X(7)  VALUE                        
+               'DTE-BAL'.                                                       
+           05  FILLER                    PIC X(1)  VALUE SPACES.                
+           05  FILLER                    PIC X(08) VALUE                        
+               'DTE-BOOK'.                                                      
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  FILLER                    PIC X(08) VALUE                        
+               'DTE-SOCA'.                                                      
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  FILLER                    PIC X(08) VALUE                        
+               'DTE-CAN'.                                                       
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  FILLER                    PIC X(13) VALUE                        
+               'REGN DEP PD'.                                                   
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  FILLER                    PIC X(10) VALUE                        
+               'BK FEE PD'.                                                     
+           05  FILLER                    PIC X(4)  VALUE SPACES.                
+           05  FILLER                    PIC X(11) VALUE 'CD AMT PAID'.         
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  FILLER                    PIC X(11) VALUE 'SOC  AMOUNT'.         
+           05  FILLER                    PIC X(3)  VALUE SPACES.                
+           05  FILLER                    PIC X(6)  VALUE 'AL TAG'.              
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  FILLER                    PIC X(5)  VALUE 'OIC'.                 
+                                                                                
+       01  L498-DET-LINE.                                                       
+           05  L498-NUM-SER              PIC 9(4)  VALUE ZEROES.                
+           05  FILLER                    PIC X(1)  VALUE SPACES.                
+           05  L498-REGNO                PIC X(8)  VALUE SPACES.                
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  L498-ZONE                 PIC X(3)  VALUE SPACES.                
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  L498-FLATTYPE             PIC X(3)  VALUE SPACES.                
+           05  FILLER                    PIC X(1)  VALUE SPACES.                
+           05  L498-DTE-BALT             PIC X(6)  VALUE SPACES.                
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  L498-DTE-BOOK             PIC X(8)  VALUE SPACES.                
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  L498-DTE-SOCA             PIC X(8)  VALUE SPACES.                
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  L498-DTE-CANCEL           PIC X(8)  VALUE SPACES.                
+           05  FILLER                    PIC X(2)  VALUE SPACES.                
+           05  L498-AMT-REGDEPPD         PIC ZZZ,Z99.99.                        
+           05  FILLER                    PIC X(5)  VALUE SPACES.                
+           05  L498-AMT-BOOKFEE          PIC Z,Z99.99.                          
+           05  FILLER                    PIC X(4)  VALUE SPACES.                
+           05  L498-AMT-CD               PIC ZZ,ZZZ,Z99.99.                     
+           05  FILLER                    PIC X(1)  VALUE SPACES.                
+           05  L498-AMT-SOC              PIC ZZ,ZZZ,Z99.99.                     
+           05  FILLER                    PIC X(3)  VALUE SPACES.                
+           05  L498-ALLOC-TAG            PIC X(2).                              
+           05  FILLER                    PIC X(5)  VALUE SPACES.                
+           05  L498-OIC                  PIC X(5).                              
+                                                                                
+       01  L498-UNDER-LINE               PIC X(132) VALUE ALL '-'.              
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN.                                                               
+      *-------------------------------------------------------------            
+           PERFORM 1000-START-PROCESS  THRU 1000-EXIT.                          
+           PERFORM 2000-DELETE-PROCESS THRU 2000-EXIT                           
+                   UNTIL WS-EOF-K800 = 'Y'.                                     
+           PERFORM 5000-CONTROL-LIST   THRU 5000-EXIT.                          
+           PERFORM 9000-CLOSE          THRU 9000-EXIT.                          
+                                                                                
+                                                                                
+       1000-START-PROCESS.                                                      
+      *-------------------------------------------------------------            
+           OPEN I-O   BP13K800                                                  
+                      BP13K820                                                  
+                      BP13K840                                                  
+                      BP13K022                                                  
+                      BP13K893                                                  
+                      BP13K895                                                  
+               OUTPUT BP13L498                                                  
+                      P13L498A                                                  
+                      P13L498B.                                                 
+                                                                                
+           IF K800-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'OPENING ERROR K800-STATUS IS ' K800-STATUS               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+           IF K820-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'OPENING ERROR K820-STATUS IS ' K820-STATUS               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+           IF K840-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'OPENING ERROR K840-STATUS IS ' K840-STATUS               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+           IF K022-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'OPENING ERROR K022-STATUS IS ' K022-STATUS               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+           IF K893-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'OPENING ERROR K893-STATUS IS ' K893-STATUS               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+           IF K895-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'OPENING ERROR K895-STATUS IS ' K895-STATUS               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+           ACCEPT WS-TIME           FROM TIME.                                  
+           MOVE FUNCTION CURRENT-DATE TO WS-DTE-SYSTEM.                         
+                                                                                
+           STRING WS-DTE-CURR-DD '/'                                            
+                  WS-DTE-CURR-MM '/'                                            
+                  WS-DTE-CURR-CCYY                                              
+                  DELIMITED BY SIZE INTO RUN-DATE.                              
+                                                                                
+           STRING WS-DTE-CURR-DD '/'                                            
+                  WS-DTE-CURR-MM '/'                                            
+                  WS-DTE-CURR-CCYY                                              
+                  DELIMITED BY SIZE INTO L498-DATE.                             
+                                                                                
+           MOVE WS-DTE-CURR-DD    TO WS-DTE-CANCEL-DD.                          
+           MOVE WS-DTE-CURR-MM    TO WS-DTE-CANCEL-MM.                          
+           MOVE WS-DTE-CURR-CCYY1 TO WS-DTE-CANCEL-CCYY.                        
+                                                                                
+           PERFORM 3200-CONVERT-DATE.                                           
+           IF WS-MM-ERR-TAG = 'E'                                               
+              MOVE 16 TO RETURN-CODE                                            
+              MOVE 0 TO WS-NUM-CUR-YYMM                                         
+              DISPLAY 'MTH OF CURRENT DATE ERROR : '                            
+                       WS-DTE-SYSTEM                                            
+              PERFORM 9000-CLOSE          THRU 9000-EXIT                        
+           ELSE                                                                 
+              MOVE WS-NUM-TEMP-YYMM TO WS-NUM-CUR-YYMM.                         
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      **************************************************************            
+      *   READ BP13K800 SEQUENTIALLY & DELETE RECORD ACCORDINGLY   *            
+      **************************************************************            
+       2000-DELETE-PROCESS.                                                     
+           READ BP13K800 AT END                                                 
+                         MOVE 'Y' TO WS-EOF-K800                                
+                         GO TO 2000-EXIT.                                       
+           ADD 1 TO WS-K800-READ-CNT.                                           
+                                                                                
+           PERFORM 4600-READ-K022             THRU 4600-EXIT.                   
+                                                                                
+           PERFORM 3000-INITIALIZE-AMT-FIELDS THRU 3000-EXIT.                   
+      *-------------------------------------------------------------            
+      *   CHECK FOR DELETION CONDITIONS                                         
+      *-------------------------------------------------------------            
+           IF K800-NUM-STATUS NOT = 'C'                                         
+              GO TO 2000-EXIT.                                                  
+                                                                                
+           PERFORM 3100-DETERMINE-TIME        THRU 3100-EXIT.                   
+                                                                                
+           IF WS-NUM-MONTH > 6 OR (WS-NUM-MONTH = 6 AND                         
+                                   WS-DTE-CANCEL-DD < WS-DTE-CURR-DD)           
+              PERFORM 6000-PRINT-LETTERS  THRU 6000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           IF K800-AMT-BK-PAID IS NOT NUMERIC                                   
+              GO TO 2000-EXIT.                                                  
+                                                                                
+           IF K800-AMT-BK-PAID NOT = ZERO                                       
+              GO TO 2000-EXIT.                                                  
+                                                                                
+           COMPUTE WS-SOC-AMOUNT =   K800-AMT-SOC-CASH                          
+                                   + K800-AMT-CPF1-PAID                         
+                                   + K800-AMT-CPF2-PAID                         
+                                   + K800-AMT-CPF3-PAID                         
+                                   + K800-AMT-CPF4-PAID                         
+                                                                                
+           IF WS-SOC-AMOUNT NOT = ZERO OR                                       
+              K800-AMT-SOC-DEBTOR NOT = ZERO                                    
+              GO TO 2000-EXIT.                                                  
+                                                                                
+           IF K800-AMT-REGN-DEPOSIT-CASH > ZEROS OR                             
+              K800-AMT-REGN-DEPOSIT-CPF1 > ZEROS OR                             
+              K800-AMT-REGN-DEPOSIT-CPF2 > ZEROS OR                             
+              K800-AMT-REGN-DEPOSIT-CPF3 > ZEROS OR                             
+              K800-AMT-REGN-DEPOSIT-CPF4 > ZEROS                                
+              GO TO 2000-EXIT.                                                  
+                                                                                
+           IF K800-AMT-CD NOT = ZEROS                                           
+              GO TO 2000-EXIT.                                                  
+                                                                                
+      *-------------------------------------------------------------            
+      *   OBTAIN # OF MONTHS & PERFORM DELETION IF > 6 MONTHS                   
+      *-------------------------------------------------------------            
+           IF WS-NUM-MONTH > 6 OR (WS-NUM-MONTH = 6 AND                         
+                                   WS-DTE-CANCEL-DD < WS-DTE-CURR-DD)           
+              MOVE K800-NUM-REGN             TO   WS-NUM-REGN                   
+              PERFORM 4100-UPDATE-BP13K840   THRU 4100-EXIT                     
+              PERFORM 4200-WRITE-BP13K893    THRU 4200-EXIT                     
+              PERFORM 4300-DELETE-BP13K800   THRU 4300-EXIT                     
+              PERFORM 4400-START-BP13K820    THRU 4400-EXIT                     
+              PERFORM 4500-READNEXT-BP13K820 THRU 4500-EXIT                     
+                      UNTIL K820-NUM-REGN = HIGH-VALUES.                        
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       3000-INITIALIZE-AMT-FIELDS.                                              
+      *-------------------------------------------------------------            
+           IF K800-AMT-BK-PAID IS NOT NUMERIC                                   
+              MOVE ZEROS TO      K800-AMT-BK-PAID.                              
+                                                                                
+           IF K800-AMT-SOC-CASH  IS NOT NUMERIC                                 
+              MOVE ZEROS TO      K800-AMT-SOC-CASH.                             
+                                                                                
+           IF K800-AMT-CPF1-PAID IS NOT NUMERIC                                 
+              MOVE ZEROS TO      K800-AMT-CPF1-PAID.                            
+                                                                                
+           IF K800-AMT-CPF2-PAID IS NOT NUMERIC                                 
+              MOVE ZEROS TO      K800-AMT-CPF2-PAID.                            
+                                                                                
+           IF K800-AMT-CPF3-PAID IS NOT NUMERIC                                 
+              MOVE ZEROS TO      K800-AMT-CPF3-PAID.                            
+                                                                                
+           IF K800-AMT-CPF4-PAID IS NOT NUMERIC                                 
+              MOVE ZEROS TO      K800-AMT-CPF4-PAID.                            
+                                                                                
+           IF K800-AMT-SOC-DEBTOR IS NOT NUMERIC                                
+              MOVE ZEROS TO      K800-AMT-SOC-DEBTOR.                           
+                                                                                
+           IF K800-AMT-REGN-DEPOSIT-CASH IS NOT NUMERIC                         
+              MOVE ZEROS TO  K800-AMT-REGN-DEPOSIT-CASH.                        
+                                                                                
+           IF K800-AMT-REGN-DEPOSIT-CPF1 IS NOT NUMERIC                         
+              MOVE ZEROS TO  K800-AMT-REGN-DEPOSIT-CPF1.                        
+                                                                                
+           IF K800-AMT-REGN-DEPOSIT-CPF2 IS NOT NUMERIC                         
+              MOVE ZEROS TO  K800-AMT-REGN-DEPOSIT-CPF2.                        
+                                                                                
+           IF K800-AMT-REGN-DEPOSIT-CPF3 IS NOT NUMERIC                         
+              MOVE ZEROS TO  K800-AMT-REGN-DEPOSIT-CPF3.                        
+                                                                                
+           IF K800-AMT-REGN-DEPOSIT-CPF4 IS NOT NUMERIC                         
+              MOVE ZEROS TO  K800-AMT-REGN-DEPOSIT-CPF4.                        
+                                                                                
+           IF K800-AMT-CD-CASH           IS NOT NUMERIC                         
+              MOVE ZEROS TO  K800-AMT-CD-CASH.                                  
+                                                                                
+           IF K800-AMT-CD-CPF1           IS NOT NUMERIC                         
+              MOVE ZEROS TO  K800-AMT-CD-CPF1.                                  
+                                                                                
+           IF K800-AMT-CD-CPF2           IS NOT NUMERIC                         
+              MOVE ZEROS TO  K800-AMT-CD-CPF2.                                  
+                                                                                
+           IF K800-AMT-CD-CPF3           IS NOT NUMERIC                         
+              MOVE ZEROS TO  K800-AMT-CD-CPF3.                                  
+                                                                                
+           IF K800-AMT-CD-CPF4           IS NOT NUMERIC                         
+              MOVE ZEROS TO  K800-AMT-CD-CPF4.                                  
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       3100-DETERMINE-TIME.                                                     
+      *-------------------------------------------------------------            
+      *   DETERMINE NUMBER OF MONTHS   *                                        
+      *-------------------------------------------------------------            
+           IF K800-DTE-CANCEL IS NOT NUMERIC                                    
+              MOVE ZEROS TO           WS-DTE-CANCEL                             
+           ELSE                                                                 
+              MOVE K800-DTE-CANCEL TO WS-DTE-CANCEL.                            
+                                                                                
+           PERFORM 3200-CONVERT-DATE.                                           
+           MOVE WS-NUM-TEMP-YYMM TO WS-NUM-CAN-YYMM.                            
+           IF WS-MM-ERR-TAG = 'E'                                               
+              DISPLAY 'MTH OF CANCELLED DATE ERROR : ' WS-DTE-CANCEL            
+                      ' K800-REGN  :' K800-NUM-REGN                             
+                      ' K800-DTE-CANCEL : ' K800-DTE-CANCEL                     
+           ELSE                                                                 
+              COMPUTE WS-NUM-MONTH = WS-NUM-CUR-YYMM - WS-NUM-CAN-YYMM.         
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       3200-CONVERT-DATE.                                                       
+      *-------------------------------------------------------------            
+      *   VALIDATE MONTH & COMPUTE   *                                          
+      *-------------------------------------------------------------            
+           MULTIPLY WS-DTE-CANCEL-CCYY BY 12 GIVING WS-YYMM-CNT.                
+           IF WS-DTE-CANCEL-MM < 1 OR > 12                                      
+              MOVE 'E' TO WS-MM-ERR-TAG                                         
+           ELSE                                                                 
+              MOVE SPACE TO WS-MM-ERR-TAG                                       
+              COMPUTE WS-NUM-TEMP-YYMM = WS-DTE-CANCEL-MM +                     
+                                         WS-YYMM-CNT.                           
+                                                                                
+                                                                                
+       4100-UPDATE-BP13K840.                                                    
+      *-------------------------------------------------------------            
+      *   UPDATE CANCEL REASON & DATE TO BP13K840                               
+      *-------------------------------------------------------------            
+           MOVE WS-DTE-CURR-CC    TO WS-DTE-CLOS-CC.                            
+           MOVE WS-DTE-CURR-YY    TO WS-DTE-CLOS-YY.                            
+           MOVE WS-DTE-CURR-MM    TO WS-DTE-CLOS-MM.                            
+           MOVE WS-DTE-CURR-DD    TO WS-DTE-CLOS-DD.                            
+                                                                                
+           MOVE K800-NUM-REGN     TO K840-NUM-REGN.                             
+           READ BP13K840.                                                       
+                                                                                
+           IF K840-STATUS = 0                                                   
+              PERFORM 4150-REWRITE-K840    THRU 4150-EXIT                       
+           ELSE                                                                 
+           IF K840-STATUS = 23                                                  
+              PERFORM 4160-WRITE-K840      THRU 4160-EXIT                       
+           ELSE                                                                 
+              DISPLAY 'READ ERROR, K840-STATUS = ' K840-STATUS                  
+                      ' K840-KEY = ' K840-KEY-FLD                               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ***********************************************                           
+      *   GET NAME FROM K820 USING REGN & NRIC      *                           
+      ***********************************************                           
+       4140-MOVE-NAME.                                                          
+                                                                                
+           MOVE K800-NUM-REGN             TO K820-NUM-REGN.                     
+           MOVE WS-K800-NRIC              TO K820-NUM-NRIC.                     
+           READ BP13K820.                                                       
+                                                                                
+           IF K820-STATUS = 0                                                   
+              MOVE K820-NME-OCCP          TO WS-K820-NAME                       
+           ELSE                                                                 
+              IF K820-STATUS = 23                                               
+                 MOVE SPACES                 TO WS-K820-NAME                    
+              ELSE                                                              
+                 DISPLAY 'READ ERROR, K820-STATUS = ' K820-STATUS               
+                      ' K820-KEY = ' K820-KEY-FLD                               
+                 PERFORM 9000-CLOSE          THRU 9000-EXIT.                    
+                                                                                
+       4140-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4150-REWRITE-K840.                                                       
+      *-------------------------------------------------------------            
+      *   REWRITE RECORD IN K840 WITH NEW NRIC1-4                               
+      *-------------------------------------------------------------            
+           MOVE K800-NUM-NRIC1            TO WS-K800-NRIC                       
+                                             K840-NUM-NRIC1.                    
+           PERFORM 4140-MOVE-NAME         THRU 4140-EXIT                        
+           MOVE WS-K820-NAME              TO K840-NME-APPL1.                    
+                                                                                
+           IF K800-NUM-NRIC2 NOT = SPACES AND LOW-VALUES                        
+              MOVE K800-NUM-NRIC2         TO WS-K800-NRIC                       
+                                             K840-NUM-NRIC2                     
+              PERFORM 4140-MOVE-NAME         THRU 4140-EXIT                     
+              MOVE WS-K820-NAME           TO K840-NME-APPL2                     
+           ELSE                                                                 
+              MOVE '#'                    TO K840-NUM-NRIC2(1:1)                
+              MOVE K800-NUM-REGN          TO K840-NUM-NRIC2(2:8)                
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC3 NOT = SPACES AND LOW-VALUES                        
+              MOVE K800-NUM-NRIC3         TO WS-K800-NRIC                       
+                                             K840-NUM-NRIC3                     
+              PERFORM 4140-MOVE-NAME         THRU 4140-EXIT                     
+              MOVE WS-K820-NAME           TO K840-NME-APPL3                     
+           ELSE                                                                 
+              MOVE '#'                    TO K840-NUM-NRIC3(1:1)                
+              MOVE K800-NUM-REGN          TO K840-NUM-NRIC3(2:8)                
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC4 NOT = SPACES AND LOW-VALUES                        
+              MOVE K800-NUM-NRIC4         TO WS-K800-NRIC                       
+                                             K840-NUM-NRIC4                     
+              PERFORM 4140-MOVE-NAME         THRU 4140-EXIT                     
+              MOVE WS-K820-NAME           TO K840-NME-APPL4                     
+           ELSE                                                                 
+              MOVE '#'                    TO K840-NUM-NRIC4(1:1)                
+              MOVE K800-NUM-REGN          TO K840-NUM-NRIC4(2:8)                
+           END-IF.                                                              
+                                                                                
+           MOVE K800-DTE-CANCEL           TO K840-DTE-CANCEL.                   
+           MOVE K800-NUM-CANCEL-REASON    TO K840-NUM-CANCEL.                   
+           MOVE WS-DTE-CLOSED             TO K840-DTE-CLOSE                     
+                                             K840-DTE-UPDATE.                   
+                                                                                
+           REWRITE BP13K840-REC.                                                
+                                                                                
+           IF K840-STATUS = 0 OR 02                                             
+              ADD 1 TO WS-K840-UPDATE-CNT                                       
+           ELSE                                                                 
+              DISPLAY 'REWRITE ERROR, K840-STATUS = ' K840-STATUS               
+                      ' K840-KEY = ' K840-KEY-FLD                               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+       4150-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4160-WRITE-K840.                                                         
+      *-------------------------------------------------------------            
+      *   CREATE RECORD IN K840 IF NOT FOUND                                    
+      *-------------------------------------------------------------            
+           MOVE SPACES                    TO BP13K840-REC.                      
+           INITIALIZE BP13K840-REC.                                             
+           MOVE K800-NUM-REGN             TO K840-NUM-REGN.                     
+           MOVE K800-NUM-NEW-TOWN         TO K840-NUM-NEW-TOWN.                 
+           MOVE K800-NUM-FLAT-TYPE        TO K840-NUM-FLAT-TYPE.                
+           MOVE K800-NUM-ALLO-SCHEME      TO K840-NUM-ALLOC-SCH.                
+           MOVE K800-NUM-IDP-SCHEME       TO K840-NUM-IDP-SCH.                  
+           MOVE K800-NUM-SCH-ACC          TO K840-NUM-SCH-ACC.                  
+           MOVE K800-DTE-REGN             TO K840-DTE-REGN.                     
+           MOVE K800-NUM-CANCEL-REASON    TO K840-NUM-CANCEL.                   
+           MOVE WS-DTE-CLOSED             TO K840-DTE-UPDATE.                   
+                                                                                
+           MOVE K800-NUM-NRIC1            TO WS-K800-NRIC                       
+                                             K840-NUM-NRIC1.                    
+           PERFORM 4140-MOVE-NAME         THRU 4140-EXIT                        
+           MOVE WS-K820-NAME              TO K840-NME-APPL1.                    
+                                                                                
+           IF K800-NUM-NRIC2 NOT = SPACES AND LOW-VALUES                        
+              MOVE K800-NUM-NRIC2         TO WS-K800-NRIC                       
+                                             K840-NUM-NRIC2                     
+              PERFORM 4140-MOVE-NAME         THRU 4140-EXIT                     
+              MOVE WS-K820-NAME           TO K840-NME-APPL2                     
+           ELSE                                                                 
+              MOVE '#'                    TO K840-NUM-NRIC2(1:1)                
+              MOVE K800-NUM-REGN          TO K840-NUM-NRIC2(2:8)                
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC3 NOT = SPACES AND LOW-VALUES                        
+              MOVE K800-NUM-NRIC3         TO WS-K800-NRIC                       
+                                             K840-NUM-NRIC3                     
+              PERFORM 4140-MOVE-NAME         THRU 4140-EXIT                     
+              MOVE WS-K820-NAME           TO K840-NME-APPL3                     
+           ELSE                                                                 
+              MOVE '#'                    TO K840-NUM-NRIC3(1:1)                
+              MOVE K800-NUM-REGN          TO K840-NUM-NRIC3(2:8)                
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC4 NOT = SPACES AND LOW-VALUES                        
+              MOVE K800-NUM-NRIC4         TO WS-K800-NRIC                       
+                                             K840-NUM-NRIC4                     
+              PERFORM 4140-MOVE-NAME         THRU 4140-EXIT                     
+              MOVE WS-K820-NAME           TO K840-NME-APPL4                     
+           ELSE                                                                 
+              MOVE '#'                    TO K840-NUM-NRIC4(1:1)                
+              MOVE K800-NUM-REGN          TO K840-NUM-NRIC4(2:8)                
+           END-IF.                                                              
+                                                                                
+           WRITE BP13K840-REC.                                                  
+                                                                                
+           IF K840-STATUS = 0 OR 02                                             
+              ADD 1 TO WS-K840-UPDATE-CNT                                       
+           ELSE                                                                 
+              DISPLAY 'WRITE ERROR, K840-STATUS = ' K840-STATUS                 
+                      ' K840-KEY = ' K840-KEY-FLD                               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+       4160-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4200-WRITE-BP13K893.                                                     
+      *-------------------------------------------------------------            
+      *   WRITE MASTER RECORD TO ACCUM BACKUP FILE                              
+      *-------------------------------------------------------------            
+           MOVE WS-DTE-SYSTEM   TO K800-DTE-UPDATE.                             
+           MOVE BP13K800-MASTER TO BP13K893-MASTER.                             
+           MOVE K800-NUM-REGN   TO K893-NUM-REGN-HIST.                          
+           MOVE WS-DTE-SYSTEM   TO K893-DTE-CREATE-HIST.                        
+           ACCEPT K893-TME-CREATE-HIST FROM TIME.                               
+           WRITE BP13K893-MASTER.                                               
+                                                                                
+           IF K893-STATUS = 0 OR 02                                             
+              ADD 1 TO WS-K893-WRITE-CNT                                        
+           ELSE                                                                 
+              DISPLAY 'WRITE ERROR, K893-STATUS = ' K893-STATUS                 
+                      ' K893-KEY = ' K893-KEY-FLD                               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4300-DELETE-BP13K800.                                                    
+      *-------------------------------------------------------------            
+      *   WRITE MASTER RECORD TO ACCUM BACKUP FILE                              
+      *-------------------------------------------------------------            
+           DELETE BP13K800.                                                     
+                                                                                
+           IF K800-STATUS = 0                                                   
+              ADD 1 TO WS-K800-DELETE-CNT                                       
+           ELSE                                                                 
+           IF K800-STATUS  = 23                                                 
+              DISPLAY 'RECORD NOT FOUND IN BP13K800'                            
+              DISPLAY 'K800-REG-NO = ' K800-NUM-REGN                            
+           ELSE                                                                 
+              DISPLAY 'DELETE ERROR, BP13K800 STATUS = ' K800-STATUS            
+                      ' K800-REG = ' K800-NUM-REGN                              
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+       4300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4400-START-BP13K820.                                                     
+      *-------------------------------------------------------------            
+      *   MOVE THE POINTER TO RECORD TO BE DELETED                              
+      *-------------------------------------------------------------            
+           MOVE SPACES         TO BP13K820-REC.                                 
+           INITIALIZE             BP13K820-REC.                                 
+           MOVE WS-NUM-REGN    TO K820-NUM-REGN.                                
+                                                                                
+           START BP13K820 KEY NOT < K820-NUM-REGN INVALID KEY                   
+                 DISPLAY 'START ERROR, K820-STATUS IS ' K820-STATUS             
+                 DISPLAY 'K820-NUM-REGN  = ' WS-NUM-REGN                        
+                      ' K820-KEY = ' K820-KEY-FLD                               
+                 PERFORM 9000-CLOSE          THRU 9000-EXIT.                    
+                                                                                
+       4400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4500-READNEXT-BP13K820.                                                  
+      *-------------------------------------------------------------            
+      *   DELETE RECORD FROM BP13K820 IF FOUND                                  
+      *-------------------------------------------------------------            
+           READ BP13K820 NEXT AT END                                            
+                MOVE HIGH-VALUES TO K820-KEY-FLD                                
+                GO TO 4500-EXIT.                                                
+                                                                                
+           IF WS-NUM-REGN NOT = K820-NUM-REGN                                   
+                MOVE HIGH-VALUES TO K820-KEY-FLD                                
+                GO TO 4500-EXIT                                                 
+           ELSE                                                                 
+           IF WS-NUM-REGN = K820-NUM-REGN                                       
+              ADD 1                         TO WS-K820-READ-CNT                 
+              PERFORM 4510-WRITE-BP13K895   THRU 4510-EXIT                      
+              PERFORM 4520-DELETE-BP13K820  THRU 4520-EXIT.                     
+       4500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4510-WRITE-BP13K895.                                                     
+      *-------------------------------------------------------------            
+      *   WRITE OCCUPIER RECORDS TO HISTORY FILE                                
+      *-------------------------------------------------------------            
+           MOVE WS-DTE-SYSTEM   TO K820-DTE-UPDATE.                             
+           MOVE BP13K820-REC    TO BP13K895-REC.                                
+           MOVE K820-NUM-REGN   TO K895-NUM-REGN-HIST.                          
+           MOVE K820-NUM-NRIC   TO K895-NUM-NRIC-HIST.                          
+           MOVE WS-DTE-SYSTEM   TO K895-DTE-CREATE-HIST.                        
+           ACCEPT K895-TME-CREATE-HIST FROM TIME.                               
+           WRITE BP13K895-REC.                                                  
+                                                                                
+           IF K895-STATUS = 0 OR 02                                             
+              ADD 1 TO WS-K895-WRITE-CNT                                        
+           ELSE                                                                 
+              DISPLAY 'WRITE ERROR, K895-STATUS = ' K895-STATUS                 
+                      ' K895-KEY = ' K895-KEY-FLD                               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+       4510-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4520-DELETE-BP13K820.                                                    
+                                                                                
+           DELETE BP13K820.                                                     
+                                                                                
+           IF K820-STATUS = 0                                                   
+              ADD 1 TO WS-K820-DELETE-CNT                                       
+           ELSE                                                                 
+           IF K820-STATUS  = 23                                                 
+              DISPLAY 'RECORD NOT FOUND IN BP13K820'                            
+              DISPLAY 'K820-REG-NO = ' K820-NUM-REGN                            
+           ELSE                                                                 
+              DISPLAY 'DELETE ERROR, BP13K820 STATUS = ' K820-STATUS            
+                      ' K820-KEY = ' K820-KEY-FLD                               
+              PERFORM 9000-CLOSE          THRU 9000-EXIT.                       
+                                                                                
+       4520-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4600-READ-K022.                                                          
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES               TO WS-OIC.                                 
+                                                                                
+           MOVE LOW-VALUES           TO K022-KEY-FLD.                           
+           MOVE K800-NUM-REGN        TO K022-NUM-REGN.                          
+                                                                                
+           START BP13K022 KEY >= K022-NUM-REGN.                                 
+                                                                                
+           IF K022-STATUS = 00                                                  
+              READ BP13K022 NEXT RECORD                                         
+              IF K022-NUM-REGN = K800-NUM-REGN                                  
+                 MOVE K022-NUM-OIC TO WS-OIC                                    
+              END-IF                                                            
+           ELSE                                                                 
+           IF K022-STATUS = 23                                                  
+              CONTINUE                                                          
+           ELSE                                                                 
+              DISPLAY 'ERROR WITH START READ OF BP13K022. STATUS IS '           
+                       K022-STATUS                                              
+              PERFORM 9000-CLOSE         THRU 9000-EXIT                         
+           END-IF.                                                              
+                                                                                
+       4600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       5000-CONTROL-LIST.                                                       
+      *-------------------------------------------------------------            
+           MOVE 'BP13L498'             TO LIST-ID.                              
+           MOVE 1                      TO PAGE-NO.                              
+           STRING WS-TIME(1:2) ':'                                              
+                  WS-TIME(3:2) ':'                                              
+                  WS-TIME(5:2)                                                  
+                  DELIMITED BY SIZE INTO RUN-TIME.                              
+                                                                                
+           MOVE WS-K800-READ-CNT       TO TOTAL-K800-READ.                      
+           MOVE WS-K893-WRITE-CNT      TO TOTAL-K893-WRITE.                     
+           MOVE WS-K800-DELETE-CNT     TO TOTAL-K800-DELETE.                    
+           MOVE WS-K820-READ-CNT       TO TOTAL-K820-READ.                      
+           MOVE WS-K895-WRITE-CNT      TO TOTAL-K895-WRITE.                     
+           MOVE WS-K820-DELETE-CNT     TO TOTAL-K820-DELETE.                    
+           MOVE WS-K840-UPDATE-CNT     TO TOTAL-K840-UPDATE.                    
+           MOVE WS-L498A-PRINTED       TO WS-L498A-PRINT-ED.                    
+           MOVE WS-L498B-PRINTED       TO WS-L498B-PRINT-ED.                    
+           MOVE SPACES TO L498-PRTREC.                                          
+                                                                                
+           WRITE L498-PRTREC FROM L498-HDG1 AFTER PAGE.                         
+           WRITE L498-PRTREC FROM L498-HDG2 AFTER 2.                            
+           WRITE L498-PRTREC FROM SUMMARY1 AFTER 4.                             
+           WRITE L498-PRTREC FROM SUMMARY2 AFTER 2.                             
+           WRITE L498-PRTREC FROM SUMMARY3 AFTER 2.                             
+           WRITE L498-PRTREC FROM SUMMARY4 AFTER 3.                             
+           WRITE L498-PRTREC FROM SUMMARY5 AFTER 2.                             
+           WRITE L498-PRTREC FROM SUMMARY6 AFTER 2.                             
+           WRITE L498-PRTREC FROM SUMMARY7 AFTER 3.                             
+           WRITE L498-PRTREC FROM SUMMARY8 AFTER 2.                             
+           WRITE L498-PRTREC FROM SUMMARY9 AFTER 2.                             
+           MOVE SPACES TO L498-PRTREC.                                          
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       6000-PRINT-LETTERS.                                                      
+      *-------------------------------------------------------------            
+           MOVE ZEROES             TO  WS-SOC-AMOUNT.                           
+                                                                                
+           COMPUTE WS-SOC-AMOUNT =   K800-AMT-SOC-CASH                          
+                                   + K800-AMT-CPF1-PAID                         
+                                   + K800-AMT-CPF2-PAID                         
+                                   + K800-AMT-CPF3-PAID                         
+                                   + K800-AMT-CPF4-PAID.                        
+                                                                                
+           MOVE ZEROES             TO  WS-AMOUNT-CD.                            
+                                                                                
+           COMPUTE WS-AMOUNT-CD    =  K800-AMT-CD-CASH                          
+                                   + K800-AMT-CD-CPF1                           
+                                   + K800-AMT-CD-CPF2                           
+                                   + K800-AMT-CD-CPF3                           
+                                   + K800-AMT-CD-CPF4                           
+                                                                                
+                                                                                
+           IF WS-SOC-AMOUNT              NOT = ZEROS  OR                        
+              WS-AMOUNT-CD               NOT = ZEROS  OR                        
+              K800-AMT-BK-PAID           NOT = ZEROS  OR                        
+              K800-AMT-SOC-DEBTOR        NOT = ZEROS  OR                        
+              K800-AMT-SOC-CASH          NOT = ZEROS  OR                        
+              K800-AMT-CPF1-PAID         NOT = ZEROS  OR                        
+              K800-AMT-CPF2-PAID         NOT = ZEROS  OR                        
+              K800-AMT-CPF3-PAID         NOT = ZEROS  OR                        
+              K800-AMT-CPF4-PAID         NOT = ZEROS  OR                        
+              K800-AMT-REGN-DEPOSIT-CASH NOT = ZEROS  OR                        
+              K800-AMT-REGN-DEPOSIT-CPF1 NOT = ZEROS  OR                        
+              K800-AMT-REGN-DEPOSIT-CPF2 NOT = ZEROS  OR                        
+              K800-AMT-REGN-DEPOSIT-CPF3 NOT = ZEROS  OR                        
+              K800-AMT-REGN-DEPOSIT-CPF4 NOT = ZEROS                            
+              CONTINUE                                                          
+           ELSE                                                                 
+              GO TO 6000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           MOVE ZEROES             TO  WS-AMOUNT-REGN.                          
+                                                                                
+           COMPUTE WS-AMOUNT-REGN  = K800-AMT-REGN-DEPOSIT-CASH                 
+                                   + K800-AMT-REGN-DEPOSIT-CPF1                 
+                                   + K800-AMT-REGN-DEPOSIT-CPF2                 
+                                   + K800-AMT-REGN-DEPOSIT-CPF3                 
+                                   + K800-AMT-REGN-DEPOSIT-CPF4.                
+                                                                                
+           IF K800-NUM-ALLOC-TAG NOT   = 'RG'   AND                             
+              K800-DTE-BK-APPT NOT     = SPACES                                 
+              PERFORM 6200-PRINT-P13C498B THRU 6200-EXIT                        
+           ELSE                                                                 
+           IF K800-NUM-ALLOC-TAG NOT   = 'RG'   AND                             
+              K800-DTE-BK-APPT         = SPACES                                 
+              PERFORM 6100-PRINT-P13C498A THRU 6100-EXIT                        
+           END-IF.                                                              
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6100-PRINT-P13C498A.                                                     
+      *-------------------------------------------------------------            
+           IF WS-LINE-CNT-L498A > 55                                            
+              MOVE 01                 TO   WS-LINE-CNT-L498A                    
+              ADD  01                 TO   WS-NUM-PAGEA                         
+              MOVE WS-NUM-PAGEA       TO   L498-NUM-PAGE                        
+              MOVE 'P13L498A'         TO   L498-SYS-ID                          
+              WRITE P13L498A-REC FROM L498-TITLE1  AFTER PAGE                   
+              WRITE P13L498A-REC FROM L498-TEAM-TITLE AFTER 2                   
+              WRITE P13L498A-REC FROM L498-MAIN-TITLE                           
+              WRITE P13L498A-REC FROM L498A-TITLE                               
+              WRITE P13L498A-REC FROM L498-HEADER-LINE AFTER 2                  
+              WRITE P13L498A-REC FROM L498-UNDER-LINE                           
+              ADD  08                 TO   WS-LINE-CNT-L498A                    
+           END-IF.                                                              
+                                                                                
+           ADD 1                      TO WS-LINE-CNT-L498A.                     
+                                                                                
+           ADD 1                      TO WS-NUM-SER-A.                          
+           MOVE WS-NUM-SER-A          TO L498-NUM-SER.                          
+                                                                                
+           PERFORM 6400-MOVE-DETAILS  THRU 6400-EXIT.                           
+                                                                                
+           WRITE P13L498A-REC         FROM L498-DET-LINE.                       
+                                                                                
+           ADD 1                      TO WS-L498A-PRINTED.                      
+                                                                                
+       6100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6200-PRINT-P13C498B.                                                     
+      *-------------------------------------------------------------            
+           IF WS-LINE-CNT-L498B > 55                                            
+              MOVE 01                 TO   WS-LINE-CNT-L498B                    
+              ADD  01                 TO   WS-NUM-PAGEB                         
+              MOVE 'P13L498B'         TO   L498-SYS-ID                          
+              MOVE WS-NUM-PAGEB       TO   L498-NUM-PAGE                        
+              WRITE P13L498B-REC FROM L498-TITLE1  AFTER PAGE                   
+              WRITE P13L498B-REC FROM L498-TEAM-TITLE                           
+              WRITE P13L498B-REC FROM L498-MAIN-TITLE AFTER 2                   
+              WRITE P13L498B-REC FROM L498B-TITLE                               
+              WRITE P13L498B-REC FROM L498-HEADER-LINE AFTER 2                  
+              WRITE P13L498B-REC FROM L498-UNDER-LINE                           
+              ADD  08                 TO   WS-LINE-CNT-L498B                    
+           END-IF.                                                              
+                                                                                
+           ADD 1                      TO WS-LINE-CNT-L498B.                     
+           ADD 1                      TO WS-NUM-SER-B.                          
+           MOVE WS-NUM-SER-B          TO L498-NUM-SER.                          
+                                                                                
+           PERFORM 6400-MOVE-DETAILS  THRU 6400-EXIT                            
+                                                                                
+           WRITE P13L498B-REC         FROM L498-DET-LINE.                       
+                                                                                
+           ADD 1                      TO WS-L498B-PRINTED.                      
+                                                                                
+       6200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6400-MOVE-DETAILS.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE K800-NUM-REGN         TO L498-REGNO.                            
+           MOVE K800-NUM-ZONE         TO L498-ZONE.                             
+           MOVE K800-NUM-FLAT-TYPE    TO L498-FLATTYPE.                         
+           MOVE K800-DTE-SALE-AGMT     TO L498-DTE-SOCA.                        
+           MOVE K800-DTE-CANCEL        TO L498-DTE-CANCEL.                      
+           MOVE K800-DTE-BK-APPT       TO L498-DTE-BOOK.                        
+           MOVE K800-DTE-BALLOT        TO L498-DTE-BALT.                        
+                                                                                
+           MOVE WS-AMOUNT-REGN         TO L498-AMT-REGDEPPD.                    
+           MOVE K800-AMT-BK-PAID      TO L498-AMT-BOOKFEE.                      
+           MOVE WS-AMOUNT-CD          TO L498-AMT-CD.                           
+           MOVE WS-SOC-AMOUNT         TO L498-AMT-SOC.                          
+           MOVE K800-NUM-ALLOC-TAG    TO L498-ALLOC-TAG.                        
+           MOVE WS-OIC                TO L498-OIC.                              
+                                                                                
+       6400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       9000-CLOSE.                                                              
+      *-------------------------------------------------------------            
+           CLOSE BP13K893                                                       
+                 BP13K895                                                       
+                 BP13K800                                                       
+                 BP13K820                                                       
+                 BP13K840                                                       
+                 BP13K022                                                       
+                 BP13L498                                                       
+                 P13L498A                                                       
+                 P13L498B.                                                      
+                                                                                
+           IF K800-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'CLOSING ERROR, K800-STATUS IS ' K800-STATUS.             
+                                                                                
+           IF K820-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'CLOSING ERROR, K820-STATUS IS ' K820-STATUS.             
+                                                                                
+           IF K840-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'CLOSING ERROR, K840-STATUS IS ' K840-STATUS.             
+                                                                                
+           IF K022-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'CLOSING ERROR, K022-STATUS IS ' K022-STATUS.             
+                                                                                
+           IF K893-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'CLOSING ERROR, K893-STATUS IS ' K893-STATUS.             
+                                                                                
+           IF K895-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'CLOSING ERROR, K895-STATUS IS ' K895-STATUS.             
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

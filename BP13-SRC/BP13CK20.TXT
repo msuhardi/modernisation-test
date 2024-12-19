@@ -1,0 +1,466 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CK20.                                                 
+      *AUTHOR.        PAULO CAMIA LEGASPI.                                      
+      *DATE-WRITTEN.  14/06/2011.                                               
+      ******************************************************************        
+      *                SYSTEM OF COMMITMENT (BP13)                     *        
+      ******************************************************************        
+      * OBJECTIVE : 1) READ BP13K716 RDB MATCHING FILE                 *        
+      *             RDB ROLE 023,024 = CL(LESSEE)                      *        
+      *             RDB ROLE 003     = T (TENANT)                      *        
+      *             RDB ROLE 025     = OC(OCCUPIER SALES FLAT)         *        
+      *             RDB ROLE 005     = OC(TENANT OCCUPIER)             *        
+      *             SUBLET FILE      = S (SUB-TENANT)                  *        
+      *             2) IF NOT FOUND IN RDB, SMS,                       *        
+      *                MATCH SOC ADDR FILE, USE POSTAL TO GET NT       *        
+      *                ADDR-TYPE = H (HBD FLAT) ELSE PRIVATE PPTY      *        
+      *             3) MATCH WITH FIS-CIMS BM06K130 TO GET             *        
+      *                S = SOLD BLOCK                                  *        
+      *                R = RENTAL BLOCK                                *        
+      *                M = MIXED BLOCK                                 *        
+      *                                                                *        
+      * INPUT  FILES : BP13F55A                                        *        
+      *                BP13K830                                        *        
+      *                BP13K716                                        *        
+      * OUTPUT FILES : BP13LY84                                        *        
+      *                P13F55AA                                        *        
+      * -------------------------------------------------------------- *        
+      ******************************************************************        
+      * REF NO   DATE       BY   AMENDMENTS/ENHANCEMENTS              *         
+      * -------- ---------- ---- -----------------------              *         
+      * BP135089 04/09/2013 IMC1 NEW PROGRAM.                         *         
+      * BP137450 05/09/2018 FNP1 CHANGE SIZE OF F55A TO 1200.         *         
+      *===============================================================*         
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER.   IBM-3090.                                             
+       OBJECT-COMPUTER.   IBM-3090.                                             
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT   BP13F55A      ASSIGN TO BP13F55A.                           
+           SELECT   P13F55AA      ASSIGN TO P13F55AA.                           
+                                                                                
+           SELECT   BP13K716      ASSIGN TO BP13K716                            
+                            ORGANIZATION IS INDEXED                             
+                             ACCESS MODE IS DYNAMIC                             
+                              RECORD KEY IS K716-KEY-FLD                        
+                             FILE STATUS IS K716-STATUS.                        
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F55A                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 1200 CHARACTERS                                     
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13F55A.                                                           
+                                                                                
+       FD  BP13K716                                                             
+           RECORD CONTAINS 350 CHARACTERS.                                      
+       COPY BP13K716.                                                           
+                                                                                
+       FD   P13F55AA                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 1200 CHARACTERS                                     
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       01 P13F55AA-REC  PIC X(1200).                                            
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  CNT-F55A-READ                PIC 9(7)  VALUE ZEROS.              
+           05  CNT-WRITE                    PIC 9(7)  VALUE ZEROS.              
+           05  CNT-WRITE1                   PIC 9(7)  VALUE ZEROS.              
+           05  WS-SNO                       PIC 9(7)  VALUE ZEROS.              
+           05  WS-HH-SIZE                   PIC 9(2)  VALUE ZEROS.              
+           05  WS-LESSEE-HEI                PIC 9(1)  VALUE ZEROS.              
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  K716-STATUS                  PIC 99    VALUE ZEROES.             
+           05  WS-CNT                       PIC 9(1)  VALUE 0.                  
+           05  WS-SCH-RENT-OK               PIC 9(7)  VALUE 0.                  
+           05  WS-SCH-RENT-NOTOK            PIC 9(7)  VALUE 0.                  
+           05  WS-DTE-ACCEPTED              PIC 9(8)  VALUE ZEROES.             
+           05  WS-RENT-SCH-ACCT             PIC X(11) VALUE SPACES.             
+           05  WS-K830-EOF                  PIC X(1)  VALUE 'N'.                
+           05  WS-K716-EOF                  PIC X(1)  VALUE 'N'.                
+           05  WS-F55A-EOF                  PIC X(1)  VALUE 'N'.                
+           05  WS-K830-FND                  PIC X(01) VALUE SPACE.              
+               88  K830-FND                 VALUE 'Y'.                          
+           05  WS-K716-FND                  PIC X(01) VALUE SPACE.              
+               88  K716-FND                 VALUE 'Y'.                          
+           05  WS-SYSTEM-DATE               PIC 9(8)  VALUE ZEROES.             
+                                                                                
+       01  WS-ARRAY-VARIABLES.                                                  
+           05  WS-ARRAY-VARS OCCURS 2 TIMES.                                    
+               10 WS-NUM-REGN               PIC X(08) VALUE SPACES.             
+               10 WS-NUM-NRIC               PIC X(09) VALUE SPACES.             
+               10 WS-NUM-RELN               PIC X(02) VALUE SPACES.             
+               10 WS-NUM-CTZ                PIC X(02) VALUE SPACES.             
+               10 WS-NUM-SCHACC             PIC X(11) VALUE SPACES.             
+               10 WS-NUM-ROLE               PIC X(03) VALUE SPACES.             
+               10 WS-NUM-NRIC-RDB           PIC X(09) VALUE SPACES.             
+                                                                                
+      *****************************************************************         
+       PROCEDURE DIVISION.                                                      
+      *****************************************************************         
+                                                                                
+      *===============================================================*         
+       0000-MAIN.                                                               
+      *===============================================================*         
+                                                                                
+           PERFORM 1000-OPEN-FILES          THRU 1000-EXIT.                     
+           PERFORM 2000-READ-BP13F55A       THRU 2000-EXIT.                     
+           PERFORM 3000-PROCESS-RECORD      THRU 3000-EXIT                      
+             UNTIL WS-F55A-EOF = 'Y'.                                           
+                                                                                
+           PERFORM 9000-CLOSE-FILES         THRU 9000-EXIT.                     
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===============================================================*         
+       1000-OPEN-FILES.                                                         
+      *===============================================================*         
+                                                                                
+           OPEN INPUT BP13F55A                                                  
+                      BP13K716                                                  
+               OUTPUT P13F55AA.                                                 
+                                                                                
+           IF K716-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'ERROR OPENING BP13K716 , STATUS = ' K716-STATUS          
+              MOVE K716-STATUS               TO RETURN-CODE                     
+              GO TO 9000-CLOSE-FILES                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-READ-BP13F55A       THRU 2000-EXIT.                     
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===============================================================*         
+       2000-READ-BP13F55A.                                                      
+      *===============================================================*         
+                                                                                
+           READ BP13F55A                                                        
+             AT END                                                             
+                MOVE 'Y'                TO WS-F55A-EOF                          
+                GO                      TO 2000-EXIT                            
+           END-READ.                                                            
+                                                                                
+           ADD  1                       TO CNT-F55A-READ.                       
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===============================================================*         
+       2100-INITIALIZE-FIELDS.                                                  
+      *===============================================================*         
+                                                                                
+           INITIALIZE  F55A-NUM-RDB-HDB-REF                                     
+                       F55A-NUM-RDB-ROLE                                        
+                       F55A-NUM-PRESENT-NT                                      
+                       F55A-NUM-PRESENT-FT                                      
+                       F55A-NUM-RDB-HH-SIZE                                     
+                       F55A-NUM-SUBLET                                          
+                       WS-DTE-ACCEPTED.                                         
+                                                                                
+       2100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===============================================================*         
+       3000-PROCESS-RECORD.                                                     
+      *===============================================================*         
+                                                                                
+           PERFORM 2100-INITIALIZE-FIELDS  THRU 2100-EXIT.                      
+                                                                                
+           PERFORM 3300-READ-BP13K716      THRU 3300-EXIT.                      
+                                                                                
+           EVALUATE TRUE                                                        
+           WHEN F55A-NUM-RDB-ROLE = 'L'                                         
+                MOVE 'CL' TO F55A-NUM-RDB-ROLE                                  
+           WHEN F55A-NUM-RDB-ROLE = 'C'                                         
+                MOVE 'OC' TO F55A-NUM-RDB-ROLE                                  
+           WHEN F55A-NUM-RDB-ROLE = 'T'                                         
+                MOVE 'T ' TO F55A-NUM-RDB-ROLE                                  
+           WHEN F55A-NUM-RDB-ROLE = 'O'                                         
+                MOVE 'OT' TO F55A-NUM-RDB-ROLE                                  
+           WHEN F55A-NUM-RDB-ROLE = 'A'                                         
+                MOVE 'A ' TO F55A-NUM-RDB-ROLE                                  
+           WHEN F55A-NUM-RDB-ROLE = 'S'                                         
+                MOVE 'ST' TO F55A-NUM-RDB-ROLE                                  
+           END-EVALUATE                                                         
+                                                                                
+           PERFORM 3500-GET-SCHEME                THRU 3500-EXIT                
+           IF WS-K716-FND = 'Y'                                                 
+              PERFORM 3600-READNEXT-BP13K716      THRU 3600-EXIT                
+                UNTIL WS-K716-EOF = 'Y'                                         
+           END-IF                                                               
+                                                                                
+           PERFORM 3700-CNT-HH-SIZE               THRU 3700-EXIT                
+           IF WS-K716-FND = 'Y'                                                 
+              PERFORM 3800-READNEXT-BP13K716      THRU 3800-EXIT                
+                UNTIL WS-K716-EOF = 'Y'                                         
+           END-IF                                                               
+                                                                                
+           MOVE WS-HH-SIZE                     TO F55A-NUM-RDB-HH-SIZE          
+           PERFORM 5000-WRITE-P13F55AA            THRU 5000-EXIT                
+                                                                                
+           PERFORM 2000-READ-BP13F55A             THRU 2000-EXIT.               
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *===============================================================*         
+       3300-READ-BP13K716.                                                      
+      *===============================================================*         
+                                                                                
+           MOVE SPACES                            TO BP13K716-REC.              
+           INITIALIZE                                BP13K716-REC.              
+                                                                                
+           MOVE F55A-NUM-REGN                     TO K716-NUM-REGN.             
+           MOVE F55A-NUM-NRIC1                    TO K716-NUM-NRIC.             
+                                                                                
+           READ BP13K716.                                                       
+                                                                                
+           EVALUATE K716-STATUS                                                 
+               WHEN 00                                                          
+                    MOVE K716-NUM-HDB-REF                                       
+                      TO F55A-NUM-RDB-HDB-REF                                   
+                    MOVE K716-CDE-FLAT-TYPE-RESIDE                              
+                      TO F55A-NUM-PRESENT-FT                                    
+                    MOVE K716-CDE-NT-RESIDE                                     
+                      TO F55A-NUM-PRESENT-NT                                    
+                                                                                
+                    IF K716-NUM-HSNG-SCH-RENT = 'THS' OR 'INC' OR 'DHS'         
+                       ADD 1 TO WS-SCH-RENT-OK                                  
+                    ELSE                                                        
+                       ADD 1 TO WS-SCH-RENT-NOTOK                               
+                    END-IF                                                      
+                                                                                
+                    EVALUATE TRUE                                               
+      *   LESSEE                                                                
+                    WHEN K716-NUM-ROLE = '023' OR '024'                         
+                        MOVE 'L' TO  F55A-NUM-RDB-ROLE                          
+      *   OCCUPIER                                                              
+                    WHEN K716-NUM-ROLE = '025'                                  
+                        MOVE 'C' TO  F55A-NUM-RDB-ROLE                          
+      *   TENANT                                                                
+                    WHEN K716-NUM-ROLE = '003'                                  
+                        MOVE 'T' TO  F55A-NUM-RDB-ROLE                          
+      *   OCCUPIER TENANT                                                       
+                    WHEN K716-NUM-ROLE = '004'                                  
+                        MOVE 'O' TO  F55A-NUM-RDB-ROLE                          
+      *   ADMIN                                                                 
+                    WHEN K716-NUM-ROLE = '028' OR '029' OR '030' OR             
+                                         '031'                                  
+                        MOVE 'A' TO  F55A-NUM-RDB-ROLE                          
+      *   SUBTENANT                                                             
+                    WHEN K716-NUM-ROLE = '005'                                  
+                        MOVE 'S' TO  F55A-NUM-RDB-ROLE                          
+                    END-EVALUATE                                                
+               WHEN 23                                                          
+                    MOVE  SPACES               TO F55A-NUM-RDB-HDB-REF          
+                    MOVE  SPACES               TO F55A-NUM-RDB-ROLE             
+                    MOVE  SPACES               TO F55A-NUM-PRESENT-NT           
+                    DISPLAY F55A-NUM-REGN ' '  K716-NUM-NRIC                    
+                            ' K716 NOT FND'                                     
+                                                                                
+               WHEN OTHER                                                       
+                    MOVE K716-STATUS           TO RETURN-CODE                   
+                    DISPLAY 'ERROR READING BP13K716: ' K716-STATUS              
+                            ' KEY : ' K716-KEY-FLD                              
+                    PERFORM  9000-CLOSE-FILES  THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       3300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *===============================================================*         
+       3500-GET-SCHEME.                                                         
+      *===============================================================*         
+                                                                                
+           MOVE SPACES                           TO BP13K716-REC                
+           INITIALIZE                               BP13K716-REC                
+                                                    WS-RENT-SCH-ACCT            
+                                                    WS-LESSEE-HEI.              
+                                                                                
+           MOVE 'N'                              TO WS-K716-EOF                 
+                                                    WS-K716-FND.                
+                                                                                
+           MOVE F55A-NUM-REGN                    TO K716-NUM-REGN               
+           MOVE F55A-NUM-NRIC1                   TO K716-NUM-NRIC.              
+                                                                                
+           START BP13K716 KEY >= K716-KEY-FLD.                                  
+                                                                                
+           IF K716-STATUS = 00 OR 02                                            
+              MOVE 'Y'                            TO WS-K716-FND                
+           ELSE                                                                 
+              IF K716-STATUS = 23 OR 10                                         
+                 MOVE 'N'                         TO WS-K716-FND                
+              ELSE                                                              
+                 DISPLAY 'BP13K716 - ERROR STARTING : ' K716-STATUS             
+                 GO TO 9000-CLOSE-FILES                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===============================================================*         
+       3600-READNEXT-BP13K716.                                                  
+      *===============================================================*         
+                                                                                
+           READ BP13K716 NEXT RECORD                                            
+                                                                                
+           IF K716-STATUS = 00 OR 02                                            
+              IF K716-NUM-REGN = F55A-NUM-REGN AND                              
+                 K716-NUM-NRIC = F55A-NUM-NRIC1                                 
+                 EVALUATE TRUE                                                  
+      *   LESSEE                                                                
+                 WHEN K716-NUM-ROLE = '023' OR '024'                            
+                      IF K716-DTE-ACCEPTED > WS-DTE-ACCEPTED                    
+                         MOVE K716-NUM-HDB-REF     TO WS-RENT-SCH-ACCT          
+                         MOVE 6                    TO WS-LESSEE-HEI             
+                         MOVE K716-DTE-ACCEPTED    TO WS-DTE-ACCEPTED           
+                      END-IF                                                    
+      *   OCCUPIER                                                              
+                 WHEN K716-NUM-ROLE = '025' AND                                 
+                      WS-LESSEE-HEI <= 5                                        
+                      MOVE K716-NUM-HDB-REF     TO WS-RENT-SCH-ACCT             
+                      MOVE 5                    TO WS-LESSEE-HEI                
+      *   TENANT                                                                
+                 WHEN K716-NUM-ROLE = '003' AND                                 
+                      WS-LESSEE-HEI <= 4                                        
+                      MOVE K716-NUM-HDB-REF     TO WS-RENT-SCH-ACCT             
+                      MOVE 4                    TO WS-LESSEE-HEI                
+      *   OCCUPIER TENANT                                                       
+                 WHEN K716-NUM-ROLE = '004' AND                                 
+                      WS-LESSEE-HEI <= 3                                        
+                      MOVE K716-NUM-HDB-REF     TO WS-RENT-SCH-ACCT             
+                      MOVE 3                    TO WS-LESSEE-HEI                
+      *   ADMIN                                                                 
+                 WHEN K716-NUM-ROLE = '028' OR '029' OR '030' OR                
+                                      '031' AND                                 
+                      WS-LESSEE-HEI <= 2                                        
+                      MOVE K716-NUM-HDB-REF     TO WS-RENT-SCH-ACCT             
+                      MOVE 2                    TO WS-LESSEE-HEI                
+      *   SUBTENANT                                                             
+                 WHEN K716-NUM-ROLE = '005' AND                                 
+                      WS-LESSEE-HEI <= 1                                        
+                      MOVE K716-NUM-HDB-REF     TO WS-RENT-SCH-ACCT             
+                      MOVE 1                    TO WS-LESSEE-HEI                
+                 END-EVALUATE                                                   
+              ELSE                                                              
+                 MOVE 'Y'                         TO WS-K716-EOF                
+              END-IF                                                            
+           ELSE                                                                 
+              IF K716-STATUS = 23 OR 10                                         
+                 MOVE 'Y'                         TO WS-K716-EOF                
+              ELSE                                                              
+                 DISPLAY 'BP13K716 - ERROR READING NEXT : ' K716-STATUS         
+                 GO TO 9000-CLOSE-FILES                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===============================================================*         
+       3700-CNT-HH-SIZE.                                                        
+      *===============================================================*         
+                                                                                
+           MOVE SPACES                           TO BP13K716-REC                
+           INITIALIZE                               BP13K716-REC                
+                                                    WS-HH-SIZE.                 
+                                                                                
+           MOVE 'N'                              TO WS-K716-EOF                 
+                                                    WS-K716-FND.                
+                                                                                
+           MOVE F55A-NUM-REGN                    TO K716-NUM-REGN.              
+                                                                                
+           START BP13K716 KEY >= K716-KEY-FLD.                                  
+                                                                                
+           IF K716-STATUS = 00 OR 02                                            
+              MOVE 'Y'                            TO WS-K716-FND                
+           ELSE                                                                 
+              IF K716-STATUS = 23 OR 10                                         
+                 MOVE 'N'                         TO WS-K716-FND                
+              ELSE                                                              
+                 DISPLAY 'BP13K716 - ERROR STARTING : ' K716-STATUS             
+                 GO TO 9000-CLOSE-FILES                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3700-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===============================================================*         
+       3800-READNEXT-BP13K716.                                                  
+      *===============================================================*         
+                                                                                
+           READ BP13K716 NEXT RECORD                                            
+                                                                                
+           IF K716-STATUS = 00 OR 02                                            
+              IF K716-NUM-REGN  = F55A-NUM-REGN                                 
+                 IF K716-NUM-HDB-REF  = WS-RENT-SCH-ACCT                        
+                    ADD 1                    TO WS-HH-SIZE                      
+                 END-IF                                                         
+              ELSE                                                              
+                 MOVE 'Y'                         TO WS-K716-EOF                
+              END-IF                                                            
+           ELSE                                                                 
+              IF K716-STATUS = 23 OR 10                                         
+                 MOVE 'Y'                         TO WS-K716-EOF                
+              ELSE                                                              
+                 DISPLAY 'BP13K716 - ERROR READING NEXT : ' K716-STATUS         
+                 GO TO 9000-CLOSE-FILES                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3800-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===============================================================*         
+       5000-WRITE-P13F55AA.                                                     
+      *===============================================================*         
+                                                                                
+           MOVE SPACES                               TO P13F55AA-REC.           
+           INITIALIZE                                   P13F55AA-REC.           
+                                                                                
+           WRITE P13F55AA-REC                  FROM BP13F55A-REC.               
+           ADD 1                                     TO CNT-WRITE1.             
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===============================================================*         
+       9000-CLOSE-FILES.                                                        
+      *===============================================================*         
+                                                                                
+           DISPLAY SPACES.                                                      
+           DISPLAY '***************************************'.                   
+           DISPLAY 'PROGRAM ID     :  BP13CK20'.                                
+           DISPLAY '***************************************'.                   
+           DISPLAY 'NO. OF BP13F55A READ          : ' CNT-F55A-READ.            
+           DISPLAY 'NO. OF RECS NOT THS/INC/DHS   : ' WS-SCH-RENT-NOTOK.        
+           DISPLAY 'NO. OF RECS WRITTEN (P13F55AA): ' CNT-WRITE1.               
+                                                                                
+           CLOSE BP13F55A                                                       
+                 BP13K716                                                       
+                 P13F55AA.                                                      
+                                                                                
+           IF K716-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'ERROR CLOSING BP13K716 , STATUS = ' K716-STATUS          
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

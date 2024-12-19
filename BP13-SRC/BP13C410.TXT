@@ -1,0 +1,1139 @@
+      *=======================*                                                 
+       IDENTIFICATION DIVISION.                                                 
+      *=======================*                                                 
+       PROGRAM-ID.    BP13C410.                                                 
+      *AUTHOR.        ROMAR ANDREW S MARALIT.                                   
+      *DATE-WRITTEN.  01/06/2000.                                               
+                                                                                
+      *========================================================*                
+      *               SYSTEM OF COMMITEMENT (BP13)             *                
+      *========================================================*                
+      *                                                        *                
+      *    OBJECTIVE  :                                        *                
+      *        1.  TO PRINT A REPORT ON SERS LESSEES WHOSE     *                
+      *            BALANCE PREMIUM IS TO BE DEFERRED.          *                
+      *                                                        *                
+      *     INPUT FILES:                                       *                
+      *           1. BP13F410 (ACCUM SO FILE)                  *                
+      *     OUTPUT FILES:                                      *                
+      *           1. BP13L410 (SERS LESSEE WITH DEF. PREMIUM   *                
+      *                        JOURNAL VR - FINANCE'S COPY)    *                
+      *========================================================*                
+      * CHG-NO   DATE       BY    DESCRIPTION                  *                
+      * ------   ----       --    -----------                  *                
+      * BP130766 15/06/2000 RASM  NEW PROGRAM                  *                
+      * BP130895 27/07/2000 CLT   TO USE NUMERIC BO CODE FOR   *                
+      *                           BP13C913                     *                
+      *                           GL POSTING.                  *                
+      * BP130883 22/07/2000 RASM  TO CHANGE BP13C909 TO        *                
+      *                           BP13C913                     *                
+      * BP132103 18/02/2001 CLT   AG07 8 DIGIT EXPANSION       *                
+      * BP132185 19/08/2002 MALC  CHANGE PHONE NO TO 64903783  *                
+      * BP134092 08/03/2011 ESA1  CATER FOR NEW ERP GL ACCOUNT *                
+      * BP134463 15/02/2012 IMC1  CATER FOR NEW ERP GL ACCOUNT *                
+      * BP135096 16/10/2013 JGO1  UPDATE VOUCHER FROM 'SU' TO  *                
+      *                           'SS'                         *                
+      * BP135832 19/05/2015 JGO1  UPDATE F220 LENGTH           *                
+      * BP137140 19/12/2017 PCL4  TO REDEFINE AG07 FILE ERROR CODE              
+      * BP138339 07/08/2020 KR13  RMVED P13L410A & B-IOM8 CNVRSN                
+      *========================================================*                
+                                                                                
+      ************************                                                  
+       ENVIRONMENT DIVISION.                                                    
+      ************************                                                  
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F410  ASSIGN       TO BP13F410.                           
+                                                                                
+           SELECT BP13K800  ASSIGN       TO BP13K800                            
+                            ACCESS MODE  IS RANDOM                              
+                            ORGANIZATION IS INDEXED                             
+                            RECORD KEY   IS K800-NUM-REGN                       
+                            FILE STATUS  IS BP13K800-STATUS.                    
+                                                                                
+           SELECT AG07F220  ASSIGN       TO AG07F220.                           
+           SELECT BP13L410  ASSIGN       TO BP13L410.                           
+                                                                                
+                                                                                
+      *****************                                                         
+       DATA DIVISION.                                                           
+      *****************                                                         
+       FILE SECTION.                                                            
+      *-------------*                                                           
+                                                                                
+       FD   BP13F410                                                            
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            RECORDING MODE  IS  F.                                              
+       COPY BP13F410.                                                           
+                                                                                
+       FD   BP13K800                                                            
+            RECORD CONTAINS 2000 CHARACTERS.                                    
+       COPY BP13K800.                                                           
+                                                                                
+       FD   AG07F220                                                            
+            RECORD CONTAINS 550 CHARACTERS                                      
+            RECORDING MODE  IS  F.                                              
+       COPY AG07F220.                                                           
+                                                                                
+       FD   BP13L410                                                            
+            RECORD CONTAINS 132 CHARACTERS                                      
+            RECORDING MODE  IS  F.                                              
+       01   L410-PRINT-REC                    PIC X(132).                       
+                                                                                
+                                                                                
+      *=======================*                                                 
+       WORKING-STORAGE SECTION.                                                 
+      *=======================*                                                 
+       01  WS1-FILE-ACCESS-STATUS.                                              
+           05  BP13K800-STATUS         PIC 9(2)      VALUE ZEROS.               
+           05  WS-AG07-STATUS          PIC 9(2)      VALUE ZEROS.               
+           05  WS-AG07-STAT-X REDEFINES WS-AG07-STATUS PIC X(2).                
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-CNT-F410-READ        PIC 9(3)      VALUE ZEROS.               
+           05  WS-CNT-K800-READ        PIC 9(3)      VALUE ZEROS.               
+           05  WS-CNT-F220-WRITE       PIC 9(3)      VALUE ZEROS.               
+           05  WS-CNT-L410-WRITE       PIC 9(3)      VALUE ZEROS.               
+           05  WS-CNT-L410-DETLS       PIC 9(4)      VALUE ZEROS.               
+                                                                                
+       01  WS-ACCUM-VARIABLES.                                                  
+           05  WS-NO-OF-PAGE           PIC 9(5)      VALUE ZEROS.               
+           05  WS-TOTAL-DEF-PREM       PIC S9(7)V99  VALUE ZEROS.               
+                                                                                
+       01  WS-SWITCHES.                                                         
+           05  WS-F410-EOF-IND         PIC X(1)      VALUE 'N'.                 
+               88 WS-F410-EOF                        VALUE 'Y'.                 
+           05  WS-NEW-VOUCHER-NO       PIC X(1)      VALUE 'Y'.                 
+                                                                                
+       01  WS-DATES-VARIABLES.                                                  
+           05  WS-TP-DATE.                                                      
+               10 WS-TP-DD             PIC 99        VALUE 00.                  
+               10 FILLER               PIC X         VALUE '/'.                 
+               10 WS-TP-MM             PIC 99        VALUE 00.                  
+               10 FILLER               PIC X         VALUE '/'.                 
+               10 WS-TP-CCYY           PIC 9(4)      VALUE 00.                  
+           05  WS-DATE.                                                         
+               10 WS-DD                PIC 99        VALUE 00.                  
+               10 FILLER               PIC X         VALUE '/'.                 
+               10 WS-MM                PIC 99        VALUE 00.                  
+               10 FILLER               PIC X         VALUE '/'.                 
+               10 WS-YEAR              PIC 9(4)      VALUE 00.                  
+           05  WS-PR-CUR-DATE.                                                  
+               10 WS-PC-DD             PIC 99        VALUE 00.                  
+               10 FILLER               PIC X         VALUE '/'.                 
+               10 WS-PC-MM             PIC 99        VALUE 00.                  
+               10 FILLER               PIC X         VALUE '/'.                 
+               10 WS-PC-CCYY           PIC 9999      VALUE ZERO.                
+           05  WS-CURRENT-CCYYMMDD.                                             
+                   15 WS-CUR-CCYY      PIC 9999      VALUE ZERO.                
+                   15 WS-CUR-MM        PIC 99        VALUE 00.                  
+                   15 WS-CUR-DD        PIC 99        VALUE 00.                  
+                                                                                
+       01  WS-DEFAULT-VALUES.                                                   
+           05  WS-MAX-LINES            PIC 9(2)      VALUE  24.                 
+                                                                                
+       01  WS-SCH-ACC.                                                          
+           05  WS-SCH-1-4              PIC X(4)      VALUE SPACES.              
+           05  WS-SCH-5-8              PIC X(4)      VALUE SPACES.              
+           05  WS-SCH-9-9              PIC X(1)      VALUE SPACE.               
+           05  WS-SCH-10-11            PIC X(2)      VALUE SPACES.              
+                                                                                
+       01  WS-NUM-VOUCHER              PIC X(11)     VALUE SPACES.              
+       01  WS-NUM-GL-ACCT              PIC X(13)     VALUE SPACES.              
+       01  WS-NUM-BO                   PIC X(2)      VALUE SPACES.              
+       01  WS-ANNUAL-RENT              PIC 9(7)V99   VALUE ZEROES.              
+       01  WS-NUM-HDB-REF              PIC X(11)     VALUE SPACES.              
+       01  WS-NUM-DOC                  PIC X(3)      VALUE SPACES.              
+       01  WS-NUM-DOC-TYP              PIC X(1)      VALUE SPACES.              
+       01  WS-NUM-DOC-CNT              PIC 9(1)      VALUE ZEROES.              
+       01  SQL-CODE                    PIC 9(4).                                
+       01  WS-SQL-CODE                 PIC 9(4).                                
+                                                                                
+      *----------------------------------------------------------*              
+      *    WS LINKAGE VARIABLES PASSED TO "AG07C907"             *              
+      *----------------------------------------------------------*              
+       COPY AG7C907C.                                                           
+                                                                                
+      *----------------------------------------------------------*              
+      *    WS LINKAGE VARIABLES PASSED TO "BP13C913"             *              
+      *----------------------------------------------------------*              
+       01  WS-LINK-REC-C913.                                                    
+           05  WS-LINK-NUM-SCH-ACC.                                             
+               10  WS-LINK-NUM-SCH     PIC X(4).                                
+               10  WS-LINK-NUM-ACC     PIC X(5).                                
+                                                                                
+      *----------------------------------------------------------*              
+      *    WS LINKAGE VARIABLES PASSED TO "BP13C902"             *              
+      *----------------------------------------------------------*              
+       01   WS-LINK-REC-C902.                                                   
+            05 WS-LINK-NUM-OFFICE         PIC X(8).                             
+            05 WS-LINK-NUM-TYPE-OFFICE    PIC X(15).                            
+            05 WS-LINK-NUM-SQNC           PIC X(2).                             
+                                                                                
+       COPY P13COMM8.                                                           
+       COPY P13COMM4.                                                           
+                                                                                
+      *----------------------------------------------------------*              
+      *        WS FOR LIST OF PAYMENT  FOR DEFERRED PREMIUM      *              
+      *----------------------------------------------------------*              
+       01  L410-PR-HDG-01.                                                      
+           05  FILLER              PIC X(8)    VALUE 'BP13L410'.                
+           05  FILLER              PIC X(10)   VALUE '      HDB3'.              
+           05  FILLER              PIC X(28)   VALUE SPACES.                    
+           05  FILLER              PIC X(39)   VALUE                            
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER              PIC X(12)   VALUE SPACES.                    
+           05  FILLER              PIC X(7)    VALUE 'DATE : '.                 
+           05  L410-CURRENT-DATE   PIC X(10)   VALUE SPACES.                    
+           05  FILLER              PIC X(6)    VALUE SPACES.                    
+           05  FILLER              PIC X(7)    VALUE 'PAGE : '.                 
+           05  L410-PAGE           PIC ZZZZ9.                                   
+                                                                                
+       01  L410-PR-HDG-02.                                                      
+           05  FILLER              PIC X(30)   VALUE                            
+               'HOUSING AND DEVELOPMENT BOARD'.                                 
+           05  FILLER              PIC X(21)   VALUE SPACES.                    
+           05  FILLER              PIC X(30)   VALUE                            
+               'J O U R N A L    V O U C H E R'.                                
+           05  FILLER              PIC X(25)   VALUE SPACES.                    
+           05  L410-COPY-NAME      PIC X(20)   VALUE SPACES.                    
+                                                                                
+       01  L410-PR-HDG-03.                                                      
+           05  FILLER              PIC X(46)   VALUE SPACES.                    
+           05  FILLER              PIC X(85)   VALUE ALL '-'.                   
+                                                                                
+       01  L410-PR-HDG-04.                                                      
+           05  FILLER              PIC X(46)   VALUE                            
+               'SALES UNIT (AGREEMENT TEAM)'.                                   
+           05  FILLER              PIC X(1)    VALUE '¦'.                       
+           05  FILLER              PIC X(27)   VALUE                            
+               ' FOR FINANCE DEPARTMENT USE'.                                   
+           05  FILLER              PIC X(21)   VALUE SPACES.                    
+           05  FILLER              PIC X(17)   VALUE                            
+               '¦  VOUCHER NO  : '.                                             
+           05  L410-VOUCHER-NO     PIC X(11)   VALUE SPACES.                    
+           05  FILLER              PIC X(7)    VALUE SPACES.                    
+           05  FILLER              PIC X(1)    VALUE '¦'.                       
+                                                                                
+       01  L410-PR-HDG-05.                                                      
+           05  FILLER              PIC X(46)   VALUE SPACES.                    
+           05  FILLER              PIC X(1)    VALUE '¦'.                       
+           05  FILLER              PIC X(48)   VALUE SPACES.                    
+           05  FILLER              PIC X(1)    VALUE '¦'.                       
+           05  FILLER              PIC X(34)   VALUE SPACES.                    
+           05  FILLER              PIC X(1)    VALUE '¦'.                       
+                                                                                
+       01  L410-PR-HDG-06.                                                      
+           05  FILLER              PIC X(46)   VALUE 'SYSTEM CODE : 59'.        
+           05  FILLER              PIC X(14)   VALUE '¦ CHECKED BY :'.          
+           05  FILLER              PIC X(35)   VALUE SPACES.                    
+           05  FILLER              PIC X(1)    VALUE '¦'.                       
+           05  FILLER              PIC X(34)   VALUE SPACES.                    
+           05  FILLER              PIC X(1)    VALUE '¦'.                       
+                                                                                
+       01  L410-PR-HDG-07.                                                      
+           05  FILLER              PIC X(46)   VALUE                            
+              'GL CODE     : 0000000403610'.                                    
+           05  FILLER              PIC X(85)   VALUE ALL '-'.                   
+                                                                                
+       01  L410-PR-HDG-08.                                                      
+           05  FILLER              PIC X(52)   VALUE                            
+              'DESCRIPTION : DEFERRED PREMIUM'.                                 
+                                                                                
+       01  L410-PR-HDG-09.                                                      
+           05  FILLER              PIC X(53)   VALUE  SPACES.                   
+           05  FILLER              PIC X(79)   VALUE  SPACES.                   
+                                                                                
+       01  L410-PR-HDG-09A.                                                     
+           05  FILLER              PIC X(24)   VALUE  SPACES.                   
+           05  FILLER              PIC X(108)  VALUE  SPACES.                   
+                                                                                
+       01  L410-PR-HDG-10.                                                      
+           05  FILLER              PIC X(11)   VALUE                            
+               'REMITTANCE '.                                                   
+           05  FILLER              PIC X(60)   VALUE                            
+              'ADVICE  DESPATCH TO :  C/O EEO/EO(AGREEMENT) OF SALES UNI        
+      -       'T'.                                                              
+                                                                                
+       01  L410-PR-HDG-11.                                                      
+           05  FILLER              PIC X(4)    VALUE 'S/NO'.                    
+           05  FILLER              PIC X(2)    VALUE SPACES.                    
+           05  FILLER              PIC X(10)   VALUE 'SCH A/C NO'.              
+           05  FILLER              PIC X(6)    VALUE SPACES.                    
+           05  FILLER              PIC X(7)    VALUE 'REGN NO'.                 
+           05  FILLER              PIC X(3)    VALUE SPACES.                    
+           05  FILLER              PIC X(10)   VALUE 'GL ACCOUNT'.              
+           05  FILLER              PIC X(8)    VALUE SPACES.                    
+           05  FILLER              PIC X(3)    VALUE 'BLK'.                     
+           05  FILLER              PIC X(4)    VALUE SPACES.                    
+           05  FILLER              PIC X(24)   VALUE                            
+               'FLAT ADDRESS/STREET NAME'.                                      
+           05  FILLER              PIC X(3)    VALUE SPACES.                    
+           05  FILLER              PIC X(7)    VALUE 'FLAT NO'.                 
+           05  FILLER              PIC X(3)    VALUE SPACES.                    
+           05  FILLER              PIC X(10)   VALUE 'DATE OF TP'.              
+           05  FILLER              PIC X(2)    VALUE SPACES.                    
+           05  FILLER              PIC X(12)   VALUE 'DEF PREM AMT'.            
+           05  FILLER              PIC X(14)   VALUE SPACES.                    
+                                                                                
+       01  L410-PR-DETAIL.                                                      
+           05  L410-NO             PIC ZZZ9.                                    
+           05  FILLER              PIC X(2)    VALUE SPACES.                    
+           05  L410-SCH-ACC.                                                    
+               10 L410-SCH-1-4     PIC X(4)    VALUE SPACES.                    
+               10 FILLER           PIC X(1)    VALUE '-'.                       
+               10 L410-SCH-5-8     PIC X(4)    VALUE SPACES.                    
+               10 FILLER           PIC X(1)    VALUE '-'.                       
+               10 L410-SCH-9-9     PIC X(1)    VALUE SPACE.                     
+               10 FILLER           PIC X(1)    VALUE '-'.                       
+               10 L410-SCH-10-11   PIC X(2)    VALUE SPACES.                    
+           05  FILLER              PIC X(2)    VALUE SPACES.                    
+           05  L410-REGN-NO        PIC X(8)    VALUE SPACES.                    
+           05  FILLER              PIC X(2)    VALUE SPACES.                    
+           05  L410-GL-ACCOUNT     PIC X(16)   VALUE SPACES.                    
+           05  FILLER              PIC X(2)    VALUE SPACES.                    
+           05  L410-BLK-NO         PIC X(5)    VALUE SPACES.                    
+           05  FILLER              PIC X(2)    VALUE SPACES.                    
+           05  L410-STREET         PIC X(25)   VALUE SPACES.                    
+           05  FILLER              PIC X(2)    VALUE SPACES.                    
+           05  L410-FLAT-NO.                                                    
+               10  FILLER          PIC X(1)    VALUE '#'.                       
+               10  L410-LEVEL-NO   PIC X(2)    VALUE SPACES.                    
+               10  FILLER          PIC X(1)    VALUE '-'.                       
+               10  L410-UNIT-NO    PIC X(4)    VALUE SPACES.                    
+           05  FILLER              PIC X(2)    VALUE SPACES.                    
+           05  L410-DTE-TP         PIC X(10)   VALUE SPACES.                    
+           05  FILLER              PIC X(2)    VALUE SPACES.                    
+           05  L410-AMT-DEF-PREM   PIC $$,$$$,$$9.99.                           
+           05  FILLER              PIC X(13)   VALUE SPACES.                    
+                                                                                
+       01  L410-PR-TOTAL-LINE.                                                  
+           05  FILLER              PIC X(39)   VALUE SPACES.                    
+           05  FILLER              PIC X(13)   VALUE '(SERIAL NO : '.           
+           05  L410-VR-NO-LOW      PIC X(4)    VALUE '0001'.                    
+           05  FILLER              PIC X(4)    VALUE ' TO '.                    
+           05  L410-VR-NO-HIGH     PIC X(4)    VALUE '0010'.                    
+           05  FILLER              PIC X(1)    VALUE ')'.                       
+           05  FILLER              PIC X(13)   VALUE SPACES.                    
+           05  FILLER              PIC X(17)   VALUE 'TOTAL : '.                
+           05  FILLER              PIC X(10)   VALUE SPACES.                    
+           05  L410-TOTAL-DEF-PREM PIC $$$,$$$,$$9.99.                          
+           05  FILLER              PIC X(13)   VALUE SPACES.                    
+                                                                                
+       01  L410-PR-DASH-LINE.                                                   
+           05  FILLER              PIC X(94)   VALUE SPACES.                    
+           05  FILLER              PIC X(38)   VALUE ALL '-'.                   
+                                                                                
+       01  L410-PR-FTG-01.                                                      
+           05  FILLER              PIC X(15)   VALUE 'NET PAYABLE  : '.         
+           05  L410-AMT-WORDS.                                                  
+               10  L410-AMT-DESC1  PIC X(60)   VALUE SPACES.                    
+               10  L410-AMT-DESC2  PIC X(60)   VALUE SPACES.                    
+                                                                                
+       01  L410-PR-FTG-02.                                                      
+           05  FILLER              PIC X(39)   VALUE SPACES.                    
+           05  FILLER              PIC X(14)   VALUE 'CHECKED BY : '.           
+           05  FILLER              PIC X(21)   VALUE ALL '_'.                   
+           05  FILLER              PIC X(4)    VALUE SPACES.                    
+           05  FILLER              PIC X(16)   VALUE 'CERTIFIED BY : '.         
+           05  FILLER              PIC X(21)   VALUE ALL '_'.                   
+                                                                                
+      *----------------------------------------------------------*              
+      *    WS VARIABLES FOR CONVERTING AMOUNT TO WORDS           *              
+      *----------------------------------------------------------*              
+       01  WS-SUBSCRIPTS.                                                       
+           05  WA-SUB              PIC 999   VALUE 0.                           
+           05  WF-SUB              PIC 999   VALUE 0.                           
+           05  WL-SUB              PIC 999   VALUE 0.                           
+           05  WS-SUB              PIC 999   VALUE 0.                           
+           05  WS-FIRST-SUB        PIC 999   VALUE 0.                           
+                                                                                
+       01  WA-NAMES.                                                            
+           05  FILLER              PIC X(10) VALUE '3ONE      '.                
+           05  FILLER              PIC X(10) VALUE '3TWO      '.                
+           05  FILLER              PIC X(10) VALUE '5THREE    '.                
+           05  FILLER              PIC X(10) VALUE '4FOUR     '.                
+           05  FILLER              PIC X(10) VALUE '4FIVE     '.                
+           05  FILLER              PIC X(10) VALUE '3SIX      '.                
+           05  FILLER              PIC X(10) VALUE '5SEVEN    '.                
+           05  FILLER              PIC X(10) VALUE '5EIGHT    '.                
+           05  FILLER              PIC X(10) VALUE '4NINE     '.                
+           05  FILLER              PIC X(10) VALUE '3TEN      '.                
+           05  FILLER              PIC X(10) VALUE '6ELEVEN   '.                
+           05  FILLER              PIC X(10) VALUE '6TWELVE   '.                
+           05  FILLER              PIC X(10) VALUE '8THIRTEEN '.                
+           05  FILLER              PIC X(10) VALUE '8FOURTEEN '.                
+           05  FILLER              PIC X(10) VALUE '7FIFTEEN  '.                
+           05  FILLER              PIC X(10) VALUE '7SIXTEEN  '.                
+           05  FILLER              PIC X(10) VALUE '9SEVENTEEN'.                
+           05  FILLER              PIC X(10) VALUE '8EIGHTEEN '.                
+           05  FILLER              PIC X(10) VALUE '8NINETEEN '.                
+           05  FILLER              PIC X(10) VALUE '6TWENTY   '.                
+           05  FILLER              PIC X(10) VALUE '6THIRTY   '.                
+           05  FILLER              PIC X(10) VALUE '5FORTY    '.                
+           05  FILLER              PIC X(10) VALUE '5FIFTY    '.                
+           05  FILLER              PIC X(10) VALUE '5SIXTY    '.                
+           05  FILLER              PIC X(10) VALUE '7SEVENTY  '.                
+           05  FILLER              PIC X(10) VALUE '6EIGHTY   '.                
+           05  FILLER              PIC X(10) VALUE '6NINETY   '.                
+       01  WA-NAMER REDEFINES WA-NAMES.                                         
+           05  WA-NAME             PIC X(10) OCCURS 27 TIMES.                   
+                                                                                
+       01  WS-LITERALS.                                                         
+           05  L-CENT              PIC X(5)  VALUE '4CENT'.                     
+           05  L-AND               PIC X(4)  VALUE '3AND'.                      
+           05  L-X                 PIC X     VALUE '%'.                         
+           05  L-MILLION           PIC X(8)  VALUE '7MILLION'.                  
+           05  L-THOUSAND          PIC X(9)  VALUE '8THOUSAND'.                 
+           05  L-DOLLARS           PIC X(8)  VALUE '7DOLLARS'.                  
+           05  L-CENTS             PIC X(6)  VALUE '6CENTS'.                    
+           05  L-ONLY              PIC X(6)  VALUE '5ONLY '.                    
+           05  L-HUNDRED           PIC X(8)  VALUE '7HUNDRED'.                  
+           05  L-DOLLAR            PIC X(7)  VALUE '6DOLLAR'.                   
+                                                                                
+       01  SWITCHES.                                                            
+           05  WS-SWITCH           PIC 9     VALUE 0.                           
+           05  WS-THO-SW           PIC 9     VALUE 0.                           
+           05  WS-CNT-SW           PIC 9     VALUE 0.                           
+           05  WS-LIT-SW           PIC 9     VALUE 0.                           
+           05  WS-TEN-SW           PIC 9     VALUE 0.                           
+           05  WS-AND-SW           PIC 9     VALUE 0.                           
+                                                                                
+       01  WS-PLACE-COUNTER        PIC 999   VALUE 0.                           
+       01  WL-AREA-SAVE            PIC X(12) VALUE SPACES.                      
+       01  WS-RESULT               PIC 999   VALUE 0.                           
+       01  WL-AREA.                                                             
+           05  WL-ITEM1            PIC 9     VALUE 0.                           
+           05  FILLER              PIC X(11) VALUE SPACE.                       
+       01  WL-ITM REDEFINES WL-AREA.                                            
+           05  WL-ITEM             PIC X     OCCURS 12 TIMES.                   
+                                                                                
+       01  WS-CHEQUE-DETAILS.                                                   
+           05  WS-AMT              PIC 9(7)V99 VALUE 0.                         
+           05  WS-DIGIT REDEFINES  WS-AMT OCCURS 9 TIMES PIC 9.                 
+           05  WF-DETAILS.                                                      
+               10  WF-LINE-1       PIC X(60).                                   
+               10  WF-LINE-2       PIC X(60).                                   
+           05  WF-ITEM REDEFINES WF-DETAILS OCCURS 120 PIC X.                   
+           05  WP-ITEM REDEFINES WF-DETAILS OCCURS 2 PIC X(60).                 
+                                                                                
+                                                                                
+      *------------------*                                                      
+       PROCEDURE DIVISION.                                                      
+      *------------------*                                                      
+                                                                                
+      ******************************************************************        
+       000-MAIN-ROUTINE.                                                        
+      ******************************************************************        
+           PERFORM  100-OPEN-FILES     THRU  100-EXIT.                          
+           PERFORM  200-READ-BP13F410  THRU  200-EXIT.                          
+           PERFORM  300-MAIN-ROUTINE   THRU  300-EXIT UNTIL WS-F410-EOF.        
+           PERFORM  700-WRITE-TRAILER  THRU  700-EXIT.                          
+           PERFORM  900-CLOSE-FILES    THRU  900-EXIT.                          
+                                                                                
+       000-MAIN-EXIT.                                                           
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       100-OPEN-FILES.                                                          
+      ******************************************************************        
+           OPEN INPUT  BP13F410                                                 
+                       BP13K800                                                 
+                OUTPUT AG07F220                                                 
+                       BP13L410.                                                
+                                                                                
+           IF BP13K800-STATUS NOT = 00 AND NOT = 97                             
+              DISPLAY 'OPENING ERROR, BP13K800-STATUS ' BP13K800-STATUS         
+              MOVE     BP13K800-STATUS    TO   RETURN-CODE                      
+              PERFORM  900-CLOSE-FILES    THRU 900-EXIT                         
+           END-IF.                                                              
+                                                                                
+      * VOUCHER NUMBER                                                          
+           MOVE       'AG07K960'          TO   C907-NUM-FILENME.                
+                                                                                
+           CALL 'K960OPEN' USING AG07C907-AREA.                                 
+                                                                                
+           IF C907-NUM-FILE-STATUS NOT = ('00' AND '97')                        
+              DISPLAY 'ERROR OPENING AG07K960 = ' C907-NUM-FILE-STATUS          
+              MOVE     C907-NUM-FILE-STATUS  TO   WS-AG07-STAT-X                
+              MOVE     WS-AG07-STATUS        TO   RETURN-CODE                   
+              PERFORM  900-CLOSE-FILES       THRU 900-EXIT                      
+           END-IF.                                                              
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       200-READ-BP13F410.                                                       
+      ******************************************************************        
+           READ BP13F410                                                        
+                AT END MOVE 'Y' TO WS-F410-EOF-IND                              
+                GO TO  200-EXIT.                                                
+                                                                                
+           ADD 1 TO WS-CNT-F410-READ.                                           
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       300-MAIN-ROUTINE.                                                        
+      ******************************************************************        
+      *------------------------------------------------------------*            
+      *    1. READ FILE BP13F410.                                  *            
+      *    2. RETRIEVE FLAT'S DETAIL FROM BP13F410.                *            
+      *    3. READ K800 SOC MASTER TO RETRIEVE K800-AMT-LEASE-FEE. *            
+      *    4. PRINT LIST OF PAYMENT FOR DEFERRED PREMIUM           *            
+      *------------------------------------------------------------*            
+           IF WS-NEW-VOUCHER-NO = 'Y'                                           
+      *       MOVE  'SU '      TO C907-NUM-DDD                                  
+              MOVE  'SS '      TO C907-NUM-DDD                                  
+              MOVE  'AG07K960' TO C907-NUM-FILENME                              
+                                                                                
+              CALL 'AG07C907'  USING AG07C907-AREA                              
+                                                                                
+              IF C907-NUM-FILE-STATUS =  '00'                                   
+                 INITIALIZE AG07F220-HEADER                                     
+                 MOVE       SPACES             TO    AG07F220-HEADER            
+                 MOVE       C907-NUM-DDD       TO    F220-NUM-DDD               
+                 MOVE       C907-NUM-FIN-YR    TO    F220-NUM-FIN-YEAR          
+                 MOVE       C907-NUM-VR-SERIAL TO    F220-NUM-VR-SERIAL         
+                 MOVE       F220-NUM-VR        TO    WS-NUM-VOUCHER             
+                 MOVE       F410-NUM-SCH-ACC   TO    F220-NUM-ROOT-ACCT         
+                 MOVE       'N'                TO    WS-NEW-VOUCHER-NO          
+                 PERFORM    500-WRITE-HEADER         THRU  500-EXIT             
+              ELSE                                                              
+                 DISPLAY 'ERROR CALLING AG07C907, '                             
+                         'FILE STATUS = '    C907-NUM-FILE-STATUS               
+                 MOVE     C907-NUM-FILE-STATUS TO WS-AG07-STAT-X                
+                 MOVE     WS-AG07-STATUS       TO RETURN-CODE                   
+                 PERFORM  900-CLOSE-FILES                                       
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM  600-WRITE-TRANS-DETAIL   THRU  600-EXIT.                    
+           PERFORM  200-READ-BP13F410        THRU  200-EXIT.                    
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       400-READ-BP13K800.                                                       
+      ******************************************************************        
+           READ BP13K800.                                                       
+                                                                                
+           IF BP13K800-STATUS = 00                                              
+              CONTINUE                                                          
+           ELSE                                                                 
+              IF BP13K800-STATUS = 23                                           
+                 DISPLAY 'K800 RECORD NOT FOUND. REGN NO = '                    
+                          K800-NUM-REGN                                         
+                 MOVE     BP13K800-STATUS    TO     RETURN-CODE                 
+                 PERFORM  900-CLOSE-FILES    THRU   900-EXIT                    
+              ELSE                                                              
+                 DISPLAY 'ERROR READING, BP13K800 ' BP13K800-STATUS             
+                 MOVE     BP13K800-STATUS    TO     RETURN-CODE                 
+                 PERFORM  900-CLOSE-FILES    THRU   900-EXIT.                   
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       500-WRITE-HEADER.                                                        
+      ******************************************************************        
+           ADD   1                      TO WS-CNT-F220-WRITE.                   
+           MOVE  00                     TO F220-NUM-REC-TYP.                    
+           MOVE 'JV'                    TO F220-NUM-VR-TYP.                     
+           MOVE 'TL'                    TO F220-NUM-VR-SUB-TYP.                 
+           MOVE 'SOC'                   TO F220-NUM-TRANS-TYP.                  
+           MOVE  FUNCTION CURRENT-DATE(1:8) TO                                  
+                                           WS-CURRENT-CCYYMMDD.                 
+           MOVE  WS-CURRENT-CCYYMMDD    TO F220-DTE-VR-CREATE                   
+                                           F220-DTE-VR-PRT-FINAL.               
+           MOVE  'BP13C410'             TO F220-NUM-VR-CREATE-USERID            
+                                           F220-NUM-VR-PRT-FINAL-USERID.        
+           MOVE  'SALES AGREEMENT TEAM' TO F220-NME-CONTACT-OFFCR.              
+           MOVE  '64903783'             TO F220-NUM-CONTACT-PHONE.              
+                                                                                
+           WRITE    AG07F220-HEADER.                                            
+                                                                                
+           PERFORM  520-PRINT-HEADING   THRU   520-EXIT.                        
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       520-PRINT-HEADING.                                                       
+      ******************************************************************        
+      *------------------------------------------------------------*            
+      *    PRINT HEADING LINE                                      *            
+      *------------------------------------------------------------*            
+           MOVE   SPACES            TO    L410-PRINT-REC.                       
+           ADD    1                 TO    WS-NO-OF-PAGE.                        
+           MOVE   WS-NO-OF-PAGE     TO    L410-PAGE.                            
+           MOVE   FUNCTION CURRENT-DATE(1:8)                                    
+                                    TO    WS-CURRENT-CCYYMMDD.                  
+           MOVE   WS-CUR-DD         TO    WS-PC-DD.                             
+           MOVE   WS-CUR-MM         TO    WS-PC-MM.                             
+           MOVE   WS-CUR-CCYY       TO    WS-PC-CCYY.                           
+           MOVE   WS-PR-CUR-DATE    TO    L410-CURRENT-DATE.                    
+                                                                                
+           MOVE   WS-NUM-VOUCHER    TO    L410-VOUCHER-NO.                      
+                                                                                
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-01 AFTER PAGE.               
+                                                                                
+           MOVE "FINANCE'S COPY"  TO   L410-COPY-NAME.                          
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-02 AFTER 2.                  
+                                                                                
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-03 AFTER 2.                  
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-04 AFTER 1.                  
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-05 AFTER 1.                  
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-05 AFTER 1.                  
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-06 AFTER 1.                  
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-07 AFTER 1.                  
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-08 AFTER 1.                  
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-09 AFTER 1.                  
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-09A AFTER 1.                 
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-10 AFTER 1.                  
+           WRITE L410-PRINT-REC   FROM L410-PR-HDG-11 AFTER 2.                  
+                                                                                
+           MOVE   SPACES TO  L410-PRINT-REC.                                    
+                                                                                
+           WRITE L410-PRINT-REC AFTER 1.                                        
+                                                                                
+       520-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       600-WRITE-TRANS-DETAIL.                                                  
+      ******************************************************************        
+           MOVE F410-NUM-REGN         TO    L410-REGN-NO.                       
+                                                                                
+      *--> RETRIEVE ADDRESS USING F410-SCHEME-ACCT.                             
+           MOVE SPACES                TO   BP13COMM8-REC                        
+                                           WS-LINK-REC-C913.                    
+                                                                                
+           INITIALIZE                      BP13COMM8-REC.                       
+           MOVE ZEROES                TO   SQL-CODE.                            
+                                                                                
+           MOVE F410-NUM-SCH-ACC      TO   WS-LINK-REC-C913                     
+                                           WS-SCH-ACC.                          
+                                                                                
+           CALL 'BP13C913'     USING  WS-LINK-REC-C913,                         
+                                      BP13COMM8-REC.                            
+                                                                                
+           IF COMM8-CDE-SYSERR = 0                                              
+              MOVE COMM8-NUM-BLK       TO L410-BLK-NO                           
+              MOVE COMM8-NME-STREET    TO L410-STREET                           
+              MOVE COMM8-NUM-UNIT-MAIN TO L410-UNIT-NO                          
+              MOVE COMM8-NUM-LEVEL     TO L410-LEVEL-NO                         
+           ELSE                                                                 
+              MOVE SPACES              TO L410-BLK-NO                           
+                                          L410-STREET                           
+                                          L410-UNIT-NO                          
+                                          L410-LEVEL-NO                         
+              MOVE COMM8-CDE-SYSERR    TO SQL-CODE                              
+              IF COMM8-CDE-SYSERR = 100                                         
+                 DISPLAY 'SCHEME-ACCT-NO = ' WS-LINK-REC-C913                   
+                 DISPLAY 'SCH-ACC NOT FOUND INF PIDB TABLE   ' SQL-CODE         
+              ELSE                                                              
+                 DISPLAY 'ERROR IN READING PIDB TABLE   ' SQL-CODE              
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           MOVE    WS-SCH-1-4         TO    L410-SCH-1-4.                       
+           MOVE    WS-SCH-5-8         TO    L410-SCH-5-8.                       
+           MOVE    WS-SCH-9-9         TO    L410-SCH-9-9.                       
+           MOVE    WS-SCH-10-11       TO    L410-SCH-10-11.                     
+                                                                                
+           ADD F410-AMT-DEFER-PREMIUM TO    WS-TOTAL-DEF-PREM.                  
+                                                                                
+      *********************                                                     
+      * WRITE DEBIT DETAIL.                                                     
+      *********************                                                     
+           MOVE SPACES                  TO AG07F220-TRANS.                      
+           INITIALIZE                      AG07F220-TRANS.                      
+                                                                                
+           ADD  1                       TO WS-CNT-F220-WRITE                    
+                                           WS-CNT-L410-DETLS.                   
+           MOVE WS-NUM-VOUCHER          TO F220-NUM-VR-T.                       
+           MOVE WS-CNT-L410-DETLS       TO F220-NUM-TRANS-SERIAL.               
+           MOVE '59'                    TO F220-NUM-SYS.                        
+           MOVE F410-NUM-SCH-ACC        TO F220-NUM-HDB-REF.                    
+           MOVE '0000000403610'         TO F220-NUM-GL-ACCT.                    
+           MOVE SPACES                  TO F220-NUM-TAX-CDE.                    
+           MOVE 'D'                     TO F220-NUM-TRANS-DR-CR.                
+           MOVE 'DR-0000000403610'      TO L410-GL-ACCOUNT.                     
+           MOVE ZEROES                  TO F220-AMT-TRANS-GST.                  
+           MOVE F410-AMT-DEFER-PREMIUM  TO F220-AMT-TRANS                       
+                                           L410-AMT-DEF-PREM.                   
+                                                                                
+           MOVE F410-DTE-KEY-ISSUE(7:2) TO WS-TP-DD.                            
+           MOVE F410-DTE-KEY-ISSUE(5:2) TO WS-TP-MM.                            
+           MOVE F410-DTE-KEY-ISSUE(1:4) TO WS-TP-CCYY.                          
+           MOVE WS-TP-DATE              TO L410-DTE-TP.                         
+                                                                                
+           WRITE   AG07F220-TRANS.                                              
+                                                                                
+           PERFORM 620-PRINT-DETAIL     THRU  620-EXIT.                         
+                                                                                
+      **********************                                                    
+      * WRITE CREDIT DETAIL.                                                    
+      **********************                                                    
+           MOVE SPACES                 TO AG07F220-TRANS.                       
+           INITIALIZE                     AG07F220-TRANS.                       
+                                                                                
+           MOVE F410-NUM-REGN          TO K800-NUM-REGN.                        
+           PERFORM 400-READ-BP13K800   THRU 400-EXIT.                           
+                                                                                
+           ADD  1                      TO WS-CNT-F220-WRITE                     
+                                          WS-CNT-L410-DETLS.                    
+           MOVE WS-NUM-VOUCHER         TO F220-NUM-VR-T.                        
+           MOVE WS-CNT-L410-DETLS      TO F220-NUM-TRANS-SERIAL.                
+           MOVE '09'                   TO F220-NUM-SYS.                         
+           MOVE F410-NUM-SCH-ACC       TO F220-NUM-HDB-REF.                     
+                                                                                
+           PERFORM 610-GET-BO-CODE     THRU 610-EXIT.                           
+                                                                                
+           EVALUATE K800-NUM-ROOM                                               
+              WHEN '1'                                                          
+                 STRING '9000000' '406981'                                      
+                     DELIMITED BY SIZE INTO F220-NUM-GL-ACCT                    
+                 STRING 'CR-' F220-NUM-GL-ACCT                                  
+                     DELIMITED BY SIZE INTO L410-GL-ACCOUNT                     
+              WHEN '2'                                                          
+                 STRING '9000000' '406982'                                      
+                     DELIMITED BY SIZE INTO F220-NUM-GL-ACCT                    
+                 STRING 'CR-' F220-NUM-GL-ACCT                                  
+                     DELIMITED BY SIZE INTO L410-GL-ACCOUNT                     
+              WHEN '3'                                                          
+                 STRING '9000000' '406983'                                      
+                     DELIMITED BY SIZE INTO F220-NUM-GL-ACCT                    
+                 STRING 'CR-' F220-NUM-GL-ACCT                                  
+                     DELIMITED BY SIZE INTO L410-GL-ACCOUNT                     
+              WHEN '4'                                                          
+                 STRING '9000000' '406984'                                      
+                     DELIMITED BY SIZE INTO F220-NUM-GL-ACCT                    
+                 STRING 'CR-' F220-NUM-GL-ACCT                                  
+                     DELIMITED BY SIZE INTO L410-GL-ACCOUNT                     
+              WHEN '5'                                                          
+                 STRING '9000000' '406985'                                      
+                     DELIMITED BY SIZE INTO F220-NUM-GL-ACCT                    
+                 STRING 'CR-' F220-NUM-GL-ACCT                                  
+                     DELIMITED BY SIZE INTO L410-GL-ACCOUNT                     
+              WHEN 'E'                                                          
+                 STRING '9000000' '406986'                                      
+                     DELIMITED BY SIZE INTO F220-NUM-GL-ACCT                    
+                 STRING 'CR-' F220-NUM-GL-ACCT                                  
+                     DELIMITED BY SIZE INTO L410-GL-ACCOUNT                     
+              WHEN OTHER                                                        
+                 MOVE SPACES             TO F220-NUM-GL-ACCT                    
+                                            L410-GL-ACCOUNT                     
+           END-EVALUATE.                                                        
+                                                                                
+           MOVE 'N'                     TO F220-NUM-TAX-CDE.                    
+           MOVE 'C'                     TO F220-NUM-TRANS-DR-CR.                
+           MOVE ZEROES                  TO F220-AMT-TRANS-GST.                  
+           MOVE F410-AMT-DEFER-PREMIUM  TO F220-AMT-TRANS                       
+                                           L410-AMT-DEF-PREM.                   
+                                                                                
+           MOVE F410-DTE-KEY-ISSUE(7:2) TO WS-TP-DD.                            
+           MOVE F410-DTE-KEY-ISSUE(5:2) TO WS-TP-MM.                            
+           MOVE F410-DTE-KEY-ISSUE(1:4) TO WS-TP-CCYY.                          
+           MOVE WS-TP-DATE              TO L410-DTE-TP.                         
+                                                                                
+           WRITE   AG07F220-TRANS.                                              
+                                                                                
+           PERFORM 620-PRINT-DETAIL   THRU  620-EXIT.                           
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *------------------------*                                                
+       610-GET-BO-CODE.                                                         
+      *------------------------*                                                
+           MOVE SPACES       TO BP13COMM4-REC.                                  
+           INITIALIZE           BP13COMM4-REC.                                  
+           MOVE ZEROES       TO WS-SQL-CODE.                                    
+                                                                                
+           MOVE F410-CDE-BO  TO WS-LINK-NUM-OFFICE.                             
+           MOVE 'BO'         TO WS-LINK-NUM-TYPE-OFFICE.                        
+           MOVE '00'         TO WS-LINK-NUM-SQNC.                               
+                                                                                
+           CALL 'BP13C902' USING                                                
+                 WS-LINK-REC-C902, BP13COMM4-REC                                
+           END-CALL.                                                            
+                                                                                
+           IF COMM4-CDE-SYSERR NOT = 0                                          
+              MOVE COMM4-CDE-SYSERR TO WS-SQL-CODE                              
+              MOVE SPACES           TO WS-NUM-BO                                
+              IF COMM4-CDE-SYSERR = 100                                         
+                 DISPLAY 'OFFICE NOT FND = ' WS-LINK-REC-C902                   
+                 DISPLAY 'SQL ERROR CODE = ' WS-SQL-CODE                        
+              ELSE                                                              
+                 DISPLAY 'ERROR IN READING OFFICE TABLE' WS-SQL-CODE            
+              END-IF                                                            
+           ELSE                                                                 
+              MOVE COMM4-NUM-OFFICE-GL-BO(1)    TO WS-NUM-BO                    
+           END-IF.                                                              
+                                                                                
+       610-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       620-PRINT-DETAIL.                                                        
+      ******************************************************************        
+      *------------------------------------------------------------*            
+      *    PRINT LIST OF PAYMENT FOR DEFERRED PREMIUM              *            
+      *------------------------------------------------------------*            
+                                                                                
+           ADD   1                   TO    WS-CNT-L410-WRITE.                   
+           MOVE  WS-CNT-L410-DETLS   TO    L410-NO.                             
+           WRITE L410-PRINT-REC      FROM  L410-PR-DETAIL AFTER 1.              
+                                                                                
+           MOVE  SPACES              TO    L410-PRINT-REC.                      
+                                                                                
+           PERFORM     640-CHECK-LINECNT   THRU  640-EXIT.                      
+                                                                                
+       620-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       640-CHECK-LINECNT.                                                       
+      ******************************************************************        
+      *------------------------------------------------------------*            
+      *    CHECK LINE COUNT TO DETERMINE PAGE THROW                *            
+      *------------------------------------------------------------*            
+           DISPLAY 'CHECK-LINECNT:'.                                            
+           DISPLAY 'WS-CNT-L410-DETLS: '  WS-CNT-L410-DETLS.                    
+                                                                                
+           IF WS-CNT-L410-DETLS = WS-MAX-LINES OR WS-F410-EOF                   
+              PERFORM  700-WRITE-TRAILER  THRU 700-EXIT                         
+              MOVE     0   TO WS-CNT-L410-DETLS                                 
+                              WS-TOTAL-DEF-PREM                                 
+              MOVE    'Y'  TO WS-NEW-VOUCHER-NO                                 
+           END-IF.                                                              
+                                                                                
+       640-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       700-WRITE-TRAILER.                                                       
+      ******************************************************************        
+           DISPLAY 'WRITE-TRAILER:'.                                            
+           DISPLAY 'WS-CNT-L410-DETLS: '  WS-CNT-L410-DETLS.                    
+           DISPLAY 'WS-F410-EOF : '  WS-F410-EOF-IND.                           
+                                                                                
+           IF WS-CNT-L410-DETLS = 0                                             
+              GO TO 700-EXIT                                                    
+           END-IF.                                                              
+                                                                                
+           INITIALIZE AG07F220-TRAILER.                                         
+           MOVE     SPACES             TO    AG07F220-TRAILER.                  
+                                                                                
+           ADD      1                  TO    WS-CNT-F220-WRITE.                 
+           MOVE     WS-NUM-VOUCHER     TO    F220-NUM-VR-R.                     
+           MOVE     99                 TO    F220-NUM-TRAILER-SERIAL.           
+           MOVE     'PAYMENT FOR DEFERRED PREMIUM         '                     
+                                       TO    F220-TXT-VOUCHER-NARRATION.        
+           MOVE     WS-CNT-L410-DETLS  TO    F220-QTY-VR-TRANS.                 
+           MOVE     WS-TOTAL-DEF-PREM  TO    F220-AMT-VR-DR-TOTAL               
+                                             F220-AMT-VR-CR-TOTAL.              
+                                                                                
+           WRITE    AG07F220-TRAILER.                                           
+                                                                                
+           PERFORM  710-PRINT-TOTAL-LINE     THRU   710-EXIT.                   
+           PERFORM  800-PRINT-FOOTING        THRU   800-EXIT.                   
+                                                                                
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       710-PRINT-TOTAL-LINE.                                                    
+      ******************************************************************        
+      *------------------------------------------------------------*            
+      *    PRINT TOTAL LEASE LINE                                  *            
+      *------------------------------------------------------------*            
+           IF WS-CNT-F410-READ = 0                                              
+              GO TO 710-EXIT                                                    
+           END-IF.                                                              
+                                                                                
+           WRITE L410-PRINT-REC        FROM  L410-PR-DASH-LINE AFTER 3.         
+                                                                                
+           MOVE  SPACES                TO    L410-PRINT-REC.                    
+           MOVE  WS-CNT-L410-DETLS     TO    L410-VR-NO-HIGH.                   
+           MOVE  WS-TOTAL-DEF-PREM     TO    L410-TOTAL-DEF-PREM.               
+                                                                                
+           WRITE L410-PRINT-REC       FROM   L410-PR-TOTAL-LINE AFTER 1.        
+                                                                                
+           MOVE  SPACES                TO    L410-PRINT-REC.                    
+           WRITE L410-PRINT-REC       FROM   L410-PR-DASH-LINE AFTER 1.         
+                                                                                
+       710-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       800-PRINT-FOOTING.                                                       
+      ******************************************************************        
+           MOVE    WS-TOTAL-DEF-PREM    TO    WS-AMT.                           
+           PERFORM 9000-CONVT-AMT-WORD  THRU  9000-EXIT.                        
+           MOVE    WP-ITEM (1)          TO    L410-AMT-DESC1.                   
+           MOVE    WP-ITEM (2)          TO    L410-AMT-DESC2.                   
+                                                                                
+           WRITE  L410-PRINT-REC        FROM  L410-PR-FTG-01   AFTER 2.         
+           WRITE  L410-PRINT-REC        FROM  L410-PR-FTG-02   AFTER 5.         
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       900-CLOSE-FILES.                                                         
+      ******************************************************************        
+      *------------------------------------------------------------*            
+      *    CLOSE FILES AND END PROCESSING                          *            
+      *------------------------------------------------------------*            
+           CLOSE BP13F410                                                       
+                 BP13K800                                                       
+                 AG07F220                                                       
+                 BP13L410.                                                      
+                                                                                
+           IF BP13K800-STATUS NOT = 00                                          
+              DISPLAY 'CLOSING ERROR, BP13K800-STATUS ' BP13K800-STATUS         
+              MOVE     BP13K800-STATUS TO RETURN-CODE                           
+           END-IF.                                                              
+                                                                                
+           MOVE 'AG07K960' TO C907-NUM-FILENME.                                 
+                                                                                
+           CALL 'K960CLSE' USING AG07C907-AREA.                                 
+                                                                                
+           IF C907-NUM-FILE-STATUS NOT = ('00' AND '97')                        
+              DISPLAY 'ERROR CLOSING AG07K960 = ' C907-NUM-FILE-STATUS          
+              MOVE     C907-NUM-FILE-STATUS TO WS-AG07-STAT-X                   
+              MOVE     WS-AG07-STATUS       TO RETURN-CODE                      
+           END-IF.                                                              
+                                                                                
+           DISPLAY '                                   '.                       
+           DISPLAY '******   BP13C410 CONTROL TOTALS   ******'.                 
+           DISPLAY '                                   '.                       
+           DISPLAY 'NO OF RECORDS READ FROM DAILY TRANS (BP13F410)  = '         
+                    WS-CNT-F410-READ.                                           
+           DISPLAY 'NO OF RECORDS READ FROM RFF MASTER  (BP13K800)  = '         
+                    WS-CNT-K800-READ.                                           
+           DISPLAY 'NO OF PAYMENTS WRITTEN (BP13L410)               = '         
+                    WS-CNT-L410-WRITE.                                          
+           DISPLAY 'NO OF PAYMENTS WRITTEN (AG07F220)               = '         
+                    WS-CNT-F220-WRITE.                                          
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       9000-CONVT-AMT-WORD.                                                     
+      ******************************************************************        
+      *------------------------------------------------------------*            
+      *     OBJECTIVE  :  CONVERSION FROM AMOUNT IN DIGITS         *            
+      *                              INTO AMOUNT IN WORDS          *            
+      *------------------------------------------------------------*            
+            MOVE SPACES TO WF-DETAILS.                                          
+            MOVE ZERO   TO WS-SWITCH                                            
+                           WS-THO-SW                                            
+                           WS-CNT-SW                                            
+                           WS-LIT-SW                                            
+                           WS-TEN-SW                                            
+                           WS-AND-SW.                                           
+            MOVE 60     TO WS-PLACE-COUNTER.                                    
+            MOVE 1      TO WF-SUB.                                              
+                                                                                
+            PERFORM B000-ROUTINE THRU B990-EXIT                                 
+                         VARYING WS-SUB FROM 1 BY 1 UNTIL WS-SUB = 10.          
+                                                                                
+       9000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      ******************************************************************        
+       B000-ROUTINE SECTION.                                                    
+      ******************************************************************        
+       B000-GO.                                                                 
+            IF WS-DIGIT (WS-SUB) = ZERO                                         
+                 IF WS-TEN-SW = ZERO                                            
+                    GO TO B800-MOVE-TYPE                                        
+                 ELSE                                                           
+                    GO TO B010-PROCESS.                                         
+                                                                                
+            IF WS-FIRST-SUB = ZERO                                              
+               MOVE WS-SUB TO WS-FIRST-SUB.                                     
+                                                                                
+            IF WS-SWITCH = ZERO                                                 
+               MOVE 1 TO WS-SWITCH.                                             
+                                                                                
+       B010-PROCESS.                                                            
+            IF WS-SUB = 8                                                       
+               MOVE 9 TO WS-CNT-SW.                                             
+                                                                                
+            IF WS-SUB = 9                                                       
+               IF WS-CNT-SW = ZERO                                              
+                  MOVE WS-DIGIT (WS-SUB) TO WS-CNT-SW.                          
+                                                                                
+            IF WS-SUB = 2 OR 3 OR 4                                             
+               MOVE 1 TO WS-THO-SW.                                             
+                                                                                
+            MOVE WS-DIGIT (WS-SUB) TO WA-SUB.                                   
+            IF WS-SUB = 3 OR 6 OR 8                                             
+               IF WS-DIGIT (WS-SUB) = 1                                         
+                  MOVE 1 TO WS-TEN-SW                                           
+                  GO TO B990-EXIT                                               
+               ELSE                                                             
+                  ADD 18 TO WA-SUB                                              
+            ELSE                                                                
+            IF WS-SUB = 1 OR 4 OR 7 OR 9                                        
+               IF WS-TEN-SW = 1                                                 
+                  MOVE 0 TO WS-TEN-SW                                           
+                  ADD 10 TO WA-SUB.                                             
+            MOVE WA-NAME (WA-SUB) TO WL-AREA.                                   
+            PERFORM R000-LOAD-IN.                                               
+                                                                                
+       B300-TENS.                                                               
+            IF WS-SUB = 3 OR 6 OR 8                                             
+               GO TO B990-EXIT.                                                 
+                                                                                
+       B400-MOVE-HUNDRED.                                                       
+            IF WS-SUB = 2 OR 5                                                  
+               MOVE L-HUNDRED TO WL-AREA                                        
+               MOVE 1 TO WS-LIT-SW                                              
+               PERFORM R000-LOAD-IN                                             
+               MOVE 1 TO WS-AND-SW                                              
+               GO TO B990-EXIT.                                                 
+                                                                                
+       B800-MOVE-TYPE.                                                          
+            IF WS-SWITCH = ZERO                                                 
+               GO TO B990-EXIT.                                                 
+                                                                                
+            IF WS-SUB = 1                                                       
+               MOVE  L-MILLION TO WL-AREA                                       
+               MOVE  1         TO WS-LIT-SW                                     
+               MOVE  1         TO WS-AND-SW                                     
+               GO TO B880-LOAD-IN.                                              
+                                                                                
+            IF WS-SUB = 7                                                       
+               MOVE 1 TO WS-LIT-SW WS-AND-SW                                    
+               IF WS-FIRST-SUB = 7  AND                                         
+                  WS-DIGIT (WS-SUB) = 1                                         
+                  MOVE L-DOLLAR TO WL-AREA                                      
+                  GO TO B880-LOAD-IN                                            
+               ELSE                                                             
+                  MOVE L-DOLLARS TO WL-AREA                                     
+                  GO TO B880-LOAD-IN.                                           
+                                                                                
+            IF WS-SUB = 4 AND WS-THO-SW = 1                                     
+               MOVE 1 TO WS-AND-SW WS-LIT-SW                                    
+               MOVE L-THOUSAND TO WL-AREA                                       
+               GO TO B880-LOAD-IN.                                              
+                                                                                
+            IF WS-SUB = 9                                                       
+               MOVE 1 TO WS-LIT-SW                                              
+               IF WS-CNT-SW = ZERO                                              
+                  MOVE L-ONLY TO WL-AREA                                        
+                  GO TO B880-LOAD-IN                                            
+               ELSE                                                             
+               IF WS-CNT-SW = 1                                                 
+                  MOVE L-CENT TO WL-AREA                                        
+                  PERFORM R000-LOAD-IN                                          
+                  MOVE L-ONLY TO WL-AREA                                        
+                  GO TO B880-LOAD-IN                                            
+               ELSE                                                             
+                  MOVE L-CENTS TO WL-AREA                                       
+                  PERFORM R000-LOAD-IN                                          
+                  MOVE L-ONLY TO WL-AREA                                        
+                  GO TO B880-LOAD-IN.                                           
+            GO TO B990-EXIT.                                                    
+                                                                                
+       B880-LOAD-IN.                                                            
+            PERFORM R000-LOAD-IN.                                               
+                                                                                
+       B990-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      ******************************************************************        
+       R000-LOAD-IN SECTION.                                                    
+      ******************************************************************        
+      *------------------------------------------------------------*            
+      *     THIS SECTION LOADS THE WORDS INTO THE THREE LINES      *            
+      *     AND JUST KEEPS INCREMENTING A SUBSCRIPT.               *            
+      *------------------------------------------------------------*            
+                                                                                
+       R001-GO.                                                                 
+            IF WS-LIT-SW = 1                                                    
+               MOVE ZERO TO WS-LIT-SW                                           
+               GO TO R050-CONT.                                                 
+                                                                                
+            IF WS-SUB = 2 OR 5                                                  
+               GO TO R050-CONT.                                                 
+                                                                                
+       R025-ADD-TEST.                                                           
+            IF WS-AND-SW NOT = 1                                                
+               GO TO R050-CONT.                                                 
+                                                                                
+            MOVE ZERO         TO WS-AND-SW.                                     
+            MOVE WL-AREA      TO WL-AREA-SAVE.                                  
+            MOVE L-AND        TO WL-AREA.                                       
+            PERFORM R200-LOADUP.                                                
+            MOVE WL-AREA-SAVE TO WL-AREA.                                       
+                                                                                
+       R050-CONT.                                                               
+            PERFORM R200-LOADUP.                                                
+                                                                                
+       R099-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      ******************************************************************        
+       R200-LOADUP SECTION.                                                     
+      ******************************************************************        
+       R201-GO.                                                                 
+            ADD WL-ITEM1 WF-SUB GIVING WS-RESULT.                               
+            IF  WS-RESULT > WS-PLACE-COUNTER                                    
+                ADD 1 WS-PLACE-COUNTER GIVING WF-SUB                            
+                ADD 60 TO WS-PLACE-COUNTER.                                     
+                                                                                
+            PERFORM R500-LOAD VARYING WL-SUB FROM 2 BY 1 UNTIL                  
+                    WL-ITEM (WL-SUB) = L-X.                                     
+                                                                                
+       R490-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       R500-LOAD SECTION.                                                       
+      ******************************************************************        
+       R501-GO.                                                                 
+                                                                                
+            MOVE WL-ITEM (WL-SUB) TO WF-ITEM (WF-SUB).                          
+            ADD  1                TO WF-SUB.                                    
+            IF WL-ITEM (WL-SUB) = SPACE                                         
+               ADD   1     TO     WL-SUB                                        
+               MOVE  L-X   TO     WL-ITEM (WL-SUB)                              
+               SUBTRACT 1  FROM   WL-SUB.                                       
+                                                                                
+       R990-EXIT.                                                               
+            EXIT.                                                               
+

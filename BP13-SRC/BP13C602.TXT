@@ -1,0 +1,905 @@
+      *-----------------------*                                                 
+       IDENTIFICATION DIVISION.                                                 
+      *-----------------------*                                                 
+       PROGRAM-ID.    BP13C602.                                                 
+      *AUTHOR.        MCC.                                                      
+      *DATE-WRITTEN.  30/10/2000.                                               
+                                                                                
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (BP13)                                *            
+      * ========================================================== *            
+      *                                                            *            
+      *  OBJECTIVE : TO GENERATE A WEEKLY EXCEPTIONAL REPORT       *            
+      *              CAPTURING PREVIOUS WEEK CASES THAT ARE NOT/   *            
+      *              WRONGLY ON THE DEBARMENT FILE.                *            
+      *                                                            *            
+      *  INPUT FILES:                                              *            
+      *      1. BP13F410                                           *            
+      *      2. BP13K820                                           *            
+      *      3. P04K010                                            *            
+      *                                                            *            
+      *  OUTPUT FILES:                                             *            
+      *      1. BP13L602                                           *            
+      *                                                            *            
+      * ---------------------------------------------------------- *            
+      *   ITEMS THAT ARE TAGGED:                                   *            
+      *   1) LOAN TAG(Z1/Z2) - FOR PUBLIC RATE LOAN TAKER          *            
+      *                      - MARKET RATE/OUTRIGHT PURCHASE NO    *            
+      *                        NEED TO TAG                         *            
+      *   2) CA/CD TAG(CA/CD)- FOR CA=Y CASES WITH LOAN            *            
+      *                      - IF CA=Y, AND OUTRIGHT PURCHASE,     *            
+      *                        NO NEED TO TAG                      *            
+      *                      - NOT APPLICABLE FOR CA=N AND CA=E    *            
+      *   3) FRZ OCP TAG (77)- FOR CA=E/Y CASES                    *            
+      *                      - NOT APPLICABLE TO CA=N CASES        *            
+      *============================================================*            
+      *   UPDATED IN DEBARMENT SYSTEM VIA BATCH BP13D400 :         *            
+      *   1) LOAN TAG        - BP13C617                            *            
+      *   2) FREEZE OCCUPIER - BP13C644                            *            
+      *                        (NO TAG 77 IF CA-TAG = 'N')         *            
+      *   3) CA TAG          - BP13C631                            *            
+      *                        (NO CA/CD IF CA-TAG = 'E' OR 'N')   *            
+      *                        (OR LOAN=0)                         *            
+      *============================================================*            
+      * CHG REF  OIC  DATE       DESCRIPTION                       *            
+      * -------- ---- --------   ------------                      *            
+      * BP130943 MCC  01/11/2000 NEW PROGRAM.                      *            
+      * ========================================================== *            
+                                                                                
+      *---------------------*                                                   
+       ENVIRONMENT DIVISION.                                                    
+      *---------------------*                                                   
+       INPUT-OUTPUT SECTION.                                                    
+      *---------------------*                                                   
+                                                                                
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F410 ASSIGN TO BP13F410.                                  
+                                                                                
+           SELECT BP13K800 ASSIGN TO BP13K800                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  ACCESS MODE     IS RANDOM                                     
+                  RECORD KEY      IS K800-NUM-REGN                              
+                  FILE STATUS     IS WS-K800-STATUS.                            
+                                                                                
+           SELECT BP13K820  ASSIGN TO BP13K820                                  
+                  ORGANIZATION     IS INDEXED                                   
+                  ACCESS MODE      IS DYNAMIC                                   
+                  RECORD KEY       IS K820-KEY-FLD                              
+                  FILE STATUS      IS WS-K820-STATUS.                           
+                                                                                
+           SELECT P04K010 ASSIGN TO P04K010                                     
+                  ORGANIZATION IS INDEXED                                       
+                  ACCESS MODE IS DYNAMIC                                        
+                  RECORD KEY IS K010-PRIME-KEY                                  
+                  FILE STATUS IS WS-K010-STATUS.                                
+                                                                                
+           SELECT BP13L602 ASSIGN TO BP13L602.                                  
+                                                                                
+                                                                                
+      *---------------------*                                                   
+       DATA DIVISION.                                                           
+      *---------------------*                                                   
+       FILE SECTION.                                                            
+      *---------------------*                                                   
+                                                                                
+       FD  BP13F410   RECORD CONTAINS 2000 CHARACTERS                           
+                      BLOCK CONTAINS 0 RECORDS                                  
+                      LABEL RECORDS ARE STANDARD                                
+                      RECORDING MODE IS F.                                      
+       COPY BP13F410.                                                           
+                                                                                
+       FD  BP13K800                                                             
+           RECORD CONTAINS 2000 CHARACTERS.                                     
+       COPY BP13K800.                                                           
+                                                                                
+       FD  BP13K820                                                             
+           RECORD CONTAINS 400 CHARACTERS.                                      
+       COPY BP13K820.                                                           
+                                                                                
+       FD  P04K010                                                              
+           RECORD CONTAINS 300 CHARACTERS.                                      
+       COPY P04K010.                                                            
+                                                                                
+       FD  BP13L602                                                             
+           BLOCK  CONTAINS 0   RECORDS                                          
+           RECORD CONTAINS 132 CHARACTERS                                       
+           LABEL  RECORDS  ARE STANDARD                                         
+           RECORDING MODE  IS  F.                                               
+       01  BP13L602-PRINT-REC       PIC   X(132).                               
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-FILE-STATUS.                                                      
+           05  WS-K010-STATUS       PIC   9(2)  VALUE  ZEROES.                  
+           05  WS-K800-STATUS       PIC   9(2)  VALUE  ZEROES.                  
+           05  WS-K820-STATUS       PIC   9(2)  VALUE  ZEROES.                  
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05 WS-F410-READ          PIC   9(8)  VALUE  ZEROES.                  
+           05 WS-F410-WTH-NRIC      PIC   9(8)  VALUE  ZEROES.                  
+           05 WS-ERROR-CACD         PIC   9(8)  VALUE  ZEROES.                  
+           05 WS-ERROR-77           PIC   9(8)  VALUE  ZEROES.                  
+           05 WS-ERROR-Z1Z2         PIC   9(8)  VALUE  ZEROES.                  
+           05 WS-K820-FND           PIC   9(8)  VALUE  ZEROES.                  
+           05 WS-K820-NOTFND        PIC   9(8)  VALUE  ZEROES.                  
+           05 WS-K010-NOTFND        PIC   9(8)  VALUE  ZEROES.                  
+           05 WS-L602-WRITE         PIC   9(8)  VALUE  ZEROES.                  
+           05 WS-LINE-CNTR          PIC   9(8)  VALUE  60.                      
+           05 WS-PAGE-CNTR          PIC   9(8)  VALUE  ZEROES.                  
+           05 WS-REC-CNTR           PIC   9(8)  VALUE  ZEROES.                  
+           05 WS-CNT                PIC   9(2)  VALUE  ZEROES.                  
+                                                                                
+       01  WS-RPRT-FIELDS.                                                      
+           05  WS-NAME              PIC   X(30) VALUE  SPACES.                  
+           05  WS-NRIC              PIC   X(9)  VALUE  SPACES.                  
+           05  WS-REMARKS           PIC   X(50) VALUE  SPACES.                  
+                                                                                
+       01  WS-FILE-FLAGS.                                                       
+           05  WS-K010-FOUND        PIC   X(1)  VALUE  'N'.                     
+           05  WS-F410-FLAG         PIC   X(1)  VALUE  'N'.                     
+               88  WS-F410-EOF                  VALUE  'Y'.                     
+           05  WS-K820-FLAG         PIC   X(1)  VALUE  'N'.                     
+               88  WS-K820-FOUND                VALUE  'Y'.                     
+           05  WS-TAG-FOUND         PIC   X(1)  VALUE  'N'.                     
+               88  WS-TAG-NOTFND                VALUE  'N'.                     
+               88  WS-TAG-FND                   VALUE  'Y'.                     
+                                                                                
+       01 WS-DATE.                                                              
+          05  WS-CCYY               PIC   X(4)  VALUE SPACES.                   
+          05  WS-MM                 PIC   X(2)  VALUE SPACES.                   
+          05  WS-DD                 PIC   X(2)  VALUE SPACES.                   
+                                                                                
+       01 WS-VARIABLE.                                                          
+          05  WS-SEARCH-TAG         PIC   XX    VALUE SPACES.                   
+          05  WS-TYPE               PIC   X     VALUE SPACES.                   
+              88 WS-OUTRIGHT                    VALUE 'O'.                      
+              88 WS-MARKET                      VALUE 'M'.                      
+              88 WS-PUBLIC                      VALUE 'P'.                      
+                                                                                
+       01 WS-TABLE.                                                             
+          05  WS-REASON-CDE-TABLE   OCCURS 5  TIMES INDEXED BY WS-INDX.         
+              10  WS-K010-NRIC      PIC X(09) VALUE SPACES.                     
+              10  WS-REASON-CODE    PIC X(02) VALUE SPACES.                     
+                                                                                
+      *------------------------------------------------------------*            
+      *        LAY-OUT FOR CONTROL LISTING                         *            
+      *------------------------------------------------------------*            
+       01  L602-HDG1.                                                           
+           05  FILLER                   PIC X(14) VALUE 'BP13L602'.             
+           05  FILLER                   PIC X(8)  VALUE 'HDB3'.                 
+           05  FILLER                   PIC X(15) VALUE SPACES.                 
+           05  FILLER                   PIC X(39) VALUE                         
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER                   PIC X(15) VALUE SPACES.                 
+           05  FILLER                   PIC X(06) VALUE 'DATE :'.               
+           05  L602-PRT-DD              PIC X(02) VALUE 'DD'.                   
+           05  FILLER                   PIC X(01) VALUE '/'.                    
+           05  L602-PRT-MM              PIC X(02) VALUE 'MM'.                   
+           05  FILLER                   PIC X(01) VALUE '/'.                    
+           05  L602-PRT-CCYY            PIC X(04) VALUE 'CCYY'.                 
+           05  FILLER                   PIC X(8)  VALUE ' PAGE: '.              
+           05  L602-PAGE-NO             PIC ZZZZ9.                              
+                                                                                
+       01  L602-HDG2.                                                           
+           05  FILLER                   PIC X(38) VALUE SPACES.                 
+           05  FILLER                   PIC X(36) VALUE                         
+              'CREDIT ASSESSMENT EXCEPTIONAL REPORT'.                           
+           05  FILLER                   PIC X(48) VALUE SPACES.                 
+                                                                                
+       01  L602-HDG3.                                                           
+           05  FILLER               PIC X(42) VALUE SPACES.                     
+           05  FILLER               PIC X(28) VALUE                             
+               'SALES UNIT (AGREEMENT TEAM)'.                                   
+                                                                                
+       01  L602-HDG4.                                                           
+           05  FILLER               PIC X(01) VALUE SPACES.                     
+           05  FILLER               PIC X(04) VALUE 'S/NO'.                     
+           05  FILLER               PIC X(03) VALUE SPACES.                     
+           05  FILLER               PIC X(07) VALUE 'REGN NO'.                  
+           05  FILLER               PIC X(03) VALUE SPACES.                     
+           05  FILLER               PIC X(11) VALUE 'SCH A/C NO.'.              
+           05  FILLER               PIC X(15) VALUE SPACES.                     
+           05  FILLER               PIC X(04) VALUE 'NAME'.                     
+           05  FILLER               PIC X(16) VALUE SPACES.                     
+           05  FILLER               PIC X(07) VALUE 'I/C NO.'.                  
+           05  FILLER               PIC X(03) VALUE SPACES.                     
+           05  FILLER               PIC X(04) VALUE '*INT'.                     
+           05  FILLER               PIC X(03) VALUE SPACES.                     
+           05  FILLER               PIC X(07) VALUE 'TP DATE'.                  
+           05  FILLER               PIC X(20) VALUE SPACES.                     
+           05  FILLER               PIC X(07) VALUE 'REMARKS'.                  
+                                                                                
+       01  L602-HDG5.                                                           
+           05  FILLER               PIC X(74) VALUE SPACES.                     
+           05  FILLER               PIC X(04) VALUE 'RATE'.                     
+                                                                                
+       01  L602-DETAIL.                                                         
+           05  L602-SNO             PIC ZZ,ZZ9.                                 
+           05  FILLER               PIC X(02) VALUE SPACES.                     
+           05  L602-REGN-NO         PIC X(08).                                  
+           05  FILLER               PIC X(02) VALUE SPACES.                     
+           05  L602-SCH-ACC         PIC X(11).                                  
+           05  FILLER               PIC X(02) VALUE SPACES.                     
+           05  L602-NAME            PIC X(30).                                  
+           05  FILLER               PIC X(02) VALUE SPACES.                     
+           05  L602-NRIC            PIC X(09).                                  
+           05  FILLER               PIC X(03) VALUE SPACES.                     
+           05  L602-INT-RATE        PIC X(01).                                  
+           05  FILLER               PIC X(04) VALUE SPACES.                     
+           05  L602-TP-DATE         PIC X(10).                                  
+           05  FILLER               PIC X(02) VALUE SPACES.                     
+           05  L602-REMARKS         PIC X(40).                                  
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-CONTROL.                                                            
+      *-------------------------------------------------------------            
+            PERFORM 1000-OPEN-FILES   THRU 1000-EXIT.                           
+            PERFORM 2000-F410-READ    THRU 2000-EXIT.                           
+            PERFORM 3000-PROC-REC     THRU 3000-EXIT UNTIL WS-F410-EOF.         
+            PERFORM 9000-CLOSE-FILES  THRU 9000-EXIT.                           
+            STOP RUN.                                                           
+                                                                                
+       0000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       1000-OPEN-FILES.                                                         
+      *-------------------------------------------------------------            
+            OPEN INPUT  BP13F410                                                
+                        BP13K820                                                
+                        P04K010                                                 
+                 OUTPUT BP13L602.                                               
+                                                                                
+            IF WS-K820-STATUS NOT = ZEROS AND 97                                
+               DISPLAY 'OPENING ERROR, K820-STATUS ' WS-K820-STATUS             
+               MOVE WS-K820-STATUS          TO   RETURN-CODE                    
+               PERFORM 9000-CLOSE-FILES     THRU 9000-EXIT.                     
+                                                                                
+            IF WS-K010-STATUS NOT = ZEROES AND 97                               
+               DISPLAY 'OPEN FAILURE IN P04K010 : ' WS-K010-STATUS              
+               MOVE WS-K010-STATUS          TO   RETURN-CODE                    
+               PERFORM 9000-CLOSE-FILES     THRU 9000-EXIT.                     
+                                                                                
+            MOVE FUNCTION CURRENT-DATE(1:8) TO   WS-DATE.                       
+            MOVE WS-DD                      TO   L602-PRT-DD.                   
+            MOVE WS-MM                      TO   L602-PRT-MM.                   
+            MOVE WS-CCYY                    TO   L602-PRT-CCYY.                 
+                                                                                
+            PERFORM 6100-PRINT-PAGE-HDG     THRU 6100-EXIT.                     
+                                                                                
+       1000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2000-F410-READ.                                                          
+      *-------------------------------------------------------------            
+            MOVE SPACES TO       BP13F410-REC.                                  
+            INITIALIZE           BP13F410-REC.                                  
+                                                                                
+            READ BP13F410                                                       
+                   AT END MOVE 'Y' TO WS-F410-FLAG                              
+            GO TO 2000-EXIT.                                                    
+                                                                                
+            ADD 1 TO WS-F410-READ.                                              
+                                                                                
+       2000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3000-PROC-REC.                                                           
+      *-------------------------------------------------------------            
+            IF F410-AMT-LOAN = ZEROES                                           
+               MOVE 'O'                     TO   WS-TYPE                        
+            ELSE                                                                
+               IF F410-CDE-LOAN-SCH = '4'                                       
+                  MOVE 'M'                  TO   WS-TYPE                        
+               ELSE                                                             
+                  MOVE 'P'                  TO   WS-TYPE                        
+               END-IF                                                           
+            END-IF.                                                             
+                                                                                
+            IF F410-NRIC1 NOT EQUAL SPACES AND  LOW-VALUES                      
+               ADD 01                      TO   WS-F410-WTH-NRIC                
+               INITIALIZE                       WS-RPRT-FIELDS                  
+               MOVE F410-NAME1             TO   WS-NAME                         
+               MOVE F410-NRIC1             TO   WS-NRIC                         
+                                                K820-NUM-NRIC                   
+               MOVE F410-NUM-REGN          TO   K820-NUM-REGN                   
+               PERFORM 3100-PROCESS-K820   THRU 3100-EXIT.                      
+                                                                                
+            IF F410-NRIC2 NOT EQUAL SPACES AND  LOW-VALUES                      
+               ADD 01                      TO   WS-F410-WTH-NRIC                
+               INITIALIZE                       WS-RPRT-FIELDS                  
+               MOVE F410-NAME2             TO   WS-NAME                         
+               MOVE F410-NRIC2             TO   WS-NRIC                         
+                                                K820-NUM-NRIC                   
+               MOVE F410-NUM-REGN          TO   K820-NUM-REGN                   
+               PERFORM 3100-PROCESS-K820   THRU 3100-EXIT.                      
+                                                                                
+            IF F410-NRIC3 NOT EQUAL SPACES AND  LOW-VALUES                      
+               ADD 01                      TO   WS-F410-WTH-NRIC                
+               INITIALIZE                       WS-RPRT-FIELDS                  
+               MOVE F410-NAME3             TO   WS-NAME                         
+               MOVE F410-NRIC3             TO   WS-NRIC                         
+                                                K820-NUM-NRIC                   
+               MOVE F410-NUM-REGN          TO   K820-NUM-REGN                   
+               PERFORM 3100-PROCESS-K820   THRU 3100-EXIT.                      
+                                                                                
+            IF F410-NRIC4 NOT EQUAL SPACES AND  LOW-VALUES                      
+               ADD 01                      TO   WS-F410-WTH-NRIC                
+               INITIALIZE                       WS-RPRT-FIELDS                  
+               MOVE F410-NAME4             TO   WS-NAME                         
+               MOVE F410-NRIC4             TO   WS-NRIC                         
+                                                K820-NUM-NRIC                   
+               MOVE F410-NUM-REGN          TO   K820-NUM-REGN                   
+               PERFORM 3100-PROCESS-K820   THRU 3100-EXIT.                      
+                                                                                
+            PERFORM 2000-F410-READ         THRU 2000-EXIT.                      
+                                                                                
+       3000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------*                                                     
+       3100-PROCESS-K820.                                                       
+      *-------------------*                                                     
+      * IF CA-TAG = 'E' OR 'N' ¦   IF CA-TAG = 'N'    *                         
+      * NO NEED TO TAG CA/CD   ¦   NO NEED TO TAG 77  *                         
+                                                                                
+            READ BP13K820.                                                      
+      *     DISPLAY 'NUM REGN = 'K820-NUM-REGN.                                 
+      *     DISPLAY 'NUM CA   = 'K820-NUM-CA-TAG.                               
+      *     DISPLAY 'NUM LOAN = 'K820-NUM-LOAN-TAG.                             
+            IF WS-K820-STATUS = 00 OR 02                                        
+               IF F410-NUM-CA-TAG = 'E' OR 'N'                                  
+                  MOVE SPACES TO K820-NUM-CA-TAG                                
+               END-IF                                                           
+               IF F410-AMT-LOAN = ZEROES                                        
+                  MOVE SPACES TO K820-NUM-CA-TAG                                
+                  MOVE SPACES TO K820-NUM-LOAN-TAG                              
+               END-IF                                                           
+               IF F410-CDE-LOAN-SCH = '4'                                       
+                  MOVE SPACES TO K820-NUM-LOAN-TAG                              
+               END-IF                                                           
+               IF F410-NUM-CA-TAG = 'N'                                         
+                  MOVE SPACES TO K820-NUM-CA-TAG                                
+                  MOVE SPACES TO K820-NUM-FREEZE-OCCP-TAG                       
+               END-IF                                                           
+               ADD   01                            TO   WS-K820-FND             
+               PERFORM 3200-PROCESS-K010           THRU 3200-EXIT               
+            ELSE                                                                
+               IF WS-K820-STATUS = 23                                           
+                  DISPLAY 'BP13K820 RECORD NOT FOUND = ' K820-KEY-FLD           
+                  MOVE  SPACES                     TO   WS-NAME                 
+                  ADD   01                         TO   WS-K820-NOTFND          
+               ELSE                                                             
+                  DISPLAY 'ERROR READING BP13K820 = '  WS-K820-STATUS           
+               END-IF                                                           
+            END-IF.                                                             
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3200-PROCESS-K010.                                                       
+      *-------------------------------------------------------------            
+           PERFORM 4000-GET-K010-REC             THRU 4000-EXIT.                
+                                                                                
+      *    DISPLAY 'WS-K010-FOUND         = ' WS-K010-FOUND.                    
+      *    DISPLAY 'K820-FREEZE-OCCP-TAG  =' K820-NUM-FREEZE-OCCP-TAG.          
+      *    DISPLAY 'K820-NUM-LOAN-TAG     =' K820-NUM-LOAN-TAG.                 
+      *    DISPLAY 'K820-NUM-CA-TAG       =' K820-NUM-CA-TAG.                   
+                                                                                
+           IF WS-K010-FOUND = 'Y'                                               
+      *       PERFORM 4100-CHECK-TAG77           THRU 4100-EXIT                 
+              PERFORM 4200-CHECK-TAGCA           THRU 4200-EXIT                 
+              PERFORM 4300-CHECK-TAGZ1           THRU 4300-EXIT                 
+           ELSE                                                                 
+      *       DISPLAY 'CASE NOT FOUND IN DEBARMENT FILE -                       
+      *       ' ' F410-NUM-REGN WS-NRIC                                         
+              IF (K820-NUM-LOAN-TAG NOT = SPACES AND LOW-VALUES                 
+                                                 AND 'XX')                      
+                 IF K820-NUM-LOAN-TAG = 'Z1'                                    
+                    MOVE 'TAG Z1 REQUIRED FOR PUBLIC CASE' TO                   
+                                                        WS-REMARKS              
+                    ADD 1                          TO   WS-ERROR-Z1Z2           
+                    PERFORM 6000-PRINT-REPORT        THRU 6000-EXIT             
+                 END-IF                                                         
+                 IF K820-NUM-LOAN-TAG = 'Z2'                                    
+                    MOVE 'TAG Z2 REQUIRED FOR PUBLIC CASE' TO                   
+                                                        WS-REMARKS              
+                    ADD 1                          TO   WS-ERROR-Z1Z2           
+                    PERFORM 6000-PRINT-REPORT        THRU 6000-EXIT             
+                 END-IF                                                         
+              END-IF                                                            
+              IF (K820-NUM-CA-TAG NOT = SPACES AND LOW-VALUES AND 'XX')         
+                 IF WS-TYPE = 'M'                                               
+                    MOVE 'TAG CA/CD REQUIRED FOR MARKET CASE'  TO               
+                                                        WS-REMARKS              
+                 ELSE                                                           
+                    MOVE 'TAG CA/CD REQUIRED FOR PUBLIC CASE'  TO               
+                                                        WS-REMARKS              
+                 END-IF                                                         
+                 ADD 1                             TO   WS-ERROR-CACD           
+                 PERFORM 6000-PRINT-REPORT         THRU 6000-EXIT               
+              END-IF                                                            
+      *       IF (K820-NUM-FREEZE-OCCP-TAG NOT = SPACES AND LOW-VALUES          
+      *                                          AND 'XX')                      
+      *           MOVE 'TAG 77 REQUIRED'       TO   WS-REMARKS                  
+      *           ADD 1                        TO   WS-ERROR-77                 
+      *           PERFORM 6000-PRINT-REPORT        THRU 6000-EXIT               
+      *       END-IF                                                            
+              ADD 01  TO   WS-K010-NOTFND                                       
+                                                                                
+           END-IF.                                                              
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-----------------------*                                                 
+       4000-GET-K010-REC.                                                       
+      *-----------------------*                                                 
+            INITIALIZE              WS-TABLE.                                   
+            MOVE 01              TO WS-CNT.                                     
+            MOVE 'N'             TO WS-K010-FOUND.                              
+            MOVE SPACES          TO P04K010-REC.                                
+            MOVE WS-NRIC         TO K010-NUM-UINFIN.                            
+                                                                                
+      *     DISPLAY 'CHECK DEBARMENT'.                                          
+      *     DISPLAY WS-NRIC.                                                    
+      *     DISPLAY F410-NUM-SCH-ACC(1:9).                                      
+                                                                                
+            START P04K010 KEY >= K010-PRIME-KEY.                                
+            IF WS-K010-STATUS = 00 OR 02                                        
+               PERFORM UNTIL K010-NUM-UINFIN NOT = WS-NRIC                      
+                       OR    K010-PRIME-KEY      = HIGH-VALUES                  
+                  READ P04K010 NEXT                                             
+                  END-READ                                                      
+                  EVALUATE WS-K010-STATUS                                       
+                  WHEN 00                                                       
+                  WHEN 02                                                       
+      *                 DISPLAY K010-NUM-UINFIN                                 
+      *                 DISPLAY K010-EX-SCH-ACCTNO                              
+      *                 DISPLAY K010-DEBREF-AO                                  
+      *                 DISPLAY K010-REASON-CODE                                
+                     IF K010-NUM-UINFIN = WS-NRIC AND                           
+                        K010-EX-SCH-ACCTNO = F410-NUM-SCH-ACC(1:9) AND          
+                        K010-DEBREF-AO = 'SL'     AND                           
+                        K010-REASON-CODE = ('77' OR 'CA' OR 'CD' OR             
+                                            'Z1' OR 'Z2' )                      
+                           MOVE 'Y'                TO  WS-K010-FOUND            
+                           MOVE K010-NUM-UINFIN    TO                           
+                                                 WS-K010-NRIC(WS-CNT)           
+                           MOVE K010-REASON-CODE   TO                           
+                                                 WS-REASON-CODE(WS-CNT)         
+                           ADD 01                  TO WS-CNT                    
+      *                    DISPLAY WS-K010-FOUND                                
+      *                    DISPLAY K010-NUM-UINFIN                              
+      *                    DISPLAY K010-REASON-CODE                             
+                     END-IF                                                     
+                  WHEN OTHER                                                    
+                     DISPLAY 'ERROR READ P04K010, STATUS IS '           '       
+                                                       WS-K010-STATUS           
+                     MOVE HIGH-VALUES TO K010-PRIME-KEY                         
+                  END-EVALUATE                                                  
+               END-PERFORM                                                      
+            ELSE                                                                
+               ADD 01                    TO  WS-K010-NOTFND                     
+               DISPLAY 'ERROR READ P04K010,STATUS IS ' WS-K010-STATUS           
+            END-IF.                                                             
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+      *4100-CHECK-TAG77.                                                        
+      *-------------------------------------------------------------            
+      *---------------------------------------------------------------          
+      * EEO DANIEL TAN REQUESTED NOT TO PRINT 77 CASES.                         
+      * REMOVE THE COMMENT AT COL 7 TO MOVE REMARKS AND IT WILL BE              
+      * PRINTED, IF REQUIRED IN FUTURE                                          
+      *---------------------------------------------------------------          
+      *    IF (K820-NUM-FREEZE-OCCP     = 'Y'     OR                            
+      *        K820-NUM-FREEZE-OCCP-TAG = '77')                                 
+      *        MOVE K820-NUM-FREEZE-OCCP-TAG TO   WS-SEARCH-TAG                 
+      *        PERFORM 4400-SEARCH-TAG       THRU 4400-EXIT                     
+      *        IF WS-TAG-NOTFND                                                 
+      *           EVALUATE TRUE                                                 
+      *           WHEN WS-OUTRIGHT                                              
+      *                MOVE 'TAG 77 REQUIRED FOR OUTRIGHT CASE' TO              
+      *                                      WS-REMARKS                         
+      *                ADD 01                TO  WS-ERROR-77                    
+      *           WHEN WS-MARKET                                                
+      *                MOVE 'TAG 77 REQUIRED FOR MARKET CASE'   TO              
+      *                                      WS-REMARKS                         
+      *                ADD 01                TO  WS-ERROR-77                    
+      *           WHEN WS-PUBLIC                                                
+      *                MOVE 'TAG 77 REQUIRED FOR PUBLIC CASE'   TO              
+      *                                      WS-REMARKS                         
+      *                ADD 01                TO  WS-ERROR-77                    
+      *           END-EVALUATE                                                  
+      *           DISPLAY 'K820 TAG 77 FND, K010 TAG 77 NOTFND - '              
+      *                                      F410-NUM-REGN WS-NRIC              
+      *        END-IF                                                           
+      *    ELSE                                                                 
+      *        MOVE '77'                     TO   WS-SEARCH-TAG                 
+      *        PERFORM 4400-SEARCH-TAG       THRU 4400-EXIT                     
+      *        IF WS-TAG-FND                                                    
+      *          MOVE 'CODE 77 WRONGLY TAGGED'    TO WS-REMARKS                 
+      *          ADD 01                           TO WS-ERROR-77                
+      *          DISPLAY 'K820 NO TAG 77, K010 TAG 77 FND - '                   
+      *                   F410-NUM-REGN WS-NRIC                                 
+      *        END-IF                                                           
+      *    END-IF.                                                              
+                                                                                
+      *    IF WS-REMARKS EQUAL SPACES OR LOW-VALUES                             
+      *       CONTINUE                                                          
+      *    ELSE                                                                 
+      *       PERFORM 6000-PRINT-REPORT        THRU 6000-EXIT                   
+      *    END-IF.                                                              
+                                                                                
+      *4100-EXIT.                                                               
+      *    EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4200-CHECK-TAGCA.                                                        
+      *-------------------------------------------------------------            
+           IF  K820-NUM-CA-TAG = 'CA' OR 'CD'                                   
+               MOVE K820-NUM-CA-TAG             TO   WS-SEARCH-TAG              
+               PERFORM 4400-SEARCH-TAG          THRU 4400-EXIT                  
+               IF WS-TAG-NOTFND                                                 
+                  EVALUATE TRUE                                                 
+                  WHEN WS-MARKET                                                
+                       MOVE 'TAG CA/CD REQUIRED FOR MARKET CASE' TO             
+                                                WS-REMARKS                      
+                       ADD 01               TO  WS-ERROR-CACD                   
+                  WHEN WS-PUBLIC                                                
+                       MOVE 'TAG CA/CD REQUIRED FOR PUBLIC CASE' TO             
+                                                WS-REMARKS                      
+                       ADD 01               TO  WS-ERROR-CACD                   
+                  END-EVALUATE                                                  
+                  DISPLAY 'K820 TAG CA/CD FND, K010 TAG CA/CD NOTFND -          
+      -           ' ' F410-NUM-REGN WS-NRIC                                     
+               ELSE                                                             
+                  IF WS-OUTRIGHT                                                
+                     MOVE 'TAG CA/CD NOT REQUIRED FOR OUTRIGHT CASE' TO         
+                                                WS-REMARKS                      
+                     DISPLAY 'K010 CA/CD FND, NOT REQUIRED FOR OUTRIGHT         
+      -              ' CASE - '                 F410-NUM-REGN WS-NRIC           
+                     ADD 01                 TO  WS-ERROR-CACD                   
+                  END-IF                                                        
+               END-IF                                                           
+           ELSE                                                                 
+               MOVE 'CA'                    TO   WS-SEARCH-TAG                  
+               PERFORM 4400-SEARCH-TAG      THRU 4400-EXIT                      
+               IF WS-TAG-NOTFND                                                 
+                  MOVE 'CD'                 TO   WS-SEARCH-TAG                  
+                  PERFORM 4400-SEARCH-TAG   THRU 4400-EXIT                      
+                  IF WS-TAG-FND                                                 
+                     IF WS-OUTRIGHT                                             
+                        MOVE 'TAG CD NOT REQUIRED FOR OUTRIGHT CASE'            
+                                                 TO WS-REMARKS                  
+                        ADD 01                   TO WS-ERROR-CACD               
+                        DISPLAY 'NO NEED CD TAG, K010 TAG CD FND - '            
+                                                 F410-NUM-REGN WS-NRIC          
+                     ELSE                                                       
+                       IF (F410-NUM-CA-TAG = 'E' OR 'N')                        
+                          MOVE 'TAG CD NOT REQUIRED FOR CA=N/E CASE'            
+                                                 TO WS-REMARKS                  
+                          ADD 01                 TO WS-ERROR-CACD               
+                          DISPLAY 'NO NEED CD TAG, K010 TAG CD FND - '          
+                                                 F410-NUM-REGN WS-NRIC          
+                       END-IF                                                   
+                     END-IF                                                     
+                  END-IF                                                        
+               ELSE                                                             
+                  IF WS-OUTRIGHT                                                
+                     MOVE 'TAG CA NOT REQUIRED FOR OUTRIGHT CASE'               
+                                                TO WS-REMARKS                   
+                     ADD 01                     TO WS-ERROR-CACD                
+                     DISPLAY 'NO NEED CA TAG, K010 TAG CA FND - '               
+                                              F410-NUM-REGN WS-NRIC             
+                  ELSE                                                          
+                    IF (F410-NUM-CA-TAG = 'E' OR 'N')                           
+                       MOVE 'TAG CA NOT REQUIRED FOR CA=N/E CASE'               
+                                                TO WS-REMARKS                   
+                       ADD 01                     TO WS-ERROR-CACD              
+                       DISPLAY 'NO NEED CA TAG, K010 TAG CA FND - '             
+                                                F410-NUM-REGN WS-NRIC           
+                    END-IF                                                      
+                  END-IF                                                        
+               END-IF                                                           
+           END-IF.                                                              
+                                                                                
+           IF WS-REMARKS EQUAL SPACES OR LOW-VALUES                             
+              CONTINUE                                                          
+           ELSE                                                                 
+              PERFORM 6000-PRINT-REPORT        THRU 6000-EXIT                   
+           END-IF.                                                              
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4300-CHECK-TAGZ1.                                                        
+      *-------------------------------------------------------------            
+      *    DISPLAY '-------------------------'                                  
+      *    DISPLAY K820-NUM-LOAN-TAG                                            
+      *    DISPLAY WS-TAG-FOUND                                                 
+      *    DISPLAY WS-TYPE.                                                     
+                                                                                
+           IF  K820-NUM-LOAN-TAG = 'Z1'                                         
+               MOVE K820-NUM-LOAN-TAG         TO   WS-SEARCH-TAG                
+               PERFORM 4400-SEARCH-TAG        THRU 4400-EXIT                    
+               IF WS-TAG-NOTFND                                                 
+                  IF WS-PUBLIC                                                  
+                     MOVE 'TAG Z1 REQUIRED FOR PUBLIC CASE' TO                  
+                                              WS-REMARKS                        
+                     DISPLAY 'K820 TAG Z1 FND, K010 TAG Z1 NOTFND               
+      -              ' - '                    F410-NUM-REGN WS-NRIC             
+                     ADD 01               TO  WS-ERROR-Z1Z2                     
+                  END-IF                                                        
+               ELSE                                                             
+                  IF WS-OUTRIGHT                                                
+                     MOVE 'TAG Z1 NOT REQUIRED FOR OUTRIGHT CASE' TO            
+                                              WS-REMARKS                        
+                     DISPLAY 'K010 TAG Z1 FND, NOT REQUIRED IN OUTRIG           
+      -              'HT CASE - '              F410-NUM-REGN WS-NRIC            
+                     ADD 01                TO  WS-ERROR-Z1Z2                    
+                  ELSE                                                          
+                     IF WS-MARKET                                               
+                        MOVE 'TAG Z1 NOT REQUIRED FOR MARKET CASE'              
+                                           TO WS-REMARKS                        
+                        DISPLAY 'K010 TAG Z1 FND, NOT REQUIRED IN MAR           
+      -                 'KET CASE - '         F410-NUM-REGN WS-NRIC             
+                        ADD 01            TO  WS-ERROR-Z1Z2                     
+                     END-IF                                                     
+                  END-IF                                                        
+               END-IF                                                           
+           END-IF.                                                              
+                                                                                
+      *    DISPLAY 'CHECK FOR Z2'.                                              
+      *    DISPLAY K820-NUM-LOAN-TAG.                                           
+      *    DISPLAY WS-TYPE.                                                     
+      *    DISPLAY 'Z1'.                                                        
+                                                                                
+           IF  K820-NUM-LOAN-TAG = 'Z2'                                         
+               MOVE K820-NUM-LOAN-TAG         TO   WS-SEARCH-TAG                
+               PERFORM 4400-SEARCH-TAG        THRU 4400-EXIT                    
+      *        DISPLAY ' FOUND = ' WS-TAG-FOUND                                 
+               IF WS-TAG-NOTFND                                                 
+                  IF WS-PUBLIC                                                  
+                     MOVE 'TAG Z2 REQUIRED FOR PUBLIC CASE' TO                  
+                                              WS-REMARKS                        
+                     DISPLAY 'K820 TAG Z2 FND, K010 TAG Z2 NOTFND               
+      -              ' - '                    F410-NUM-REGN WS-NRIC             
+                     ADD 01               TO  WS-ERROR-Z1Z2                     
+                  END-IF                                                        
+               ELSE                                                             
+      *           DISPLAY ' YES FOUND '                                         
+                  IF WS-OUTRIGHT                                                
+                     MOVE 'TAG Z2 NOT REQUIRED FOR OUTRIGHT CASE' TO            
+                                              WS-REMARKS                        
+                     DISPLAY 'K010 TAG Z2 FND, NOT REQUIRED IN OUTRIG           
+      -              'HT CASE - '              F410-NUM-REGN WS-NRIC            
+                     ADD 01                TO  WS-ERROR-Z1Z2                    
+                  ELSE                                                          
+                     IF WS-MARKET                                               
+                        MOVE 'TAG Z2 NOT REQUIRED FOR MARKET CASE'              
+                                           TO WS-REMARKS                        
+                        DISPLAY 'K010 TAG Z2 FND, NOT REQUIRED IN MAR           
+      -                 'KET CASE - '         F410-NUM-REGN WS-NRIC             
+                        ADD 01            TO  WS-ERROR-Z1Z2                     
+                     END-IF                                                     
+                  END-IF                                                        
+               END-IF                                                           
+           END-IF.                                                              
+                                                                                
+      *    DISPLAY 'LOAN TAG = SPACES'.                                         
+      *    DISPLAY 'WS-TYPE = ' WS-TYPE.                                        
+      *    DISPLAY 'Z1'.                                                        
+                                                                                
+           IF  K820-NUM-LOAN-TAG = SPACES                                       
+               MOVE 'Z1'                      TO   WS-SEARCH-TAG                
+               PERFORM 4400-SEARCH-TAG        THRU 4400-EXIT                    
+               IF WS-TAG-NOTFND                                                 
+                     MOVE 'Z2'                   TO   WS-SEARCH-TAG             
+                     PERFORM 4400-SEARCH-TAG     THRU 4400-EXIT                 
+                     IF WS-TAG-FND                                              
+                       IF WS-OUTRIGHT                                           
+                          MOVE 'TAG Z2 NOT REQUIRED FOR OUTRIGHT CASE'          
+                                                 TO WS-REMARKS                  
+                          ADD 01                 TO WS-ERROR-Z1Z2               
+                          DISPLAY 'NO NEED Z2 TAG, K010 TAG Z2 FND - '          
+                                                 F410-NUM-REGN WS-NRIC          
+                       END-IF                                                   
+                       IF WS-MARKET                                             
+                          MOVE 'TAG Z2 NOT REQUIRED FOR MARKET CASE'            
+                                                TO WS-REMARKS                   
+                          ADD 01                TO WS-ERROR-Z1Z2                
+                          DISPLAY 'NO NEED Z2 TAG K010 TAG Z1 FND - '           
+                                                 F410-NUM-REGN WS-NRIC          
+                       END-IF                                                   
+                     END-IF                                                     
+               ELSE                                                             
+                  IF WS-OUTRIGHT                                                
+                     MOVE 'TAG Z1 NOT REQUIRED FOR OUTRIGHT CASE'               
+                                                TO WS-REMARKS                   
+                     ADD 01                     TO  WS-ERROR-Z1Z2               
+                     DISPLAY 'NO NEED Z1 TAG, K010 TAG Z1 FND - '               
+                                                 F410-NUM-REGN WS-NRIC          
+                  END-IF                                                        
+                  IF WS-MARKET                                                  
+                     MOVE 'TAG Z1 NOT REQUIRED FOR MARKET CASE'                 
+                                                TO WS-REMARKS                   
+                     ADD 01                     TO  WS-ERROR-Z1Z2               
+                     DISPLAY 'NO NEED Z1 TAG K010 TAG Z1 FND - '                
+                                                 F410-NUM-REGN WS-NRIC          
+                  END-IF                                                        
+               END-IF                                                           
+           END-IF.                                                              
+                                                                                
+           IF WS-REMARKS EQUAL SPACES OR LOW-VALUES                             
+              CONTINUE                                                          
+           ELSE                                                                 
+              PERFORM 6000-PRINT-REPORT        THRU 6000-EXIT                   
+           END-IF.                                                              
+                                                                                
+       4300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4400-SEARCH-TAG.                                                         
+      *-------------------------------------------------------------            
+           SET WS-INDX TO 1.                                                    
+           SEARCH WS-REASON-CDE-TABLE                                           
+               AT END                                                           
+                  MOVE 'N'                 TO WS-TAG-FOUND                      
+               WHEN WS-REASON-CODE(WS-INDX) = WS-SEARCH-TAG                     
+                  MOVE 'Y'                 TO WS-TAG-FOUND                      
+           END-SEARCH.                                                          
+                                                                                
+       4400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6000-PRINT-REPORT.                                                       
+      *-------------------------------------------------------------            
+           MOVE SPACES TO BP13L602-PRINT-REC.                                   
+                                                                                
+           IF WS-LINE-CNTR > 25                                                 
+              PERFORM 6100-PRINT-PAGE-HDG     THRU  6100-EXIT                   
+           END-IF.                                                              
+                                                                                
+           PERFORM    7000-MOVE-DETAILS       THRU  7000-EXIT.                  
+           PERFORM    8000-PRINT-DETAILS      THRU  8000-EXIT.                  
+                                                                                
+       6000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6100-PRINT-PAGE-HDG.                                                     
+      *-------------------------------------------------------------            
+           ADD   1                      TO     WS-PAGE-CNTR.                    
+           MOVE  0                      TO     WS-LINE-CNTR.                    
+           MOVE  WS-PAGE-CNTR           TO     L602-PAGE-NO.                    
+                                                                                
+           WRITE BP13L602-PRINT-REC     FROM   L602-HDG1 AFTER PAGE.            
+           WRITE BP13L602-PRINT-REC     FROM   L602-HDG2.                       
+           WRITE BP13L602-PRINT-REC     FROM   L602-HDG3.                       
+           MOVE SPACES                  TO     BP13L602-PRINT-REC.              
+           WRITE BP13L602-PRINT-REC     AFTER 2.                                
+                                                                                
+           WRITE BP13L602-PRINT-REC     FROM   L602-HDG4.                       
+           WRITE BP13L602-PRINT-REC     FROM   L602-HDG5.                       
+           MOVE SPACES                  TO     BP13L602-PRINT-REC.              
+           WRITE BP13L602-PRINT-REC     AFTER 2.                                
+                                                                                
+       6100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       7000-MOVE-DETAILS.                                                       
+      *-------------------------------------------------------------            
+           MOVE  F410-NUM-REGN          TO     L602-REGN-NO.                    
+           MOVE  F410-NUM-SCH-ACC       TO     L602-SCH-ACC.                    
+           MOVE  WS-NAME                TO     L602-NAME.                       
+           MOVE  WS-NRIC                TO     L602-NRIC.                       
+           MOVE  WS-TYPE                TO     L602-INT-RATE.                   
+                                                                                
+           STRING F410-DTE-KEY-ISSUE(7:2) '/'                                   
+                  F410-DTE-KEY-ISSUE(5:2) '/'                                   
+                  F410-DTE-KEY-ISSUE(1:4)                                       
+                  DELIMITED BY SIZE                                             
+                  INTO  L602-TP-DATE.                                           
+                                                                                
+           MOVE WS-REMARKS TO  L602-REMARKS.                                    
+           MOVE SPACES     TO  WS-REMARKS.                                      
+                                                                                
+       7000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       8000-PRINT-DETAILS.                                                      
+      *-------------------------------------------------------------            
+           ADD  1                       TO     WS-LINE-CNTR.                    
+           ADD  1                       TO     WS-REC-CNTR.                     
+           MOVE  WS-REC-CNTR            TO     L602-SNO.                        
+           WRITE BP13L602-PRINT-REC     FROM   L602-DETAIL.                     
+           MOVE SPACES                  TO     BP13L602-PRINT-REC.              
+           WRITE BP13L602-PRINT-REC.                                            
+                                                                                
+       8000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       9000-CLOSE-FILES.                                                        
+      *-------------------------------------------------------------            
+           IF WS-ERROR-77 = ZEROES AND WS-ERROR-CACD = ZEROES AND               
+              WS-ERROR-Z1Z2 = ZEROES                                            
+              MOVE '*------------------------*'  TO  BP13L602-PRINT-REC         
+              WRITE BP13L602-PRINT-REC AFTER 1                                  
+              MOVE 'NO DEBARMENT ERROR FOUND'    TO  BP13L602-PRINT-REC         
+              WRITE BP13L602-PRINT-REC AFTER 1                                  
+              MOVE '*------------------------*'  TO  BP13L602-PRINT-REC         
+              WRITE BP13L602-PRINT-REC AFTER 1                                  
+           END-IF.                                                              
+                                                                                
+            DISPLAY ' --------------------------------------'.                  
+            DISPLAY ' **** CONTROL LISTING FOR BP13C602 ****'.                  
+            DISPLAY ' --------------------------------------'.                  
+            DISPLAY 'NO REC READ FROM BP13F410            = '                   
+                                                 WS-F410-READ.                  
+            DISPLAY 'NO F410 REC WITH NRIC                = '                   
+                                                 WS-F410-WTH-NRIC.              
+            DISPLAY 'NO REC FOUND IN BP13K820             = '                   
+                                                 WS-K820-FND.                   
+            DISPLAY 'NO REC NOT FOUND IN BP13K820         = '                   
+                                                 WS-K820-NOTFND.                
+            DISPLAY 'NO CASES NOT FOUND IN BP04K010       = '                   
+                                                 WS-K010-NOTFND.                
+            DISPLAY ' '.                                                        
+            DISPLAY 'NO OF ERROR TAG 77    CASES          = '                   
+                                                 WS-ERROR-77.                   
+            DISPLAY 'NO OF ERROR TAG CA/CD CASES          = '                   
+                                                 WS-ERROR-CACD.                 
+            DISPLAY 'NO OF ERROR TAG Z1/Z2 CASES          = '                   
+                                                 WS-ERROR-Z1Z2.                 
+            DISPLAY 'NO REC WRITTEN TO BP13L602           = '                   
+                                                 WS-REC-CNTR.                   
+            DISPLAY ' '.                                                        
+                                                                                
+            CLOSE BP13F410                                                      
+                  BP13K820                                                      
+                  P04K010                                                       
+                  BP13L602.                                                     
+                                                                                
+            IF WS-K010-STATUS NOT = ZEROES AND 97                               
+               DISPLAY 'CLOSE FAILURE IN P04K010  : ' WS-K010-STATUS.           
+                                                                                
+            IF WS-K820-STATUS NOT = ZEROES AND 97                               
+               DISPLAY 'CLOSE FAILURE IN BP13K820 : ' WS-K820-STATUS.           
+                                                                                
+       9000-EXIT.                                                               
+            EXIT.                                                               
+

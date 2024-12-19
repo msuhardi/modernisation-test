@@ -1,0 +1,172 @@
+//BP13ACCB JOB (BP13P),'BP13ACCB',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//         NOTIFY=CSD0071                                                       
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//*=====================================================================        
+//* SHORTLIST 100% - PRIORITY (FOR CCA APPLICATIONS WITH CARE NEEDS)            
+//*=====================================================================        
+//* CHG REF  BY   ON       DESCRIPTION                                          
+//* -------- ---- -------- ---------------------------------------------        
+//* BP138600 IL5  10022021 NEW JCL FOR CCA                                      
+//*=====================================================================        
+//* VERIFY FILES BEFORE JOB RUN                                                 
+//*---------------------------------------------------------------------        
+//STEP0A   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//INPUT1   DD DSN=BP13.K010.TENDER,DISP=OLD                                     
+//INPUT2   DD DSN=BP13.K740.MATUREBA,DISP=OLD                                   
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+          VFY FILE(INPUT1)                                                      
+          VFY FILE(INPUT2)                                                      
+//*=====================================================================        
+//* REPRO VSAM FILE TO SEQUENTIAL FILE                                          
+//*---------------------------------------------------------------------        
+//STEP0B   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//OUTPUT1  DD DSN=BP13.F010.TENDER.ACCB,DISP=OLD                                
+//INPUT2   DD DSN=BP13.K740.MATUREBA,DISP=SHR                                   
+//OUTPUT2  DD DSN=BP13.F740.MATUREBA.ACCB,DISP=OLD                              
+//SYSIN    DD *                                                                 
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                       
+   REPRO INFILE(INPUT2)  OUTFILE(OUTPUT2)                                       
+//*---------------------------------------------------------------------        
+//* SORT OUT SUCCESSFUL ELDERLY APPLICATIONS                                    
+//*---------------------------------------------------------------------        
+//STEP01A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K740.MATUREBA,DISP=SHR                                   
+//SORTOUT  DD DSN=&&SUCCPS,DISP=(NEW,PASS),                                     
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            SPACE=(CYL,(70,10),RLSE)                                          
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,28,A),FORMAT=CH                                               
+   INCLUDE COND=((202,1,CH,EQ,C'P',OR,202,1,CH,EQ,C'S'),AND,                    
+                  226,3,CH,NE,C'  ')                                            
+//*---------------------------------------------------------------------        
+//* TO TAG CAA-SUCC                                                             
+//*---------------------------------------------------------------------        
+//STEP01B  EXEC PGM=BP13CZ4D,COND=(0,NE)                                        
+//BP13F740 DD DSN=&&SUCCPS,DISP=(OLD,DELETE)                                    
+//BP13K740 DD DSN=BP13.K740.MATUREBA,DISP=SHR,                                  
+//            AMP=('BUFND=23')                                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------              
+//*=====================================================================        
+//* SORT SHORTLISTED PRIORITY APPLICATIONS                                      
+//*---------------------------------------------------------------------        
+//STEP02A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K740.MATUREBA,DISP=SHR                                   
+//SORTOUT  DD DSN=&&F740SUCC,DISP=(NEW,PASS),                                   
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            SPACE=(CYL,(70,10),RLSE)                                          
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,28,A),FORMAT=CH                                               
+   INCLUDE COND=(226,3,CH,NE,C'   ')                                            
+//*=====================================================================        
+//* SORT NOT SHORTLISTED NON-PRIORITY APPLICATIONS                              
+//*---------------------------------------------------------------------        
+//STEP02B  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K740.MATUREBA,DISP=SHR                                   
+//SORTOUT  DD DSN=&&F740NP,DISP=(NEW,PASS),                                     
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            SPACE=(CYL,(70,10),RLSE)                                          
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,28,A),FORMAT=CH                                               
+   INCLUDE COND=(226,3,CH,EQ,C'   ',AND,                                        
+                (202,1,CH,EQ,C'T',OR,202,1,CH,EQ,C'Z'))                         
+//*------------------------------------------------------------------*          
+//* SORT OUT CCA=S CASES PAIRED WITH CCA=P CASES                     *          
+//*------------------------------------------------------------------*          
+//STEP02C  EXEC PGM=SORT                                                        
+//SORTJNF1 DD DSN=&&F740SUCC,DISP=(OLD,DELETE)                                  
+//SORTJNF2 DD DSN=&&F740NP,DISP=(OLD,DELETE)                                    
+//MATCH    DD DSN=BP13.F740.MATUREBA.PAIRED.NP,DISP=OLD                         
+//SYSIN DD *                                                                    
+   JOINKEYS FILE=F1,FIELDS=(177,8,A)                                            
+   JOINKEYS FILE=F2,FIELDS=(123,8,A)                                            
+   REFORMAT FIELDS=(F2:1,500)                                                   
+   OPTION COPY                                                                  
+   OUTFILE FNAMES=MATCH                                                         
+/*                                                                              
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*=====================================================================        
+//* SORT DAILY APPLICATIONS BY REFERENCE NUMBER                                 
+//*---------------------------------------------------------------------        
+//STEP03A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K740.MATUREBA,DISP=SHR                                   
+//SORTOUT  DD DSN=&&F740ALL,DISP=(NEW,PASS),                                    
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            SPACE=(CYL,(70,10),RLSE)                                          
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,28,A),FORMAT=CH                                               
+//*=====================================================================        
+//* PROFILE OF CCA APPLICATIONS BEFORE PIGEONHOLING                             
+//*---------------------------------------------------------------------        
+//*-----------------------------------------------------------------            
+//* PRINT REPORT FOR CCA APPLICATIONS                                           
+//*-----------------------------------------------------------------            
+//STEP03B  EXEC SAS,OPTIONS='MACRO DQUOTE,TEXT82',COND=(0,NE)                   
+//WORK     DD UNIT=SYSDA,SPACE=(CYL,(40,10))                                    
+//BP13F740 DD DSN=&&F740ALL,DISP=(OLD,DELETE)                                   
+//BP13L576 DD SYSOUT=8,DEST=IOM8                                                
+//BP13F001 DD SYSOUT=8,DEST=IOM8                                                
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13S576),DISP=SHR                             
+/*                                                                              
+//*=====================================================================        
+//* SORT DAILY APPLICATIONS BY REFERENCE NUMBER                                 
+//*---------------------------------------------------------------------        
+//STEP04   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F740.MATUREBA.PAIRED.NP,DISP=SHR                         
+//SORTOUT  DD DSN=&&F740U549,DISP=(NEW,PASS),                                   
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            SPACE=(CYL,(70,10),RLSE)                                          
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,28,A),FORMAT=CH                                               
+//*=====================================================================        
+//* TO PROCESS THE PIGEON-HOLDING FOR CCA APPLICATIONS WITH CARE NEEDS          
+//*---------------------------------------------------------------------        
+//STEP05   EXEC PGM=BP13U549,COND=(0,NE)                                        
+//STEPLIB  DD DSN=BP13.BATCH.LOADCOB.BALLOT,DISP=SHR                            
+//BP13F740 DD DSN=&&F740U549,DISP=(OLD,DELETE)                                  
+//BP13K010 DD DSN=BP13.K010.TENDER,DISP=OLD                                     
+//BP13K740 DD DSN=BP13.K740.MATUREBA,DISP=OLD,                                  
+//            AMP=('BUFND=23')                                                  
+//BP13F525 DD DSN=BP13.F525.APPL,DISP=MOD                                       
+//BP13L549 DD SYSOUT=8,DEST=IOM8                                                
+//P13L549A DD SYSOUT=8,DEST=IOM8                                                
+//SYSIN    DD *                                                                 
+JB                                                                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*=====================================================================        
+//* SORT DAILY APPLICATIONS BY REFERENCE NUMBER                                 
+//*---------------------------------------------------------------------        
+//STEP06A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K740.MATUREBA,DISP=SHR                                   
+//SORTOUT  DD DSN=&&F740ALL,DISP=(NEW,PASS),                                    
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            SPACE=(CYL,(70,10),RLSE)                                          
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,28,A),FORMAT=CH                                               
+//*=====================================================================        
+//* PROFILE OF CCA APPLICATIONS BEFORE PIGEONHOLING                             
+//*---------------------------------------------------------------------        
+//*-----------------------------------------------------------------            
+//* PRINT REPORT FOR CCA APPLICATIONS                                           
+//*-----------------------------------------------------------------            
+//STEP06B  EXEC SAS,OPTIONS='MACRO DQUOTE,TEXT82',COND=(0,NE)                   
+//WORK     DD UNIT=SYSDA,SPACE=(CYL,(40,10))                                    
+//BP13F740 DD DSN=&&F740ALL,DISP=(OLD,DELETE)                                   
+//BP13L576 DD SYSOUT=8,DEST=IOM8                                                
+//BP13F001 DD SYSOUT=8,DEST=IOM8                                                
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13S576),DISP=SHR                             
+/*                                                                              
+

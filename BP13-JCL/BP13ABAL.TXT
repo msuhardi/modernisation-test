@@ -1,0 +1,230 @@
+//BP13ABAL JOB (BP13P),'BP13ABAL',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//       NOTIFY=CSD0071                                                         
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//**************************************************************                
+//*    UPDATE BALANCE FLAT SUPPLY                              *                
+//*    NOTE THE DIFFERENCE                                     *                
+//*    - ADD BALANCE FLAT SUPPLY TO TENDER PROGRAM, PRINT      *                
+//*      REPORT ON BALANCE FLAT SUPPLY                         *                
+//*    - COMPUTE DEBARMENT QUOTA                               *                
+//**************************************************************                
+//* STEP 00 - 01 = LASER PRINTER JCL                                            
+//* STEP 02      = BACKUP TENDER, BALANCE FLAT, BALLOT FILES                    
+//* STEP 03      = UPDATE BALANCE FLATS SUPPLY FROM PREV QTR                    
+//* STEP 04      = COMPUTE 5% DEBARMENT FOR MATURE NT ONLY                      
+//* STEP 05      = BACKUP TENDER                                                
+//* STEP 06      = PRINT REPORT ON BALANCE FLAT SUPPLY FROM                     
+//*                PREVIOUS QUARTER                                             
+//* STEP 07 - 10 = PRINT FLAT SYPPLY REPORT                                     
+//* STEP 11 - 14 = COMPUTE FLAT FOR NHH/UPG                                     
+//* STEP 15 - 18 = COMPUTE FLAT FOR RESIDENT QUOTA                              
+//*-----------------------------------------------------------------            
+//* CHG REF  BY  ON       DESCRIPTION                                           
+//* -------- --- ------   -----------                                           
+//* BP130652 SRA 991012 - EXPAND F520,F740 RECL FROM 300 TO 500                 
+//* BP130836 LSB 000419 - MOVE C735 ADD BAL TO K010 IN JOB BP13AFLT             
+//* BP130871 SSS 000608 - RENAME EAALST TO EAALSS                               
+//* BP132412 CKK 031006 - ADD BALANCE JB QUOTA TO PA                            
+//* BP134861 EAA1 130422- EXPAND BP13K010 TO 600                                
+//******************************************************************            
+//*      VERIFY FILES BEFORE JOB RUN                                            
+//*-----------------------------------------------------------------            
+//STEP0A  EXEC PGM=IDCAMS,COND=(0,NE)                                           
+//INPUT1   DD DSN=BP13.K010.TENDER,DISP=OLD                                     
+//INPUT2   DD DSN=BP13.K712.FLATNHUG,DISP=OLD                                   
+//INPUT3   DD DSN=BP13.K910.TENDER.LOG,DISP=OLD                                 
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN   DD *                                                                  
+          VFY FILE(INPUT1)                                                      
+          VFY FILE(INPUT2)                                                      
+          VFY FILE(INPUT3)                                                      
+//**************************************************************                
+//*  TO SEND DYNAMIC JOB DESCRIPTOR ENTRIES AHEAD OF THE PRINT                  
+//*  DATASET, WITH DUPLICATE COPIES                                             
+//**************************************************************                
+//PRT01    EXEC PGM=IEBGENER                                                    
+//SYSUT1   DD *                                                                 
+$DJDE$ JDE=13C510,JDL=BP13,END;                                                 
+//FORMID   OUTPUT FORMS=1WD2,GROUPID=EAALSS2A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID)                                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*---------------------------------------------------------------------        
+//*  REPRO VSAM FILE TO SEQUENTIAL FILES                                        
+//*--------------------------------------------------------------------         
+//STEP02   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//OUTPUT1  DD DSN=BP13.F010.TENDER.MATNT,DISP=OLD                               
+//INPUT2   DD DSN=BP13.K030.BALFLAT,DISP=SHR                                    
+//OUTPUT2  DD DSN=BP13.F030.BALFLAT,DISP=OLD                                    
+//INPUT3   DD DSN=BP13.K720.RESIDENT,DISP=SHR                                   
+//OUTPUT3  DD DSN=BP13.F720.RESIDENT.MATNT,DISP=OLD                             
+//INPUT4   DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//OUTPUT4  DD DSN=BP13.F712.FLATNHUG.BAL,DISP=SHR                               
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                       
+   REPRO INFILE(INPUT2)  OUTFILE(OUTPUT2)                                       
+   REPRO INFILE(INPUT3)  OUTFILE(OUTPUT3)                                       
+   REPRO INFILE(INPUT4)  OUTFILE(OUTPUT4)                                       
+//*---------------------------------------------------------------------        
+//* COMPUTE THE TOTAL REQUEST TO BE DEBARRED BASES ON 95% OR MINIMUM            
+//* 10 UNITS OF THE NEW FLATS + BALANCE FLAT (EFF 3RD QTR)                      
+//*---------------------------------------------------------------------        
+//STEP04   EXEC PGM=BP13C564,COND=(0,NE)                                        
+//BP13K010 DD DSN=BP13.K010.TENDER,DISP=SHR                             00120000
+//BP13K015 DD DSN=BP13.K015.NEWTOWN,DISP=SHR                            00120000
+//BP13L564 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*--------------------------------------------------------------------         
+//* ADJUST BALANCE GRO QUOTA TO PA QUOTA AFTER PIGEONHOLING OF GRO              
+//*--------------------------------------------------------------------         
+//STEP14   EXEC PGM=BP13C766,COND=(0,NE)                                        
+//BP13K010 DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-----------------------------------------------------------------            
+//* ADD BALANCE JB TO TOT-PA, ADJUST MAX-PA-CAT1/CAT2/CAT3                      
+//* ADD BALANCE JB TO K712-TOT-PA, ADJUST PA-NHH/UPG                            
+//*-----------------------------------------------------------------            
+//STEP14A  EXEC PGM=BP13C598,COND=(0,NE)                                        
+//SYSPRINT DD SYSOUT=*                                                          
+//BP13K010 DD DSN=BP13.K010.TENDER,DISP=OLD                                     
+//BP13K712 DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* SORT THE BALLOT FILE FOR PA SCHEME EXCEPT 3 ROOM FLAT                       
+//*---------------------------------------------------------------------        
+//STEP11   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F520.BALLOT.NHHUPG,DISP=SHR                              
+//SORTOUT  DD DSN=&&F520NHUG,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(120,10),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD *                                                                 
+     SORT FIELDS=(78,2,A,211,2,A,213,3,A),FORMAT=CH                             
+     OMIT COND=(211,1,CH,EQ,C'3')                                               
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* COMPUTE NO OF TOTAL REQUESTS FOR NHH/UPG FOR PA ONLY                        
+//* OMIT 3 ROOM FLAT                                                            
+//*---------------------------------------------------------------------        
+//STEP12   EXEC PGM=BP13C544,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.MATUREPA,DISP=SHR                            
+//BP13F520 DD DSN=&&F520NHUG,DISP=(OLD,PASS)                                    
+//BP13K712 DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* COMPUTE NO OF UNITS SET ASIDE FOR NHH/UPG FOR PRIORITY SCHEME               
+//* COMPUTE FOR PA SCHEME                                                       
+//*---------------------------------------------------------------------        
+//STEP13   EXEC PGM=BP13C545,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.MATUREPA,DISP=SHR                            
+//BP13K010 DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//BP13K712 DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* PRINT REPORT ON REQUEST/FLAT FOR NHH/UPG FOR EACH COHORT                    
+//*---------------------------------------------------------------------        
+//STEP13A  EXEC PGM=BP13C552,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.MATUREPA,DISP=SHR                            
+//BP13K712 DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//BP13L552 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT OUT 4,5,E FLATS TO PRINT FLAT SUPPLY BEFORE PIGEONHOLING               
+//*---------------------------------------------------------------------        
+//STEP15   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//SORTOUT  DD DSN=&&K0104RMA,DISP=(,PASS),                                      
+//            UNIT=(SYSDA,1),SPACE=(CYL,(5,3),RLSE),                            
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=0)                                
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,5,A),FORMAT=CH                                                
+   INCLUDE COND=(4,2,CH,EQ,C'4 ',OR,                                            
+       4,2,CH,EQ,C'5 ',OR,                                                      
+       4,2,CH,EQ,C'E ')                                                         
+//*---------------------------------------------------------------------        
+//* PRINT TENDER PROGRAM SUMMARY REPORT BEFORE PIGEON-HOLING                    
+//*---------------------------------------------------------------------        
+//STEP16   EXEC PGM=BP13C524,COND=(0,NE)                                        
+//SYSPRINT DD SYSOUT=*                                                          
+//BP13F010 DD DSN=&&K0104RMA,DISP=(OLD,PASS)                                    
+//BP13F713 DD DSN=BP13.F713.PIGEON.BALANCE,DISP=SHR                             
+//BP13L524 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* PRINT REPORT ON REQUEST/FLAT FOR NHH/UPG FOR EACH COHORT                    
+//*---------------------------------------------------------------------        
+//STEP19   EXEC PGM=BP13C552,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.MATUREPA,DISP=SHR                            
+//BP13K712 DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//BP13L552 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT BY NEW TOWN AND FLAT TYPE                                              
+//*---------------------------------------------------------------------        
+//STEP20   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F740.MATUREBA.PA,DISP=SHR                                
+//SORTOUT  DD DSN=&&F740NTFT,DISP=(,PASS),                                      
+//            UNIT=(SYSDA,1),SPACE=(CYL,(50,10),RLSE),                          
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(187,3,A,211,2,A),FORMAT=CH                                      
+//*------------------------------------------------------------------           
+//*  ADJUST THE RESIDENT QUOTA DUE TO THE UNSUCC PRIORITY CASE                  
+//*  ADDED TO PA PIGEONHOLING                                                   
+//*------------------------------------------------------------------           
+//STEP21   EXEC PGM=BP13C787,COND=(0,NE)                                        
+//BP13F520 DD DSN=&&F740NTFT,DISP=(OLD,PASS)                                    
+//BP13K720 DD DSN=BP13.K720.RESIDENT,DISP=OLD                                   
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+/*                                                                              
+//*-------------------------------------------------------------------          
+//* COMPUTE THE MINIMUM FLAT QUOTA FOR RESIDENT AND                             
+//*         THE MAXIMUM FLAT QUOTA FOR NON-RESIDENT                             
+//*-------------------------------------------------------------------          
+//STEP22   EXEC PGM=BP13C749,COND=(0,NE)                                        
+//BP13K720 DD DSN=BP13.K720.RESIDENT,DISP=SHR                                   
+//BP13K010 DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+/*                                                                              
+//*--------------------------------------------------------------------         
+//* PRINT REPORT ON RESIDENT FILE INFO ON TOTAL RES/NON-RES, FLAT QUOTA         
+//* RES/NON-RES, TOTAL-REG-RES/NON-RES                                          
+//*--------------------------------------------------------------------         
+//STEP23   EXEC PGM=BP13C752,COND=(0,NE)                                        
+//BP13K720 DD DSN=BP13.K720.RESIDENT,DISP=SHR                                   
+//BP13K010 DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//BP13F713 DD DSN=BP13.BLANK.CHAR20,DISP=SHR                                    
+//BP13L752 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//****************************************************************              
+//* END BP13ABAL                                                                
+//****************************************************************              
+

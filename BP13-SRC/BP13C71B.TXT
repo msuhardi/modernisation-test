@@ -1,0 +1,224 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C71B.                                                 
+      *AUTHOR.        LSB1.                                                     
+      *DATE-WRITTEN.  07/07/2007.                                               
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (SOC)                                 *            
+      * ========================================================== *            
+      *                                                            *            
+      *  OBJECTIVE  :  UPDATE BP13K595 RESERVE LIST STATUS TO 'Z'  *            
+      *                STATUS = Z (SUCC UNDER RESERVE LIST)        *            
+      *                                                            *            
+      *  INPUT FILE :  1. BP13F700                                 *            
+      *  I-O FILE   :  1. BP13K595                                 *            
+      *                                                            *            
+      * ---------------------------------------------------------- *            
+      * BP133097 LSB 20070707 UPDATE SUCC -CDOE                    *            
+      * ========================================================== *            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-4341.                                               
+       OBJECT-COMPUTER. IBM-4341.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+           SELECT BP13F700 ASSIGN TO BP13F700.                                  
+                                                                                
+           SELECT BP13K595 ASSIGN TO BP13K595                                   
+                ORGANIZATION IS INDEXED                                         
+                ACCESS MODE IS DYNAMIC                                          
+                RECORD KEY IS K595-KEY-FLD                                      
+                FILE STATUS IS K595-STATUS.                                     
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD  BP13K595                                                             
+           RECORD CONTAINS 500 CHARACTERS.                                      
+       COPY BP13K595.                                                           
+                                                                                
+       FD  BP13F700                                                             
+           RECORD CONTAINS 500 CHARACTERS                                       
+           RECORDING MODE IS F                                                  
+           LABEL RECORDS ARE STANDARD.                                          
+       COPY BP13F700.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+       01  WS-COUNTERS.                                                         
+           05  NO-F700-READ        PIC 9(5)    VALUE ZEROS.                     
+           05  NO-K595-READ        PIC 9(5)    VALUE ZEROS.                     
+           05  NO-K595-REWRITE     PIC 9(5)    VALUE ZEROS.                     
+           05  NO-RESERVE          PIC 9(5)    VALUE ZEROS.                     
+                                                                                
+       01  WS-DATE                  PIC X(8)  VALUE SPACES.                     
+       01  WS-EOF-F700              PIC X     VALUE 'N'.                        
+       01  WS-EOF-K595              PIC X     VALUE 'N'.                        
+       01  K595-STATUS              PIC 99    VALUE 0.                          
+       01  WS-RESERVE-FD            PIC X(1)  VALUE SPACES.                     
+       01  WS-REGN-NOTFD            PIC X(1)  VALUE SPACES.                     
+       01  WS-K595-KEYFLD           PIC X(25) VALUE SPACES.                     
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN.                                                               
+           PERFORM 1000-OPENING-ROUTINE  THRU 1000-EXIT.                        
+           PERFORM 2000-READ-F700        THRU 2000-EXIT.                        
+           PERFORM 4000-PROCESS-FILES    THRU 4000-EXIT                         
+                   UNTIL WS-EOF-F700 = 'Y'.                                     
+           PERFORM 9000-CLOSING-ROUTINE   THRU 9000-EXIT.                       
+                                                                                
+       0000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       1000-OPENING-ROUTINE.                                                    
+      *-------------------------------------------------------------            
+           OPEN INPUT BP13F700                                                  
+                I-O   BP13K595.                                                 
+                                                                                
+           IF K595-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'BP13K595 - OPEN ERROR, STATUS: ' K595-STATUS             
+              MOVE K595-STATUS TO RETURN-CODE                                   
+              PERFORM 9000-CLOSING-ROUTINE   THRU 9000-EXIT.                    
+                                                                                
+           MOVE FUNCTION CURRENT-DATE TO WS-DATE.                               
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       2000-READ-F700.                                                          
+      *-------------------------------------------------------------            
+            READ BP13F700 AT END                                                
+                 MOVE 'Y' TO WS-EOF-F700                                        
+                 GO TO 2000-EXIT.                                               
+            ADD 1 TO NO-F700-READ.                                              
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4000-PROCESS-FILES.                                                      
+      *-------------------------------------------------------------            
+           MOVE SPACES TO WS-EOF-K595.                                          
+           MOVE SPACES TO WS-RESERVE-FD.                                        
+           MOVE SPACES TO WS-REGN-NOTFD.                                        
+           MOVE SPACES TO WS-K595-KEYFLD.                                       
+                                                                                
+           PERFORM 4100-START-K595 THRU 4100-EXIT                               
+           IF WS-RESERVE-FD = 'Y'                                               
+              PERFORM 4300-UPDATE-K595-REC THRU 4300-EXIT                       
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-READ-F700 THRU 2000-EXIT.                               
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4100-START-K595.                                                         
+      *-------------------------------------------------------------            
+            MOVE SPACES        TO K595-KEY-FLD.                                 
+            MOVE F700-NUM-REF  TO K595-NUM-REGN-REF.                            
+            START BP13K595 KEY >= K595-KEY-FLD                                  
+            EVALUATE K595-STATUS                                                
+            WHEN 00                                                             
+                 PERFORM 4200-READ-K595 THRU 4200-EXIT                          
+                 PERFORM 4250-PROCESS-RESERVE THRU 4250-EXIT                    
+                 UNTIL WS-RESERVE-FD = 'Y' OR                                   
+                       WS-REGN-NOTFD = 'Y' OR                                   
+                       WS-EOF-K595 = 'Y'                                        
+                                                                                
+            WHEN 23                                                             
+                 DISPLAY 'START BP13K595 - REC NOTFD, REF: '                    
+                          F700-NUM-REF                                          
+                          ' REGN: ' F700-NUM-REGN                               
+                          ' NRIC1: ' F700-NUM-NRIC1                             
+            WHEN OTHER                                                          
+                 DISPLAY 'START BP13K595 - ERROR READ, STATUS: '                
+                          K595-STATUS ' REF= ' F700-NUM-REF                     
+                          ' REGN: ' F700-NUM-REGN                               
+                 PERFORM 9000-CLOSING-ROUTINE   THRU 9000-EXIT                  
+            END-EVALUATE.                                                       
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4200-READ-K595.                                                          
+      *-------------------------------------------------------------            
+            READ BP13K595 NEXT AT END                                           
+                 MOVE 'Y' TO WS-EOF-K595                                        
+                 GO TO 4200-EXIT.                                               
+                                                                                
+            ADD 1 TO NO-K595-READ.                                              
+            DISPLAY '4200-KEY= ' K595-KEY-FLD                                   
+                    ' STATUS = ' K595-CDE-REQUEST-STATUS.                       
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4250-PROCESS-RESERVE.                                                    
+      *-------------------------------------------------------------            
+            IF F700-NUM-RANDOM   = K595-NUM-RANDOM AND                          
+               F700-DTE-BALLOT   = K595-DTE-BALLOT AND                          
+               F700-NUM-ALLO-CAT = K595-NUM-ALLO-CAT AND                        
+               F700-CDE-NT1      = K595-CDE-NT1 AND                             
+               K595-CDE-REQUEST-STATUS = 'W'                                    
+                 MOVE K595-KEY-FLD TO WS-K595-KEYFLD                            
+                 MOVE 'Y' TO WS-RESERVE-FD                                      
+                 ADD 1 TO NO-RESERVE                                            
+            END-IF.                                                             
+                                                                                
+            IF K595-NUM-REGN >  F700-NUM-REGN                                   
+                 MOVE 'Y' TO WS-REGN-NOTFD                                      
+            END-IF.                                                             
+                                                                                
+            PERFORM 4200-READ-K595 THRU 4200-EXIT.                              
+                                                                                
+       4250-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4300-UPDATE-K595-REC.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE WS-K595-KEYFLD TO K595-KEY-FLD                                  
+           READ BP13K595                                                        
+                                                                                
+           EVALUATE K595-STATUS                                                 
+           WHEN 00                                                              
+                MOVE 'Z' TO K595-CDE-REQUEST-STATUS                             
+                MOVE F700-NUM-REGN TO K595-NUM-REGN                             
+                REWRITE BP13K595-REC                                            
+                ADD 1 TO NO-K595-REWRITE                                        
+                DISPLAY ' UPD-REGN: ' K595-KEY-FLD                              
+                        ', CDE-STATUS : ' K595-CDE-REQUEST-STATUS               
+           WHEN OTHER                                                           
+                DISPLAY 'BP13K595 - REWRITE ERROR, STATUS: '                    
+                         K595-STATUS ' KEY=' K595-KEY-FLD                       
+                PERFORM 9000-CLOSING-ROUTINE   THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       4300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       9000-CLOSING-ROUTINE.                                                    
+      *-------------------------------------------------------------            
+           CLOSE BP13K595                                                       
+                 BP13F700.                                                      
+                                                                                
+           IF K595-STATUS NOT = '00'                                            
+             DISPLAY 'CLOSING ERROR K595, STATUS ' K595-STATUS                  
+             MOVE K595-STATUS TO RETURN-CODE.                                   
+                                                                                
+           DISPLAY ' BP13C71B CONTROL TOTAL '.                                  
+           DISPLAY '---------------------------------'.                         
+           DISPLAY ' NO. OF F700 REC READ   > ' NO-F700-READ.                   
+           DISPLAY ' NO. OF K595 REC UPDATE > ' NO-K595-REWRITE.                
+           DISPLAY ' NO. OF RESERVE REC FD  > ' NO-RESERVE.                     
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

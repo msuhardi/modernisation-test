@@ -1,0 +1,701 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C332.                                                 
+       AUTHOR.        ACK.                                                      
+      *DATE-WRITTEN.  18/08/91.                                                 
+      *DATE-AMENDMENT.                                                          
+      *DATE-COMPILED.                                                           
+      *SKIP3                                                                    
+      *REMARKS.                                                                 
+      *****************************************************************         
+      *                                                               *         
+      *  SYSTEM NAME :  SYSTEM OF COMMITMENT                          *         
+      *  SYSTEM ID   :  BP13                                          *         
+      *                                                               *         
+      *  OBJECTIVE :  AT TIME OF BOOKING AND IF KEYS AVAILABLE, SYSTEM*         
+      *               TO PRINT THOSE ACCEPTED CASES SEPARATELY FROM   *         
+      *               KEYS NOT AVAILABLE IN LISTS. FOR ACCEPTED CASES *         
+      *               WHERE KEYS ARE AVAILABLE, EXPIRED-DATE-FOR-TAKE-*         
+      *               POSSESSION WILL BE PRINTED.                     *         
+      *                                                               *         
+      * CHG-NO  BY   ON       DESCRIPTION                             *         
+      * ------  --  ------   ------------                             *         
+      * C910481 ACK 180891   AS ABOVE                                 *         
+      * I920616 LJL 090792   TO INCLUDE CODE SA-TP FOR KEY-AVAIL CASE *         
+      * C930144 LMS 190393   TO REPLACE F901 BY F310                  *         
+      * SOCPH8B LITO200993   TO ACCESS PIDB FOR FLAT ADDRESS VIA      *         
+      *                      BP13C904 ROUNTINE.                       *         
+      * C9504B6 EG1  80895   TO ADD OCS DUE DATE TO BP13L333          *         
+      * BP130278 LSB 250397  GO TO 310-EXIT IN PARA 310-              *         
+      * BP130418 SGK 040698  TO CATER FOR Y2K.                        *         
+      *****************************************************************         
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT BP13F310 ASSIGN TO BP13F310.                                  
+           SELECT BM06K110 ASSIGN TO BM06K110                                   
+                  ACCESS MODE IS RANDOM                                         
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY IS K110-KEY-FLD                                    
+                  FILE STATUS IS BM06K110-STATUS.                               
+           SELECT BM06K100 ASSIGN TO BM06K100                                   
+                  ACCESS MODE IS RANDOM                                         
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY IS K100-KEY-FLD                                    
+                  FILE STATUS IS BM06K100-STATUS.                               
+           SELECT BP13K800 ASSIGN TO BP13K800                                   
+                  ACCESS MODE IS RANDOM                                         
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY IS K800-NUM-REGN                                   
+                  FILE STATUS IS K800-STATUS.                                   
+           SELECT BP13L332 ASSIGN TO BP13L332.                                  
+           SELECT BP13L333 ASSIGN TO BP13L333.                                  
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD  BM06K110                                                             
+           RECORD CONTAINS 500 CHARACTERS.                                      
+       COPY BM06K110.                                                           
+                                                                                
+       FD  BM06K100                                                             
+           RECORD CONTAINS 500 CHARACTERS.                                      
+       COPY BM06K100.                                                           
+                                                                                
+       FD  BP13F310                                                             
+           BLOCK  CONTAINS 0 CHARACTERS                                         
+           RECORD CONTAINS 150 CHARACTERS                                       
+           LABEL RECORDS IS STANDARD.                                           
+       COPY BP13F310.                                                           
+                                                                                
+       FD  BP13K800                                                             
+           RECORD CONTAINS 2000 CHARACTERS.                                     
+       COPY BP13K800.                                                           
+                                                                                
+       FD  BP13L332                                                             
+           RECORDING MODE IS F                                                  
+           RECORD CONTAINS 132 CHARACTERS                                       
+           LABEL RECORDS ARE OMITTED.                                           
+       01  BP13L332-REC                   PIC X(132).                           
+                                                                                
+       FD  BP13L333                                                             
+           RECORDING MODE IS F                                                  
+           RECORD CONTAINS 132 CHARACTERS                                       
+           LABEL RECORDS ARE OMITTED.                                           
+       01  BP13L333-REC                   PIC X(132).                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+       01  WS-EDITED-DATE.                                                      
+           05  WS-DD               PIC 99     VALUE 99.                         
+           05  FILLER              PIC X      VALUE '/'.                        
+           05  WS-MM               PIC 99     VALUE 99.                         
+           05  FILLER              PIC X      VALUE '/'.                        
+           05  WS-CCYY             PIC 9(4)   VALUE 9999.                       
+                                                                                
+       01  WS-DATE.                                                             
+           05  WS-EDIT-DD          PIC XX     VALUE SPACES.                     
+           05  FILLER              PIC X      VALUE '/'.                        
+           05  WS-EDIT-MM          PIC XX     VALUE SPACES.                     
+           05  FILLER              PIC X      VALUE '/'.                        
+           05  WS-EDIT-CCYY        PIC X(4)   VALUE SPACES.                     
+                                                                                
+       01  WS-STATUS.                                                           
+           05  WS-STATUS1          PIC X.                                       
+           05  FILLER              PIC X.                                       
+                                                                                
+       01  WS-CUR-DATE.                                                         
+           05  WS-CCYY             PIC 9(4)   VALUE 9999.                       
+           05  WS-MM               PIC 99     VALUE 99.                         
+           05  WS-DD               PIC 99     VALUE 99.                         
+                                                                                
+       01  WS-TEMP-DATE.                                                        
+           05  WS-TEMP-CCYY        PIC 9(4)   VALUE 9999.                       
+           05  WS-TEMP-MM          PIC 99     VALUE 99.                         
+           05  WS-TEMP-DD          PIC 99     VALUE 99.                         
+                                                                                
+                                                                                
+       01  WS-SCH-ACC-NO.                                                       
+           05  WS-SCHEME           PIC X(4)     VALUE SPACES.                   
+           05  WS-ACC              PIC X(4)     VALUE SPACES.                   
+           05  WS-CHK              PIC X        VALUE SPACES.                   
+           05  WS-ACC-TY           PIC X(2)     VALUE SPACES.                   
+                                                                                
+       01  BM06K110-STATUS         PIC 99       VALUE ZEROS.                    
+       01  BM06K100-STATUS         PIC 99       VALUE ZEROS.                    
+       01  K800-STATUS             PIC 99       VALUE ZEROS.                    
+       01  WS-FND-K800             PIC X.                                       
+       01  WS-EOF-F310             PIC X.                                       
+       01  WS-PREV-NT              PIC X(3).                                    
+                                                                                
+       01  WS-CNT-READ-F310        PIC 9(5)     VALUE ZEROS.                    
+       01  WS-BYPASS               PIC 9(5)     VALUE ZEROS.                    
+       01  WS-TOT-ACCEPT           PIC 9(5)     VALUE ZEROS.                    
+       01  WS-CNT-ACCEPT-0         PIC 9(5)     VALUE ZEROS.                    
+       01  WS-CNT-ACCEPT-1         PIC 9(5)     VALUE ZEROS.                    
+       01  WS-CNT-REJECT           PIC 9(5)     VALUE ZEROS.                    
+       01  WS-CNT-KEY              PIC 9(5)     VALUE ZEROS.                    
+       01  WS-CNT-NO-KEY           PIC 9(5)     VALUE ZEROS.                    
+                                                                                
+       01  WS-LISTING-CONTROLS.                                                 
+           05  WS-NOKEY         PIC 9           VALUE 0.                        
+           05  WS-SEQ           PIC 9(4)        VALUE 0.                        
+           05  CNT-PAGE-0       PIC 9(5)        VALUE ZEROS.                    
+           05  CNT-NUM-LINE-0   PIC 9(5)        VALUE ZEROS.                    
+           05  WS-SEQ1          PIC 9(4)        VALUE 0.                        
+           05  CNT-PAGE-1       PIC 9(5)        VALUE ZEROS.                    
+           05  CNT-NUM-LINE-1   PIC 9(5)        VALUE ZEROS.                    
+                                                                                
+      ******************************************************************        
+      *    BP13L332-REC                                                *        
+      ******************************************************************        
+                                                                                
+       01  L332-PR-HEAD-01.                                                     
+           05  FILLER              PIC X(8)      VALUE 'BP13L332'.              
+           05  FILLER              PIC X(4)      VALUE SPACES .                 
+           05  FILLER              PIC X(8)      VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(35)     VALUE SPACES.                  
+           05  FILLER              PIC X(20)     VALUE                          
+                                    'SYSTEM OF COMMITMENT'.                     
+           05  FILLER              PIC X(20)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE :'.                
+           05  L332-DATE           PIC X(10).                                   
+           05  FILLER              PIC X(4)      VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'PAGE : '.               
+           05  L332-PAGENO         PIC ZZZZ9 .                                  
+           05  FILLER              PIC X(6)      VALUE SPACES.                  
+                                                                                
+       01  L332-PR-HEAD-02.                                                     
+           05  FILLER              PIC X(50)     VALUE SPACES.                  
+           05  FILLER              PIC X(32)     VALUE                          
+           'BOOKING SYSTEM (AGREEMENT  TEAM)'.                                  
+           05  FILLER              PIC X(68)     VALUE SPACES.                  
+                                                                                
+       01  L332-PR-HEAD-03.                                                     
+           05  FILLER              PIC X(35)     VALUE SPACES.                  
+           05  FILLER              PIC X(62)     VALUE                          
+           'DETAIL LIST KEY AVAILABLE CASES (AFTER BOOKING)         '.          
+           05  FILLER              PIC X(35)     VALUE SPACES.                  
+                                                                                
+       01  L332-PR-HEAD-04.                                                     
+           05  FILLER              PIC X(5)     VALUE SPACES.                   
+           05  FILLER              PIC X(11)    VALUE                           
+           'NEW TOWN : '.                                                       
+           05  L332-NEWTOWN        PIC X(3)     VALUE SPACES.                   
+                                                                                
+       01  L332-PR-HEAD-05.                                                     
+           05  FILLER              PIC X(12)     VALUE                          
+               ' NO. REGN-NO'.                                                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(11)     VALUE                          
+               'SCH-ACCT-NO'.                                                   
+           05  FILLER              PIC X(6)      VALUE SPACES.                  
+           05  FILLER              PIC X(4)      VALUE 'ROOM'.                  
+           05  FILLER              PIC X(6)      VALUE SPACES.                  
+           05  FILLER              PIC X(5)      VALUE                          
+               'BLK'.                                                           
+           05  FILLER              PIC X         VALUE SPACES.                  
+           05  FILLER              PIC X(11)     VALUE                          
+               'STREET NAME'.                                                   
+           05  FILLER              PIC X(21)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE                          
+               'UNIT-NO'.                                                       
+           05  FILLER              PIC X(5)      VALUE SPACES.                  
+           05  FILLER              PIC X(9)      VALUE 'ALLOC TAG'.             
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  FILLER              PIC X(9)      VALUE                          
+               'ALLOC SCH'.                                                     
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(16)     VALUE                          
+               'DATE OF BOOKING'.                                               
+                                                                                
+                                                                                
+       01  L332-PR-DETAIL.                                                      
+           05  L332-NO             PIC ZZZ9.                                    
+           05  FILLER              PIC X         VALUE SPACES.                  
+           05  L332-CUR-REGN-NO    PIC X(8).                                    
+           05  FILLER              PIC X         VALUE SPACES.                  
+           05  L332-SCHEME         PIC 9(4).                                    
+           05  L332-D1             PIC X.                                       
+           05  L332-ACC            PIC 9(4).                                    
+           05  L332-D2             PIC X.                                       
+           05  L332-CHK            PIC 9.                                       
+           05  L332-D3             PIC X.                                       
+           05  L332-ACC-TYPE       PIC 9(2).                                    
+           05  FILLER              PIC X(4)      VALUE SPACES.                  
+           05  L332-ROOM           PIC X(2).                                    
+           05  FILLER              PIC X(6)      VALUE SPACES.                  
+           05  L332-BLK-NO         PIC X(5).                                    
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  L332-STREET-NAME    PIC X(30).                                   
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  FILLER              PIC X         VALUE '#'.                     
+           05  L332-LEVEL-NO       PIC X(2).                                    
+           05  L332-D4             PIC X.                                       
+           05  L332-MAIN-UNIT      PIC X(4).                                    
+           05  L332-SUB-UNIT       PIC X(3).                                    
+           05  FILLER              PIC X(4)      VALUE SPACES.                  
+           05  L332-ALLOC-TAG      PIC X(2).                                    
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  L332-CDE-SA-TP      PIC X(5).                                    
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  L332-ALLOC-SCH      PIC X(3).                                    
+           05  FILLER              PIC X(10)     VALUE SPACES.                  
+           05  L332-DTE-BOOKING    PIC X(10)     VALUE SPACES.                  
+                                                                                
+                                                                                
+       01  L333-PR-HEAD-01.                                                     
+           05  FILLER              PIC X(8)      VALUE 'BP13L333'.              
+           05  FILLER              PIC X(4)      VALUE SPACES .                 
+           05  FILLER              PIC X(8)      VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(35)     VALUE SPACES.                  
+           05  FILLER              PIC X(20)     VALUE                          
+                                    'SYSTEM OF COMMITMENT'.                     
+           05  FILLER              PIC X(20)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE :'.                
+           05  L333-DATE           PIC X(10).                                   
+           05  FILLER              PIC X(4)      VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'PAGE : '.               
+           05  L333-PAGENO         PIC ZZZZ9 .                                  
+           05  FILLER              PIC X(6)      VALUE SPACES.                  
+                                                                                
+       01  L333-PR-HEAD-02.                                                     
+           05  FILLER              PIC X(50)     VALUE SPACES.                  
+           05  FILLER              PIC X(32)     VALUE                          
+           'BOOKING SYSTEM (AGREEMENT  TEAM)'.                                  
+           05  FILLER              PIC X(68)     VALUE SPACES.                  
+                                                                                
+       01  L333-PR-HEAD-03.                                                     
+           05  FILLER              PIC X(35)     VALUE SPACES.                  
+           05  FILLER              PIC X(62)     VALUE                          
+           'DETAIL LIST KEY NOT AVAILABLE CASES (AFTER BOOKING)  '.             
+           05  FILLER              PIC X(35)     VALUE SPACES.                  
+                                                                                
+       01  L333-PR-HEAD-04.                                                     
+           05  FILLER              PIC X(5)     VALUE SPACES.                   
+           05  FILLER              PIC X(11)    VALUE                           
+           'NEW TOWN : '.                                                       
+           05  L333-NEWTOWN        PIC X(3)     VALUE SPACES.                   
+                                                                                
+                                                                                
+       01  L333-PR-HEAD-05.                                                     
+           05  FILLER              PIC X(12)     VALUE                          
+               ' NO. REGN-NO'.                                                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(11)     VALUE                          
+               'SCH-ACCT-NO'.                                                   
+           05  FILLER              PIC X(3)      VALUE SPACES.                  
+           05  FILLER              PIC X(4)      VALUE 'ROOM'.                  
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  FILLER              PIC X(5)      VALUE                          
+               'BLK'.                                                           
+           05  FILLER              PIC X(11)     VALUE                          
+               'STREET NAME'.                                                   
+           05  FILLER              PIC X(20)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE                          
+               'UNIT-NO'.                                                       
+           05  FILLER              PIC X(5)      VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'ALC-TAG'.               
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE                          
+               'ALC-SCH'.                                                       
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE                          
+               'BOOKING DATE'.                                                  
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE                          
+               'OCS DUE DATE'.                                                  
+                                                                                
+       01  L333-PR-DETAIL.                                                      
+           05  L333-NO             PIC ZZZ9.                                    
+           05  FILLER              PIC X         VALUE SPACES.                  
+           05  L333-CUR-REGN-NO    PIC X(8).                                    
+           05  FILLER              PIC X         VALUE SPACES.                  
+           05  L333-SCHEME         PIC 9(4).                                    
+           05  L333-D1             PIC X.                                       
+           05  L333-ACC            PIC 9(4).                                    
+           05  L333-D2             PIC X.                                       
+           05  L333-CHK            PIC 9.                                       
+           05  L333-D3             PIC X.                                       
+           05  L333-ACC-TYPE       PIC 9(2).                                    
+           05  FILLER              PIC X(1)      VALUE SPACES.                  
+           05  L333-ROOM           PIC X(2).                                    
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  L333-BLK-NO         PIC X(5).                                    
+           05  FILLER              PIC X(1)      VALUE SPACES.                  
+           05  L333-STREET-NAME    PIC X(30).                                   
+           05  FILLER              PIC X(1)      VALUE SPACES.                  
+           05  FILLER              PIC X         VALUE '#'.                     
+           05  L333-LEVEL-NO       PIC X(2).                                    
+           05  L333-D4             PIC X.                                       
+           05  L333-MAIN-UNIT      PIC X(4).                                    
+           05  L333-SUB-UNIT       PIC X(3).                                    
+           05  FILLER              PIC X(3)      VALUE SPACES.                  
+           05  L333-ALLOC-TAG      PIC X(2).                                    
+           05  FILLER              PIC X(1)      VALUE SPACES.                  
+           05  L333-CDE-SA-TP      PIC X(5).                                    
+           05  FILLER              PIC X(1)      VALUE SPACES.                  
+           05  L333-ALLOC-SCH      PIC X(3).                                    
+           05  FILLER              PIC X(5)      VALUE SPACES.                  
+           05  L333-DTE-BOOKING    PIC X(10)     VALUE SPACES.                  
+           05  FILLER              PIC X(5)      VALUE SPACES.                  
+           05  L333-OCS-DUE-DTE    PIC X(10)     VALUE SPACES.                  
+                                                                                
+                                                                                
+       01  L332-PR-LINE.                                                        
+           05  FILLER              PIC X(28)     VALUE SPACES.                  
+           05  FILLER              PIC X(41)     VALUE                          
+               '---------------------------------------'.                       
+                                                                                
+                                                                                
+      *****************************************************************         
+       PROCEDURE DIVISION.                                                      
+      *****************************************************************         
+       MAIN.                                                                    
+           PERFORM 000-OPENING-ROUTINE THRU 000-EXIT.                           
+           PERFORM 100-READ-F310       THRU 100-EXIT.                           
+           PERFORM 200-PROCESS-F310    THRU 200-EXIT                            
+               UNTIL WS-EOF-F310 = 'Y'.                                         
+           PERFORM 999-CLOSING-ROUTINE.                                         
+                                                                                
+      *--------------------*                                                    
+       000-OPENING-ROUTINE.                                                     
+      *--------------------*                                                    
+           OPEN INPUT  BP13F310                                                 
+                       BM06K100                                                 
+                       BM06K110                                                 
+                       BP13K800                                                 
+                OUTPUT BP13L332                                                 
+                       BP13L333.                                                
+                                                                                
+           IF BM06K100-STATUS NOT = 0 AND 97                                    
+              DISPLAY 'OPENING ERROR, K100-STATUS ' BM06K100-STATUS             
+              PERFORM 999-CLOSING-ROUTINE.                                      
+                                                                                
+           IF BM06K110-STATUS NOT = 0 AND 97                                    
+              DISPLAY 'OPENING ERROR, K110-STATUS ' BM06K110-STATUS             
+              PERFORM 999-CLOSING-ROUTINE.                                      
+           IF K800-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'OPENING ERROR, K800-STATUS ' K800-STATUS                 
+              PERFORM 999-CLOSING-ROUTINE.                                      
+                                                                                
+           MOVE 60                   TO CNT-NUM-LINE-0                          
+                                        CNT-NUM-LINE-1.                         
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------*                                                          
+       100-READ-F310.                                                           
+      *--------------*                                                          
+            READ BP13F310 AT END                                                
+                MOVE 'Y' TO WS-EOF-F310                                         
+                GO TO 100-EXIT.                                                 
+                                                                                
+            ADD 1                     TO WS-CNT-READ-F310.                      
+                                                                                
+            IF   F310-CDE-TRANS = 'AI' OR 'AW' OR 'AA' OR 'AS'                  
+                 NEXT SENTENCE                                                  
+            ELSE                                                                
+                 ADD 1 TO WS-BYPASS                                             
+                 GO TO 100-READ-F310.                                           
+                                                                                
+            MOVE F310-CDE-NT TO WS-PREV-NT.                                     
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      **************************************************************            
+       200-PROCESS-F310.                                                        
+      **************************************************************            
+      *                                                            *            
+      *      IF KEY AVAILABLE DATE NOT = '0000000'                 *            
+      *         THEN PRINT REPORT                                  *            
+      *      ELSE                                                  *            
+      *          READ BP13F310                                     *            
+      **************************************************************            
+           MOVE F310-SCH-ACC TO K110-KEY-FLD.                                   
+                                                                                
+           READ BM06K110                                                        
+           IF BM06K110-STATUS = 0                                               
+              PERFORM 300-READ-K100 THRU 300-EXIT                               
+              PERFORM 310-READ-K800 THRU 310-EXIT                               
+           ELSE                                                                 
+                DISPLAY 'READ ERROR, K110-STATUS = ' BM06K110-STATUS            
+                DISPLAY 'K110-KEY-FLD = ' K110-KEY-FLD.                         
+                                                                                
+           PERFORM 100-READ-F310 THRU 100-EXIT.                                 
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------*                                                          
+       300-READ-K100.                                                           
+      *--------------*                                                          
+           MOVE K110-AIX1          TO K100-KEY-FLD.                             
+           READ BM06K100.                                                       
+           IF BM06K100-STATUS = 0                                               
+                CONTINUE                                                        
+           ELSE                                                                 
+                DISPLAY 'READ ERROR, BM06K100 = ' BM06K100-STATUS               
+                DISPLAY 'K100-KEY-FLD  = ' K110-AIX1                            
+                GO TO 310-EXIT.                                                 
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *--------------*                                                          
+       310-READ-K800.                                                           
+      *--------------*                                                          
+           MOVE F310-REGN-NO       TO K800-NUM-REGN.                            
+           READ BP13K800.                                                       
+           IF K800-STATUS = 0                                                   
+             IF K110-DTE-KEY-AVAIL NOT = ZERO AND SPACES AND LOW-VALUES         
+                    PERFORM 600-PROCESS-LIST THRU 600-EXIT                      
+              ELSE                                                              
+                    PERFORM 601-PROCESS-LIST THRU 601-EXIT                      
+           ELSE                                                                 
+                DISPLAY 'READ ERROR, K800-STATUS = ' K800-STATUS                
+                DISPLAY 'K800-NUM-REGN = ' K800-NUM-REGN                        
+                GO TO 310-EXIT.                                                 
+                                                                                
+       310-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ************************************************************              
+       600-PROCESS-LIST.                                                        
+      ************************************************************              
+      *                                                          *              
+      * PRINT DETAIL LIST OF KEY AVAIBALE CASES                  *              
+      *                                                          *              
+      ************************************************************              
+                                                                                
+            IF WS-PREV-NT = L332-NEWTOWN                                        
+               IF CNT-NUM-LINE-0 > 53                                           
+                  PERFORM 700-PRINT-LIST-0 THRU 700-EXIT                        
+               ELSE                                                             
+                  NEXT SENTENCE                                                 
+            ELSE                                                                
+               MOVE WS-PREV-NT  TO L332-NEWTOWN                                 
+               MOVE 0 TO WS-SEQ                                                 
+               PERFORM 700-PRINT-LIST-0 THRU 700-EXIT.                          
+                                                                                
+            ADD 1                  TO WS-SEQ                                    
+            ADD 1                  TO WS-CNT-ACCEPT-0                           
+            ADD 1                  TO WS-TOT-ACCEPT.                            
+            MOVE WS-SEQ            TO L332-NO.                                  
+            MOVE 0                 TO WS-NOKEY.                                 
+            PERFORM 650-PREP-LIST  THRU 650-EXIT.                               
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ************************************************************              
+       601-PROCESS-LIST.                                                        
+      ************************************************************              
+      *                                                          *              
+      * KEY NOT AVAILABLE CASES                                  *              
+      *                                                          *              
+      ************************************************************              
+                                                                                
+                                                                                
+            IF WS-PREV-NT = L333-NEWTOWN                                        
+               IF CNT-NUM-LINE-1 > 53                                           
+                  PERFORM 701-PRINT-LIST-0 THRU 701-EXIT                        
+               ELSE                                                             
+                  NEXT SENTENCE                                                 
+            ELSE                                                                
+               MOVE WS-PREV-NT TO L333-NEWTOWN                                  
+               MOVE 0 TO WS-SEQ1                                                
+               PERFORM 701-PRINT-LIST-0 THRU 701-EXIT.                          
+                                                                                
+            ADD 1                  TO WS-CNT-ACCEPT-1.                          
+            ADD 1                  TO WS-SEQ1                                   
+            ADD 1                  TO WS-TOT-ACCEPT.                            
+            MOVE WS-SEQ1           TO L333-NO.                                  
+            MOVE 1                 TO WS-NOKEY.                                 
+            PERFORM 651-PREP-LIST  THRU 651-EXIT.                               
+                                                                                
+       601-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *--------------*                                                          
+       650-PREP-LIST.                                                           
+      *--------------*                                                          
+            MOVE F310-REGN-NO         TO L332-CUR-REGN-NO.                      
+            MOVE '-'                  TO L332-D1 L332-D2                        
+                                         L332-D3 L332-D4.                       
+            MOVE K110-SCHEME          TO L332-SCHEME.                           
+            MOVE K110-ACC             TO L332-ACC.                              
+            MOVE K110-CHK             TO L332-CHK.                              
+            MOVE K110-ACC-TYPE        TO L332-ACC-TYPE.                         
+                                                                                
+            MOVE F310-NME-STREET      TO L332-STREET-NAME.                      
+            MOVE F310-NUM-LEVEL       TO L332-LEVEL-NO.                         
+            MOVE F310-NUM-MAIN(1:4)   TO L332-MAIN-UNIT.                        
+            MOVE F310-NUM-BLK         TO L332-BLK-NO.                           
+            MOVE F310-NUM-MAIN(5:1)   TO L332-SUB-UNIT.                         
+            MOVE F310-CDE-TYP-ACTUSE  TO L332-ROOM.                             
+                                                                                
+            MOVE K800-NUM-ALLO-SCHEME  TO L332-ALLOC-SCH.                       
+            MOVE F310-CDE-TRANS        TO L332-ALLOC-TAG.                       
+                                                                                
+            MOVE K110-DTE-ACCEPTANCE   TO WS-TEMP-DATE.                         
+            MOVE WS-TEMP-CCYY          TO WS-EDIT-CCYY.                         
+            MOVE WS-TEMP-MM            TO WS-EDIT-MM.                           
+            MOVE WS-TEMP-DD            TO WS-EDIT-DD.                           
+            MOVE WS-DATE               TO L332-DTE-BOOKING.                     
+                                                                                
+            MOVE 'SA-TP'               TO L332-CDE-SA-TP                        
+            WRITE BP13L332-REC         FROM L332-PR-DETAIL AFTER 1              
+            ADD 1                      TO CNT-NUM-LINE-0.                       
+                                                                                
+       650-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *--------------*                                                          
+       651-PREP-LIST.                                                           
+      *--------------*                                                          
+            MOVE F310-REGN-NO         TO L333-CUR-REGN-NO.                      
+            MOVE '-'                  TO L333-D1 L333-D2                        
+                                         L333-D3 L333-D4.                       
+            MOVE K110-SCHEME          TO L333-SCHEME.                           
+            MOVE K110-ACC             TO L333-ACC.                              
+            MOVE K110-CHK             TO L333-CHK.                              
+            MOVE K110-ACC-TYPE        TO L333-ACC-TYPE.                         
+                                                                                
+            MOVE F310-NME-STREET      TO L333-STREET-NAME.                      
+            MOVE F310-NUM-LEVEL       TO L333-LEVEL-NO.                         
+            MOVE F310-NUM-MAIN(1:4)   TO L333-MAIN-UNIT.                        
+            MOVE F310-NUM-BLK         TO L333-BLK-NO.                           
+            MOVE F310-NUM-MAIN(5:1)   TO L332-SUB-UNIT.                         
+            MOVE F310-CDE-TYP-ACTUSE  TO L333-ROOM.                             
+                                                                                
+            MOVE K800-NUM-ALLO-SCHEME  TO L333-ALLOC-SCH.                       
+            MOVE F310-CDE-TRANS        TO L333-ALLOC-TAG.                       
+                                                                                
+            MOVE K110-DTE-ACCEPTANCE   TO WS-TEMP-DATE.                         
+            MOVE WS-TEMP-CCYY          TO WS-EDIT-CCYY.                         
+            MOVE WS-TEMP-MM            TO WS-EDIT-MM.                           
+            MOVE WS-TEMP-DD            TO WS-EDIT-DD.                           
+            MOVE WS-DATE               TO L333-DTE-BOOKING.                     
+                                                                                
+            MOVE K100-DTE-OCS-DUE      TO WS-TEMP-DATE.                         
+            MOVE WS-TEMP-CCYY          TO WS-EDIT-CCYY.                         
+            MOVE WS-TEMP-MM            TO WS-EDIT-MM.                           
+            MOVE WS-TEMP-DD            TO WS-EDIT-DD.                           
+            MOVE WS-DATE               TO L333-OCS-DUE-DTE.                     
+                                                                                
+            MOVE SPACES                TO L333-CDE-SA-TP                        
+            WRITE BP13L333-REC         FROM L333-PR-DETAIL AFTER 1              
+            ADD 1                      TO CNT-NUM-LINE-1.                       
+                                                                                
+       651-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       700-PRINT-LIST-0.                                                        
+      *----------------------------------------------------------------*        
+      * FOR ACCEPTED CASES WHERE KEYS ARE AVAILABLE                    *        
+      *----------------------------------------------------------------*        
+            PERFORM 750-PRINT-HEADER-0 THRU 750-EXIT.                           
+            MOVE SPACES           TO BP13L332-REC.                              
+            ADD 1                 TO CNT-NUM-LINE-0.                            
+                                                                                
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       701-PRINT-LIST-0.                                                        
+      *----------------------------------------------------------------*        
+      * FOR ACCEPTED CASES WHERE KEYS ARE NOT AVAILABLE                *        
+      *----------------------------------------------------------------*        
+            PERFORM 751-PRINT-HEADER-0 THRU 751-EXIT.                           
+                                                                                
+            MOVE SPACES           TO BP13L333-REC.                              
+            ADD 1                 TO CNT-NUM-LINE-1.                            
+                                                                                
+       701-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------*                                                     
+       750-PRINT-HEADER-0.                                                      
+      *-------------------*                                                     
+            ADD 1                 TO CNT-PAGE-0.                                
+            MOVE CNT-PAGE-0       TO L332-PAGENO.                               
+            MOVE 8                TO CNT-NUM-LINE-0.                            
+                                                                                
+            MOVE FUNCTION CURRENT-DATE(1:8)  TO WS-CUR-DATE.                    
+            MOVE CORR WS-CUR-DATE TO WS-EDITED-DATE.                            
+            MOVE WS-EDITED-DATE   TO L332-DATE.                                 
+                                                                                
+            WRITE BP13L332-REC FROM L332-PR-HEAD-01 AFTER PAGE.                 
+            WRITE BP13L332-REC FROM L332-PR-HEAD-02 AFTER 1.                    
+            WRITE BP13L332-REC FROM L332-PR-HEAD-03 AFTER 1.                    
+            WRITE BP13L332-REC FROM L332-PR-HEAD-04 AFTER 3.                    
+            WRITE BP13L332-REC FROM L332-PR-HEAD-05 AFTER 1.                    
+                                                                                
+            MOVE SPACES           TO BP13L332-REC.                              
+            WRITE BP13L332-REC.                                                 
+                                                                                
+       750-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+      *-------------------*                                                     
+       751-PRINT-HEADER-0.                                                      
+      *-------------------*                                                     
+            ADD 1                 TO CNT-PAGE-1.                                
+            MOVE CNT-PAGE-1       TO L333-PAGENO.                               
+            MOVE 8                TO CNT-NUM-LINE-1.                            
+                                                                                
+            MOVE    FUNCTION CURRENT-DATE(1:8)  TO  WS-CUR-DATE.                
+            MOVE CORR WS-CUR-DATE TO WS-EDITED-DATE.                            
+            MOVE WS-EDITED-DATE   TO L333-DATE.                                 
+                                                                                
+            WRITE BP13L333-REC FROM L333-PR-HEAD-01 AFTER PAGE.                 
+            WRITE BP13L333-REC FROM L333-PR-HEAD-02 AFTER 1.                    
+            WRITE BP13L333-REC FROM L333-PR-HEAD-03 AFTER 1.                    
+            WRITE BP13L333-REC FROM L333-PR-HEAD-04 AFTER 3.                    
+            WRITE BP13L333-REC FROM L333-PR-HEAD-05 AFTER 1.                    
+                                                                                
+            MOVE SPACES           TO BP13L333-REC.                              
+            WRITE BP13L333-REC.                                                 
+                                                                                
+       751-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+      *-------------------*                                                     
+       999-CLOSING-ROUTINE.                                                     
+      *-------------------*                                                     
+           DISPLAY '  '.                                                        
+           DISPLAY '*---------------  BP13C332  --------------*'.               
+           DISPLAY 'TOTAL NO OF REC READ FROM BP13F310 = '                      
+                   WS-CNT-READ-F310.                                            
+           DISPLAY ' '.                                                         
+           DISPLAY 'TOTAL NO OF REC OUTPUT WITH    KEY = '                      
+                   WS-CNT-ACCEPT-0.                                             
+           DISPLAY 'TOTAL NO OF REC OUTPUT WITHOUT KEY = '                      
+                   WS-CNT-ACCEPT-1.                                             
+           DISPLAY 'TOTAL NO OF REC BYPASS             = '                      
+                   WS-BYPASS.                                                   
+                                                                                
+           CLOSE BP13F310                                                       
+                 BM06K100                                                       
+                 BM06K110                                                       
+                 BP13K800                                                       
+                 BP13L332                                                       
+                 BP13L333.                                                      
+                                                                                
+           IF BM06K100-STATUS NOT = 0                                           
+               DISPLAY 'CLOSING ERROR, K100-STATUS ' BM06K100-STATUS.           
+           IF BM06K110-STATUS NOT = 0                                           
+               DISPLAY 'CLOSING ERROR, K110-STATUS ' BM06K110-STATUS.           
+           IF K800-STATUS NOT = 0                                               
+               DISPLAY 'CLOSING ERROR, K800-STATUS ' K800-STATUS.               
+                                                                                
+           STOP RUN.                                                            
+

@@ -1,0 +1,670 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C22K.                                                 
+      *AUTHOR.        SAUL SIO.                                                 
+      *DATE-WRITTEN.  25/08/2004.                                               
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (BP13)                                *            
+      * ========================================================== *            
+      * OBJECTIVE  : SEND EMAIL TO BO TO RETURN KEY                *            
+      *              (WHERE BO CODE WITH '0001' ONLY)              *            
+      *                                                            *            
+      * INPUT      : BM06F120                                      *            
+      *            : BP13K435                                      *            
+      *            : BP13K800                                      *            
+      * OUTPUT     : M06F120A - BM06.F120.KEYLOCN                  *            
+      *            : BP13MAIL - OUTPUT FILE FOR SENDING EMAIL      *            
+      * ---------------------------------------------------------- *            
+      * CHG REF  DATE     BY    DESCRIPTIONS                       *            
+      * -------- -------- ----- ------------                       *            
+      * BP132551 20040825 SSS2  NEW PROGRAM                        *            
+      * BP132551 20040923 SSS2  EMAIL BLOCK NUMBER                 *            
+      * BP132878 20060821 SSS2  OMIT ALLO-CAT = 'RT '              *            
+      * BP132981 20070105 SSS2  chg cc email                       *            
+      * BP133004 20070312 SSS2  upd email content                  *            
+      * BP133509 20090115 DW5   REMOVE NCH6 FROM CC LIST           *            
+      * BP133809 20100110 ESA1  change yfw1 to lwk10               *            
+      *                         change HAA Tom Yuan to AE Derrick  *            
+      *                         Loh Weng Kee                       *            
+      * BP133813 20100110 ESA1  change yfw1 to lwk10               *            
+      * BP134603 20120716 IMC1  CHANGE EMAIL CONTENT               *            
+      * BP134603 20120824 IMC1  ADDED FILTERING OF EMAILED RECORDS *            
+      *                         SAME WITH BP13C22J                 *            
+      * BP135163 20131211 RJE1  CHANGE EMAIL CONTENT               *            
+      * BP135537 20150414 RJB1  CHANGE THE EMAIL RECIPIENT FROM    *            
+      *                         NICKNAME INTO COMPLETE NAME        *            
+      * BP136082 20160126 KVL1  ADD KOGI1 AND OMH1 TO CC RECIPIENTS*            
+      *                         REPLACED SU1 W/ HWM2 IN THE SENDER *            
+      * BP136836 20170812 ESA1  TO CATER FOR NEW SEL-TYPE 'ROF'    *            
+      * BP138257 20200319 KV5   REMOVED THE SANGEETHA FROM COMMENTS*            
+      * ========================================================== *            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+            SELECT BM06F120 ASSIGN TO BM06F120.                                 
+                                                                                
+            SELECT BP13K435 ASSIGN TO BP13K435                                  
+                   ACCESS MODE     IS DYNAMIC                                   
+                   ORGANIZATION    IS INDEXED                                   
+                   RECORD KEY      IS K435-KEY-FLD                              
+                   FILE STATUS     IS BP13K435-STATUS.                          
+                                                                                
+            SELECT BP13K800 ASSIGN TO BP13K800                                  
+                   ACCESS MODE     IS RANDOM                                    
+                   ORGANIZATION    IS INDEXED                                   
+                   RECORD KEY      IS K800-NUM-REGN                             
+                   FILE STATUS     IS BP13K800-STATUS.                          
+                                                                                
+            SELECT M06F120A  ASSIGN TO M06F120A.                                
+            SELECT BP13MAIL  ASSIGN TO BP13MAIL.                                
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD   BM06F120                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 700 CHARACTERS                                      
+            RECORDING MODE IS F.                                                
+       COPY BM06F120.                                                           
+                                                                                
+       FD   BP13K435.                                                           
+       COPY BP13K435.                                                           
+                                                                                
+       FD   BP13K800.                                                           
+       COPY BP13K800.                                                           
+                                                                                
+       FD  M06F120A                                                             
+           RECORD CONTAINS 700 CHARACTERS                                       
+           RECORDING  MODE  IS F.                                               
+       01  WS-F120A-REC                      PIC X(700).                        
+                                                                                
+       FD  BP13MAIL                                                             
+           RECORD CONTAINS 80 CHARACTERS                                        
+           RECORDING  MODE  IS F.                                               
+       01  MAIL-PRTREC                       PIC X(80).                         
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01 BP13K435-STATUS                PIC 9(2)   VALUE ZEROS.                
+       01 BP13K800-STATUS                PIC 9(2)   VALUE ZEROS.                
+       01 WS-F120-EOF                    PIC X      VALUE 'N'.                  
+                                                                                
+       01 WS-F120-READ                   PIC 9(8)   VALUE ZEROS.                
+       01 WS-F120-MATCHED                PIC 9(8)   VALUE ZEROS.                
+       01 WS-K800-READ                   PIC 9(8)   VALUE ZEROS.                
+       01 WS-K800-UNMATCH                PIC 9(8)   VALUE ZEROS.                
+       01 WS-K800-NOTFND                 PIC 9(8)   VALUE ZEROS.                
+       01 WS-K435-READ                   PIC 9(8)   VALUE ZEROS.                
+       01 WS-K435-NOTFND                 PIC 9(8)   VALUE ZEROS.                
+       01 WS-F120A-WROTE                 PIC 9(8)   VALUE ZEROS.                
+       01 WS-MAIL-WROTE                  PIC 9(8)   VALUE ZEROS.                
+       01 WS-OUTPUT-F120A                PIC X      VALUE 'N'.                  
+                                                                                
+       01 WS-DATE                        PIC X(8)   VALUE SPACES.               
+       01 WS-SNO                         PIC 9(3)   VALUE ZEROS.                
+       01 WS-PREV-BO-CODE                PIC X(2)   VALUE SPACES.               
+       01 WS-DTE-SELECTION               PIC 9(8)   VALUE ZEROS.                
+       01 WS-DTE-CURRENT                 PIC 9(8)   VALUE ZEROS.                
+       01 WS-DTE-COMPUTED                PIC 9(8)   VALUE ZEROS.                
+                                                                                
+      *-------------------------------------------------------------            
+      * LAYOUT BP13MAIL  -  DATASET FOR EMAIL                                   
+      *-------------------------------------------------------------            
+       01  MAIL-HDR1.                                                           
+           05  FILLER          PIC X(12)  VALUE 'HELO SGPHDB1'.                 
+           05  FILLER          PIC X(68)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-HDR2.                                                           
+           05  FILLER          PIC X(11)  VALUE 'MAIL FROM:<'.                  
+           05  MAIL-SENDID     PIC X(04)  VALUE 'OPCP'.                         
+           05  FILLER          PIC X(09)  VALUE '@SGPHDB1>'.                    
+           05  FILLER          PIC X(56)  VALUE SPACES.                         
+                                                                                
+      *  for testing purpose ------------                                       
+      *01  MAIL-HDR1.                                                           
+      *    05  FILLER          PIC X(12)  VALUE 'HELO SGPHDB3'.                 
+      *    05  FILLER          PIC X(68)  VALUE SPACES.                         
+      *                                                                         
+      *01  MAIL-HDR2.                                                           
+      *    05  FILLER          PIC X(11)  VALUE 'MAIL FROM:<'.                  
+      *    05  MAIL-SENDID     PIC X(07)  VALUE 'CS27757'.                      
+      *    05  FILLER          PIC X(09)  VALUE '@SGPHDB3>'.                    
+      *    05  FILLER          PIC X(53)  VALUE SPACES.                         
+      *----------------------------------                                       
+                                                                                
+       01  MAIL-DTL1.                                                           
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  MAIL-BOMAILID   PIC X(20)  VALUE SPACES.                         
+           05  FILLER          PIC X(49)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2.                                                           
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  MAIL-CCMAILID   PIC X(60)  VALUE                                 
+               'DERRICK_WK_LOH@HDB.GOV.SG>'.                                    
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2A.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  MAIL2-CCMAILID  PIC X(60)  VALUE                                 
+               'OH_MENG_HUAT@HDB.GOV.SG>'.                                      
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2B.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  MAIL3-CCMAILID  PIC X(60)  VALUE                                 
+               'KOGILA_RAMARAJAN@HDB.GOV.SG>'.                                  
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL3.                                                           
+           05  FILLER          PIC X(04)  VALUE 'DATA'.                         
+           05  FILLER          PIC X(76)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL4.                                                           
+           05  FILLER          PIC X(05)  VALUE 'FROM:'.                        
+           05  MAIL-SENDMAILID PIC X(26)  VALUE                                 
+               'SOC System - Email Alert'.                                      
+           05  FILLER          PIC X(49)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL5.                                                           
+           05  FILLER          PIC X(4)   VALUE 'TO:<'.                         
+           05  MAIL-BOMAILID1  PIC X(20)  VALUE SPACES.                         
+           05  FILLER          PIC X(56)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6.                                                           
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  MAIL-CCMAILID1  PIC X(60)  VALUE                                 
+               'DERRICK_WK_LOH@HDB.GOV.SG>'.                                    
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6A.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  MAIL-CCMAILID2  PIC X(60)  VALUE                                 
+               'OH_MENG_HUAT@HDB.GOV.SG>'.                                      
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6B.                                                          
+           05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+           05  MAIL-CCMAILID3  PIC X(60)  VALUE                                 
+               'KOGILA_RAMARAJAN@HDB.GOV.SG>'.                                  
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL7.                                                           
+           05  FILLER          PIC X(10)  VALUE 'SUBJECT : '.                   
+           05  MAIL-SUBJECT    PIC X(30)  VALUE                                 
+               'ACCEPTANCE OF COMPLETED FLAT ('.                                
+           05  MAIL-SUB2       PIC X(2)   VALUE SPACES.                         
+           05  FILLER          PIC X      VALUE ')'.                            
+                                                                                
+       01  MAIL-BODY01.                                                         
+           05 FILLER                   PIC X(6)   VALUE 'DATE: '.               
+           05 MAIL-DATE                PIC X(10)  VALUE SPACES.                 
+                                                                                
+       01  MAIL-BODY02.                                                         
+           05 FILLER                   PIC X(4)   VALUE 'GM( '.                 
+           05 MAIL-CODE-BO             PIC X(2)   VALUE SPACES.                 
+           05 FILLER                   PIC X(2)   VALUE ' )'.                   
+                                                                                
+       01  MAIL-BODY03.                                                         
+           05 FILLER                   PIC X(50)  VALUE                         
+              'The applicant(s) has/have offered to purchase the '.             
+           05 FILLER                   PIC X(30)  VALUE                         
+              'following flat(s).            '.                                 
+                                                                                
+       01  MAIL-BODY04.                                                         
+      *    05 FILLER                   PIC X(50)  VALUE                         
+      *       'Please make the arrangement to forward the the pac'.             
+      *    05 FILLER                   PIC X(30)  VALUE                         
+      *       'ket of   '.                                                      
+           05 FILLER                   PIC X(52)  VALUE                         
+              'Please make the arrangement to return the packet of '.           
+                                                                                
+       01  MAIL-BODY05.                                                         
+      *    05 FILLER                   PIC X(50)  VALUE                         
+      *       'keys to Sales Office, Agreement, Atrium 1st Storey'.             
+      *    05 FILLER                   PIC X(30)  VALUE                         
+      *       ', HDB Hub 480 Lorong 6 Toa    '.                                 
+           05 FILLER                   PIC X(49)  VALUE                         
+              'keys to Sales Office, Agreement Team, Atrium 1st '.              
+           05 FILLER                   PIC X(20)  VALUE                         
+              'Storey, HDB Hub Toa '.                                           
+                                                                                
+       01  MAIL-BODY06.                                                         
+      *    05 FILLER                   PIC X(50)  VALUE                         
+      *       'Payoh within the next 2 weeks.'.                                 
+           05 FILLER                   PIC X(42)  VALUE                         
+              'Payoh within the next 2 weeks. Pls send a '.                     
+           05 FILLER                   PIC X(34)  VALUE                         
+              'representative to return the keys '.                             
+                                                                                
+       01  MAIL-BODY06A.                                                        
+           05 FILLER                   PIC X(31)  VALUE                         
+              'personally to Sales Operations.'.                                
+                                                                                
+       01  MAIL-BODY07.                                                         
+           05 FILLER                   PIC X(5)   VALUE 'S/NO.'.                
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 FILLER                   PIC X(50)  VALUE                         
+              'FLAT ADDRESS'.                                                   
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 FILLER                   PIC X(8)   VALUE 'REGN NO.'.             
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 FILLER                   PIC X(11)  VALUE                         
+              'FLAT STATUS'.                                                    
+                                                                                
+       01  MAIL-BODY08.                                                         
+           05 FILLER                   PIC X      VALUE SPACES.                 
+           05 MAIL-SNO                 PIC ZZ9    VALUE ZEROS.                  
+           05 FILLER                   PIC X(3)   VALUE SPACES.                 
+           05 MAIL-ADDRESS             PIC X(50)  VALUE SPACES.                 
+           05 FILLER                   PIC X(2)   VALUE SPACES.                 
+           05 MAIL-NUM-REGN            PIC X(8)   VALUE SPACES.                 
+           05 FILLER                   PIC X(6)   VALUE SPACES.                 
+           05 MAIL-FLAT-STATUS         PIC X(2)   VALUE SPACES.                 
+                                                                                
+       01  MAIL-FTR01-A.                                                        
+           05 FILLER          PIC X(50)  VALUE                                  
+              'Before returning the keys, please ensure that the '.             
+           05 FILLER          PIC X(30)  VALUE                                  
+              'flat is in move-in condition'.                                   
+           05 FILLER          PIC X(03)  VALUE SPACES.                          
+                                                                                
+       01  MAIL-FTR01-B.                                                        
+           05 FILLER          PIC X(50)  VALUE                                  
+              'and the keys are in order. If the applicants are e'.             
+           05 FILLER          PIC X(30)  VALUE                                  
+              'ligible to view the flat'.                                       
+                                                                                
+       01  MAIL-FTR01-C.                                                        
+           05 FILLER          PIC X(50)  VALUE                                  
+              'upon booking, please return the keys only after vi'.             
+           05 FILLER          PIC X(36)  VALUE                                  
+              'ewing is complete.'.                                             
+                                                                                
+       01  MAIL-FTR01-D.                                                        
+           05 FILLER                   PIC X(50)  VALUE                         
+              'If your office requires longer time to rectify any'.             
+           05 FILLER                   PIC X(30)  VALUE                         
+              ' detected defects, do keep    '.                                 
+                                                                                
+       01  MAIL-FTR01-E.                                                        
+      *    05 FILLER                   PIC X(50)  VALUE                         
+      *       'our Customer Service Manager(CSM) informed earlier'.             
+      *    05 FILLER                   PIC X(30)  VALUE                         
+      *       ' of the estimated completion  '.                                 
+           05 FILLER                   PIC X(52)  VALUE                         
+              'our Customer Relations Manager(CRM) informed earlier'.           
+           05 FILLER                   PIC X(28)  VALUE                         
+              ' of the estimated completion'.                                   
+                                                                                
+       01  MAIL-FTR01-F.                                                        
+      *    05 FILLER                   PIC X(50)  VALUE                         
+      *       'date. When replying, please email to names in the '.             
+      *    05 FILLER                   PIC X(30)  VALUE                         
+      *       'cc list.                      '.                                 
+           05 FILLER                   PIC X(54)  VALUE                         
+              'date. When replying, please email to all names in the '.         
+           05 FILLER                   PIC X(29)  VALUE                         
+              'cc list.                     '.                                  
+                                                                                
+       01  MAIL-FTR02.                                                          
+           05 FILLER                   PIC X(17)  VALUE                         
+              'Yours faithfully'.                                               
+                                                                                
+       01  MAIL-FTR03.                                                          
+           05 FILLER                   PIC X(12)  VALUE                         
+              'HEE WAN MENG'.                                                   
+                                                                                
+       01  MAIL-FTR04.                                                          
+           05 FILLER                   PIC X(21)  VALUE                         
+              'SENIOR ESTATE MANAGER'.                                          
+                                                                                
+       01  MAIL-FTR05.                                                          
+      *    05 FILLER                   PIC X(23)  VALUE                         
+      *       'SALES OPERATION SECTION'.                                        
+           05 FILLER                   PIC X(24)  VALUE                         
+              'SALES OPERATIONS SECTION'.                                       
+                                                                                
+       01  MAIL-FTR06.                                                          
+           05 FILLER                   PIC X(29)  VALUE                         
+              'ESTATE ADMIN & PROPERTY GROUP'.                                  
+                                                                                
+       01  MAIL-FTR07.                                                          
+           05 FILLER                   PIC X(50)  VALUE                         
+              'When replying, please email to names in cc list.  '.             
+                                                                                
+       01  MAIL-END.                                                            
+           05 FILLER                   PIC X      VALUE '.'.                    
+                                                                                
+       01  MAIL-SPACES.                                                         
+           05 FILLER                   PIC X(80)  VALUE SPACES.                 
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN.                                                               
+      *-------------------------------------------------------------            
+            PERFORM 1000-OPEN-ROUTINE     THRU 1000-EXIT.                       
+            PERFORM 2000-READ-BM06F120    THRU 2000-EXIT.                       
+            PERFORM 3000-PROCESS-DETAIL   THRU 3000-EXIT                        
+                    UNTIL WS-F120-EOF = 'Y'.                                    
+            PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT.                       
+                                                                                
+       0000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       1000-OPEN-ROUTINE.                                                       
+      *-------------------------------------------------------------            
+            OPEN  INPUT  BP13K435                                               
+                         BP13K800                                               
+                  I-O    BM06F120                                               
+                  OUTPUT M06F120A                                               
+                         BP13MAIL.                                              
+                                                                                
+            IF BP13K435-STATUS NOT = 00 AND 97                                  
+               DISPLAY 'OPENING ERROR K435-STATUS IS ' BP13K435-STATUS          
+               MOVE BP13K435-STATUS TO RETURN-CODE                              
+               PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+            END-IF.                                                             
+                                                                                
+            IF BP13K800-STATUS NOT = 00 AND 97                                  
+               DISPLAY 'OPENING ERROR K400-STATUS IS ' BP13K800-STATUS          
+               MOVE BP13K800-STATUS TO RETURN-CODE                              
+               PERFORM 9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+            END-IF.                                                             
+                                                                                
+            MOVE FUNCTION CURRENT-DATE(1:8) TO WS-DATE.                         
+            STRING WS-DATE(7:2) '/' WS-DATE(5:2) '/' WS-DATE(1:4)               
+                   DELIMITED BY SIZE INTO MAIL-DATE.                            
+                                                                                
+       1000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       2000-READ-BM06F120.                                                      
+      *-------------------------------------------------------------            
+            READ BM06F120                                                       
+                 AT END MOVE 'Y' TO WS-F120-EOF                                 
+                 GO TO 2000-EXIT.                                               
+                                                                                
+            ADD 1   TO WS-F120-READ.                                            
+                                                                                
+       2000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3000-PROCESS-DETAIL.                                                     
+      *-------------------------------------------------------------            
+            IF (F120-NUM-SELECTION = 'WIS' OR 'WIP' OR 'WIT' OR                 
+                                     'WIA' OR 'WIB' OR 'WIC' OR                 
+                                     'SBF' OR 'BTO' OR 'ROF' OR                 
+                                     'SMR' OR 'SHS' OR 'AMR' OR                 
+                                     'WIH' OR 'BE ' OR '3R ')                   
+               AND                                                              
+              (F120-REGN-NO NOT = SPACES AND                                    
+               F120-REGN-NO (1:2) NOT = '##')                                   
+               AND                                                              
+              (F120-DTE-KEY-AVAIL NOT = ZEROS AND                               
+                                        SPACES AND                              
+                                        LOW-VALUES)                             
+              PERFORM 3100-CREATE-OUTPUT THRU 3100-EXIT                         
+           END-IF                                                               
+                                                                                
+           PERFORM 2000-READ-BM06F120  THRU 2000-EXIT.                          
+                                                                                
+       3000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       3100-CREATE-OUTPUT.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE 'N' TO WS-OUTPUT-F120A.                                         
+                                                                                
+           IF (F120-DTE-ACCEPTANCE NOT NUMERIC) AND                             
+              (F120-DTE-ACCEPTANCE = SPACES OR LOW-VALUES)                      
+               MOVE ZEROS TO WS-DTE-SELECTION                                   
+           ELSE                                                                 
+               MOVE F120-DTE-ACCEPTANCE TO WS-DTE-SELECTION                     
+           END-IF.                                                              
+                                                                                
+           MOVE WS-DATE TO WS-DTE-CURRENT.                                      
+           COMPUTE WS-DTE-COMPUTED =                                            
+              FUNCTION DATE-OF-INTEGER(                                         
+              FUNCTION INTEGER-OF-DATE(WS-DTE-SELECTION) + 14).                 
+                                                                                
+           IF WS-DTE-COMPUTED = WS-DTE-CURRENT                                  
+              ADD 1 TO WS-F120-MATCHED                                          
+              PERFORM 4000-READ-BP13K800 THRU 4000-EXIT                         
+           ELSE                                                                 
+              MOVE 'Y' TO WS-OUTPUT-F120A                                       
+           END-IF.                                                              
+                                                                                
+           IF WS-OUTPUT-F120A = 'Y'                                             
+              MOVE F120-REC TO WS-F120A-REC                                     
+              WRITE WS-F120A-REC                                                
+              ADD 1 TO WS-F120A-WROTE                                           
+           END-IF.                                                              
+       3100-EXIT.                                                               
+            EXIT.                                                               
+      *-------------------------------------------------------------            
+       4000-READ-BP13K800.                                                      
+      *-------------------------------------------------------------            
+            MOVE SPACES        TO K800-NUM-REGN.                                
+            MOVE F120-REGN-NO  TO K800-NUM-REGN.                                
+                                                                                
+            READ BP13K800.                                                      
+            EVALUATE BP13K800-STATUS                                            
+            WHEN 00                                                             
+                 ADD  1 TO WS-K800-READ                                         
+                 IF (K800-NUM-SCH-ACC NOT = SPACES AND                          
+                                            LOW-VALUES AND                      
+                                            ZEROES) AND                         
+                    (K800-NUM-ALLO-CAT NOT = 'RT ')                             
+                    PERFORM 5000-READ-BP13K435 THRU 5000-EXIT                   
+                 ELSE                                                           
+                    ADD  1 TO WS-K800-UNMATCH                                   
+                    MOVE 'N' TO WS-OUTPUT-F120A                                 
+                 END-IF                                                         
+            WHEN 23                                                             
+                 ADD  1 TO WS-K800-NOTFND                                       
+                 MOVE 'N' TO WS-OUTPUT-F120A                                    
+            WHEN OTHER                                                          
+                 DISPLAY 'BP13K800 READ ERROR  ' BP13K800-STATUS                
+                         ', REGN IS  ' K800-NUM-REGN                            
+                 MOVE BP13K800-STATUS         TO   RETURN-CODE                  
+                 PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT                    
+            END-EVALUATE.                                                       
+                                                                                
+       4000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       5000-READ-BP13K435.                                                      
+      *-------------------------------------------------------------            
+           MOVE SPACES TO K435-KEY-FLD.                                         
+           STRING F120-SCH-ACC-NO 'HAD001'                                      
+              DELIMITED BY SIZE INTO K435-KEY-FLD.                              
+                                                                                
+           READ BP13K435.                                                       
+           EVALUATE BP13K435-STATUS                                             
+           WHEN 00                                                              
+                ADD 1 TO WS-K435-READ                                           
+                PERFORM 6000-WRITE-BP13MAIL THRU 6000-EXIT                      
+           WHEN 23                                                              
+                ADD 1 TO WS-K435-NOTFND                                         
+                MOVE 'N' TO WS-OUTPUT-F120A                                     
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR READING BP13K435, STATUS  '                      
+                        BP13K435-STATUS                                         
+                        ',  HDB REF ' K435-NUM-HDB-REF                          
+                MOVE BP13K435-STATUS TO RETURN-CODE                             
+                PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       5000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       6000-WRITE-BP13MAIL.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           IF F120-BO-CODE NOT = WS-PREV-BO-CODE                                
+              PERFORM 7000-OUTPUT-EMAIL-HDR THRU 7000-EXIT.                     
+                                                                                
+           MOVE SPACES              TO MAIL-NUM-REGN                            
+                                       MAIL-ADDRESS                             
+                                       MAIL-FLAT-STATUS.                        
+                                                                                
+           ADD 1                    TO WS-SNO.                                  
+           MOVE WS-SNO              TO MAIL-SNO.                                
+                                                                                
+           STRING 'BLK ' F120-BLK-NO  ' #'   F120-LEVEL-NO                      
+                  '-'    F120-MAIN-UNIT  '-' F120-SUB-UNIT                      
+                  '  ' F120-STREET-NAME                                         
+                  DELIMITED BY '      ' INTO MAIL-ADDRESS                       
+           END-STRING.                                                          
+                                                                                
+           MOVE F120-REGN-NO        TO MAIL-NUM-REGN.                           
+           MOVE F120-FLAT-STATUS    TO MAIL-FLAT-STATUS.                        
+                                                                                
+           WRITE MAIL-PRTREC FROM MAIL-BODY08.                                  
+           ADD 1 TO WS-MAIL-WROTE.                                              
+                                                                                
+       6000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       7000-OUTPUT-EMAIL-HDR.                                                   
+      *-------------------------------------------------------------            
+           MOVE ZEROS          TO WS-SNO.                                       
+                                                                                
+           MOVE SPACES         TO MAIL-CODE-BO                                  
+                                  MAIL-SUB2.                                    
+                                                                                
+           MOVE F120-BO-CODE   TO WS-PREV-BO-CODE                               
+                                  MAIL-CODE-BO                                  
+                                  MAIL-SUB2.                                    
+                                                                                
+           IF MAIL-BOMAILID(1:2) NOT = '  '                                     
+              PERFORM 7500-OUTPUT-EMAIL-FOOTER THRU 7500-EXIT.                  
+                                                                                
+           STRING 'B' F120-BO-CODE DELIMITED BY ' '                             
+                  'ADMIN@HDB.GOV.SG>' DELIMITED BY SIZE                         
+                  INTO MAIL-BOMAILID.                                           
+           MOVE MAIL-BOMAILID TO MAIL-BOMAILID1.                                
+                                                                                
+           WRITE MAIL-PRTREC FROM MAIL-HDR1                                     
+           WRITE MAIL-PRTREC FROM MAIL-HDR2.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL1.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL2.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL2A.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL2B.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL3.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL4.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL5.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL6.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL6A.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL6B.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL7.                                    
+           WRITE MAIL-PRTREC FROM MAIL-BODY01.                                  
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY02.                                  
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY03.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY04.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY05.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY06.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY06A.                                 
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY07.                                  
+                                                                                
+       7000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       7500-OUTPUT-EMAIL-FOOTER.                                                
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-FTR01-A.                                 
+           WRITE MAIL-PRTREC FROM MAIL-FTR01-B.                                 
+           WRITE MAIL-PRTREC FROM MAIL-FTR01-C.                                 
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-FTR01-D.                                 
+           WRITE MAIL-PRTREC FROM MAIL-FTR01-E.                                 
+           WRITE MAIL-PRTREC FROM MAIL-FTR01-F.                                 
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-FTR02.                                   
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-FTR03.                                   
+           WRITE MAIL-PRTREC FROM MAIL-FTR04.                                   
+           WRITE MAIL-PRTREC FROM MAIL-FTR05.                                   
+           WRITE MAIL-PRTREC FROM MAIL-FTR06.                                   
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+      *    WRITE MAIL-PRTREC FROM MAIL-FTR07.                                   
+           WRITE MAIL-PRTREC FROM MAIL-END.                                     
+                                                                                
+       7500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       9000-CLOSE-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+           IF MAIL-BOMAILID(1:2) NOT = '  '                                     
+              PERFORM 7500-OUTPUT-EMAIL-FOOTER THRU 7500-EXIT.                  
+                                                                                
+           DISPLAY ' '.                                                         
+           DISPLAY '- BP13C22K CONTROL LIST --------'                           
+                   ' DATE : ' MAIL-DATE                                         
+           DISPLAY '----------------------------------------------'.            
+           DISPLAY ' 1) F120 READ           : ' WS-F120-READ.                   
+           DISPLAY ' 2) F120 MATCHED        : ' WS-F120-MATCHED.                
+           DISPLAY ' 3) K800 READ           : ' WS-K800-READ.                   
+           DISPLAY ' 4) K800 UNMATCH/CANCEL : ' WS-K800-UNMATCH.                
+           DISPLAY ' 5) K800 NOT FOUND      : ' WS-K800-NOTFND.                 
+           DISPLAY ' 6) K435 READ           : ' WS-K435-READ.                   
+           DISPLAY ' 7) K435 NOT FOUND      : ' WS-K435-NOTFND.                 
+           DISPLAY ' 8) M06F120A WROTE      : ' WS-F120A-WROTE.                 
+           DISPLAY ' 9) BP13MAIL WROTE      : ' WS-MAIL-WROTE.                  
+           DISPLAY ' '.                                                         
+                                                                                
+            CLOSE  BM06F120                                                     
+                   BP13K800                                                     
+                   BP13K435                                                     
+                   M06F120A                                                     
+                   BP13MAIL.                                                    
+                                                                                
+            IF BP13K435-STATUS NOT = 00 AND 97                                  
+               DISPLAY 'CLOSING ERROR, BP13K435   ' BP13K435-STATUS             
+               MOVE BP13K435-STATUS TO RETURN-CODE                              
+            END-IF.                                                             
+                                                                                
+            IF BP13K800-STATUS NOT = 00 AND 97                                  
+               DISPLAY 'CLOSING ERROR, BP13K800   ' BP13K800-STATUS             
+               MOVE BP13K800-STATUS TO RETURN-CODE                              
+            END-IF.                                                             
+                                                                                
+            STOP RUN.                                                           
+                                                                                
+       9000-EXIT.                                                               
+            EXIT.                                                               
+

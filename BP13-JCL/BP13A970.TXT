@@ -1,0 +1,996 @@
+//BP13A970  JOB (BP13P),'BP13A970',CLASS=I,MSGCLASS=N,                          
+//    MSGLEVEL=(1,1),NOTIFY=CSD0071                                             
+//JOBLIB  DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                    
+//        DD DSN=BR12.BATCH.LOADCOB,DISP=SHR                                    
+//*--------------------------------------------------------------------         
+//* SAME JOB AS BP13A535                                                        
+//* QUARTERLY REPORT FOR 10-YEAR CHECK                                          
+//*--------------------------------------------------------------------         
+//* JOB RUN : BP13A730 - CHECK SMS, SUBLET, RESALE HISTORY                      
+//*                    - CHECK RELATIONSHIP  TO RE-UPDATE 10-YR TAG             
+//*         : BP13A736 - CHECK TRANSFER HISTORY                                 
+//* WEEKLY    REPORT FOR 10-YEAR CHECK                                          
+//* JOB RUN : BP13A535 - CHECK SMS, SUBLET, RESALE HISTORY                      
+//*                    - CHECK RELATIONSHIP  TO RE-UPDATE 10-YR TAG             
+//*         : BP13A737 - CHECK TRANSFER HISTORY                                 
+//* EXEC CONDO COMPUTE FOR 5-YEAR CHECK                                         
+//* JOB RUN : BP13A955 - CHECK SMS, SUBLET, RESALE HISTORY                      
+//*                    - CHECK RELATIONSHIP  TO RE-UPDATE 10-YR TAG             
+//*         : BP13A956 - CHECK TRANSFER HISTORY                                 
+//*--------------------------------------------------------------------         
+//* CHG-NO   BY    ON     DESCRIPTION                                           
+//* ---------------------------------                                           
+//* BP130051 LSB 951103 - REPLACE BP13U712 WITH BP13A722, AS LONG AS 1          
+//*                       HA/TAG OCCUP IS "N", UPDATE AS INELIGIBLE             
+//* BP130109 LSB 960710 - SMS SALES TYPE = 2B, IS SUBJECT TO 5YR CHECK          
+//*                       EVEN THOUGH TREATED AS NHH                            
+//* BP130214 LSB 961220 - CASES FOUND IN DEBARMENT CODE AS'62','64','66'        
+//*                       ARE TREATED AS UPGRADER BUT DO NOT SUBJECT TO         
+//*                       5-YEAR CHECK, TAG CDE-EXIST-FLAT-TY='DB' IN           
+//*                       BP13U705                                              
+//* BP130323 LSB 970704 - COMPUTE 10-YR OCCUPATION PERIOD INSTEAD OF 5YR        
+//* BP130377 LSB 971004 - CHG ACCORDING TO 3RD QTR REQUIREMENT                  
+//* BP130401 SSS 971229 - CHG SASDLIV5 TO SASIMS                                
+//* BP130171 SSS 980107 - CHG BB12 TO BB24                                      
+//* BP130426 LSB 980123 - TYPE 2B , NEED NOT CHECK RESALE HISTORY               
+//* BP130445 SSS 980207 - EXPAND F558 RECL FROM 150 TO 400                      
+//* BP130458 LSB 980302 - INCLUDE TRANSFER HISTORY CHECK, TRF-SUBLET            
+//*                     - ADD BP13.F713.PIGEON.YR10WEEK                         
+//*                     - BP13U724 DO NOT READ BB24 FILES                       
+//* BP130445 LSB 980325 - MOVE C639,C640 FROM BP13A736 ADJUST MTH-RES           
+//* BP130450 LSB 980420 - CONTROL LIST BP13C693 CHG TO CLASS N                  
+//* BP130487 SSS 980507 - CHG UNIT=3480 TO UNIT=CART                            
+//* BP130542 LSB 980821 - BP13C619 TRF-HIST MOVE TO BP13A501                    
+//* BP130630 LSB 990727 - CHG Q748 TO Q747, USE BP13C626 SELECT MOVE-IN         
+//* BP130652     990826 - EXPAND F500,F510,F520 RECL 300 TO 500                 
+//* BP130789 AKT 000216 - SORT BP13.F558.UPGOCCP.YR10WEEK(STEP1A).              
+//* BP130810 SRA 000303 - ADD STEP49 -STEP63 FOR P/C MTH-RESIDE CHECK           
+//* BP130897 AKT 000807 - EXPAND F558 RECL FROM 400 TO 600                      
+//* BP132589 SK  040915 - INCLUDE DB2 ROUTINE IN BP13C669                       
+//* BP135171 RJE 140210 - TO CATER FOR DB2 UPGRADE                              
+//* BP135370 YCH2 100614  ADD BR12 LOAD DUE TO BR12C902 MODULE NOT FOUND        
+//*--------------------------------------------------------------------         
+//* FOR CUTOVER CASES, USE 9409 TO COMPUTE 5YR                                  
+//*     OCT 94  CASES, USE 9410 TO COMPUTE 5YR                                  
+//*     NOV ONWARDS  , USE DTE-REGN TO COMPUTE 5YR                              
+//*--------------------------------------------------------------------         
+//*      5 YEARS RESIDENT PRIORITY SCHEME                                       
+//*      CURRENT HA'S + TAG OCCUPIERS AS LESSEE/CO-LESSEE IN RDB                
+//*      AND RESALE HUDC FLAT                                                   
+//*      DETERMINE THE LENGTH OF OCCUPATION                                     
+//*=====================================================================        
+//* STEP 00-01   LASER PRINT                                                    
+//*      10-20   CHK CURRENT LSE OR RESALE HUDC FLAT                            
+//*      30-80   CHK LENGTH OF OCCUPATION IF IT IS CURRENT LESSEE               
+//*      90-120  UPDATE 5YR ELIG TAG TO MASTER FILE                             
+//*********************************************************************         
+//*  TO SEND DJDE AHEAD OF THE PRINT DATASET                                    
+//*  PRT01 : 1 COPY                                                             
+//*-----------------------------------------------------------------            
+//PRT01    EXEC PGM=IEBGENER                                                    
+//SYSUT1   DD *                                                                 
+$DJDE$ JDE=BP13D,JDL=BP13,END;                                                  
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=HARHRM1A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID)                                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*-----------------------------------------------------------------            
+//*  REPRO BALLOT FILE TO SEQUENCIAL FILES                                      
+//*-----------------------------------------------------------------            
+//STEP01   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.F500.SEQUENCE.BB22,DISP=SHR                              
+//OUTPUT1  DD DSN=BP13.F520.BALLOT.YR10WEEK.BB22,DISP=OLD                       
+//*                                                                             
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                       
+//*-----------------------------------------------------------------            
+//*  BACKUP BP13.F500.SEQUENCE                                                  
+//*-----------------------------------------------------------------            
+//* SORT BP13F558 IN REGN/NRIC ORDER                                            
+//*-----------------------------------------------------------------            
+//STEP1A   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.BB22,DISP=SHR                               
+//SORTOUT  DD DSN=BP13.F558.UPGOCCP.YR10WEEK.BB22,DISP=SHR                      
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,17,A),FORMAT=CH                                               
+//*-----------------------------------------------------------------            
+//STEP02   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.F500.SEQUENCE.BB22,DISP=SHR                              
+//OUTPUT1  DD DSN=BP13.F500.SEQUENCE.BB22.QTR(+1),DISP=(,PASS),                 
+//            UNIT=CART,LABEL=(1,SL),                                           
+//            DCB=(BP13.GDG,BLKSIZE=27500,LRECL=500,RECFM=FB)                   
+//*                                                                             
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1) OUTFILE(OUTPUT1)                                      
+//*-----------------------------------------------------------------            
+//*  CATALOG GDG                                                                
+//*-----------------------------------------------------------------            
+//STEP03    EXEC PGM=IEFBR14,COND=(0,NE)                                        
+//INPUT1    DD DSN=BP13.F500.SEQUENCE.BB22.QTR(+1),DISP=(OLD,CATLG),            
+//             UNIT=(,,DEFER)                                                   
+//*//INPUT2    DD DSN=BP13.F825.REQOCCP.QTR(+1),DISP=(OLD,CATLG),               
+//*//             UNIT=(,,DEFER)                                                
+//*---------------------------------------------------------------------        
+//* SORT BP13F558 IN REGN/NRIC ORDER                                            
+//*---------------------------------------------------------------------        
+//STEP03A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.YR10WEEK.BB22,DISP=SHR                      
+//SORTOUT  DD DSN=&&F558NRIC,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(180,10),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(9,9,A),FORMAT=CH                                                
+//*---------------------------------------------------------------------        
+//* PROGRAM TO MATCH SMS SUBLET HISTORY TO GET                                  
+//* SUBLET-SMS - SUBLET UNDER CURRENT, SMS HDBREF-NO                            
+//* SUBLET-RSL - SUBLET UNDER EX-ACCOUNT, RSL HDBREF-NO                         
+//*---------------------------------------------------------------------        
+//STEP04   EXEC PGM=IKJEFT01,DYNAMNBR=20,COND=(0,NE),REGION=4096K               
+//BP13F558 DD DSN=&&F558NRIC,DISP=(OLD,PASS)                                    
+//AB03K030 DD DSN=AB03.K030.SALEMAST,DISP=SHR,                                  
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//P13F558  DD DSN=BP13.F558.UPGOCCP.BB22,DISP=OLD                               
+//P13L669  DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSTSIN  DD *                                                                 
+  DSN SYSTEM(DSN)                                                               
+  RUN PROGRAM(BP13C669) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+  END                                                                           
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* SORT BP13F558 IN REGN/NRIC ORDER                                            
+//*---------------------------------------------------------------------        
+//STEP05   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.BB22,DISP=SHR                               
+//SORTOUT  DD DSN=&&F558MTH,DISP=(NEW,PASS),                                    
+//            UNIT=SYSDA,SPACE=(CYL,(180,10),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,8,A,9,9,A),FORMAT=CH                                          
+//*-----------------------------------------------------------------            
+//* SORT UPGRADER REQUEST RECORD BY REF-NO,                                     
+//* INCLUDE UPGRADER 'G' OR '3'                                                 
+//* EXIST-FLAT-TYE = '2B' FOR SMS-SALES TYPE = 2B CASES                         
+//*-----------------------------------------------------------------            
+//STEP06   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.BB22,DISP=SHR                              
+//SORTOUT  DD DSN=&&F500UPG,DISP=(NEW,PASS),                                    
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            UNIT=SYSDA,SPACE=(CYL,(100,10),RLSE)                              
+//SYSIN    DD  *                                                                
+      SORT FIELDS=(123,8,A),FORMAT=CH                                           
+      INCLUDE COND=(116,1,CH,EQ,C'G',OR,116,1,CH,EQ,C'3',OR,                    
+                    185,2,CH,EQ,C'2B')                                          
+//*---------------------------------------------------------------------        
+//* EXCLUDE CASES FOUND IN DEBRAMENT AS '62','64','66',TREAT AS UPGRADER        
+//* BUT BYPASS 5-YR CHECK, CDE-EXIST-FLAT-TYE = 'DB'                            
+//*---------------------------------------------------------------------        
+//*STEP05   EXEC SORT,COND=(0,NE)                                               
+//*SORTIN   DD DSN=&&F500UPG,DISP=(OLD,PASS)                                    
+//*SORTOUT  DD DSN=&&BP13F500,DISP=(NEW,PASS),                                  
+//*            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                          
+//*            UNIT=SYSDA,SPACE=(CYL,(100,10),RLSE)                             
+//*SYSIN    DD  *                                                               
+//*    SORT FIELDS=(123,8,A),FORMAT=CH                                          
+//*      OMIT COND=(116,1,CH,EQ,C'G',AND,185,2,CH,EQ,C'DB')                     
+//*---------------------------------------------------------------------        
+//* BASED ON THE REF-NO IN REQUEST MATCH SOC-OCCUPIER FILE                      
+//* EXTRACT UPGRADER RECORD IN SOC-OCCUPIER FILE                                
+//*---------------------------------------------------------------------        
+//STEP07   EXEC PGM=BP13C809,COND=(0,NE)                                        
+//BP13F500 DD DSN=&&F500UPG,DISP=(OLD,PASS)                                     
+//BP13F558 DD DSN=&&F558MTH,DISP=(OLD,PASS)                                     
+//P13F558O DD DSN=&&F558UPG,DISP=(NEW,PASS),                                    
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(160,10),RLSE)                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//*---------------------------------------------------------------------        
+//* CHECK SMS ^= 'OM' & FT ^= ' ' OUTPUT P13F558A FOR OCCUPATION CHECK          
+//* CHECK RSL  = 'OM' & FT  = 'H' PRINT A REPORT FOR SALES                      
+//* OTHERS WILL BE TAG AS ELIGIBLE FOR 5YR OCCUPATION OUTPUT P13F558B           
+//*        ELIGIBLE CASES WILL BE UPDATED AFTER BP13U722                        
+//* PRINT REPORT FOR HUDC CASES WITH RESALE STATUS = 'H1'                       
+//*--------------------------------------------------------------------         
+//STEP08   EXEC PGM=BP13C808,COND=(0,NE)                                        
+//BP13F558 DD DSN=&&F558UPG,DISP=(OLD,PASS)                                     
+//P13F558A DD DSN=&&F558EXLS,DISP=(NEW,PASS),                                   
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(120,10),RLSE)                              
+//P13F716A DD DSN=&&P13F716,DISP=(NEW,PASS),                                    
+//            DCB=(BLKSIZE=27650,LRECL=350,RECFM=FB),                           
+//            UNIT=SYSDA,SPACE=(CYL,(60,15),RLSE)                               
+//BP13F716 DD DSN=BP13.F716.SMS5YR.WEEK.BB22,DISP=OLD                           
+//BP13L808 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* FOR SALES TYPE 8 & 2A GET MOVR-IN-DATE FROM MOBILITY TABLE                  
+//*---------------------------------------------------------------------        
+//STEP09   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&P13F716,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&BP13F716,DISP=(NEW,PASS),                                   
+//            DCB=(BLKSIZE=27650,LRECL=350,RECFM=FB),                           
+//            UNIT=SYSDA,SPACE=(CYL,(60,15),RLSE)                               
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(9,9,A),FORMAT=CH                                                
+//*--------------------------------------------------------------------         
+//* EXTRACT RECORDS FROM RDB DATABASE BASED ON NRIC                             
+//* DATA ARE SCH-ACC-NO/MOVE-IN-DATE/MOVE-OUT-DATE/DATE-PURCHASED               
+//*---------------------------------------------------------------------        
+//STEP10   EXEC PGM=IKJEFT01,DYNAMNBR=20,COND=(0,NE)                            
+//BP13F716 DD DSN=&&BP13F716,DISP=(OLD,PASS)                                    
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//P13F716A DD DSN=BP13.F716.A535Q747.BB22,DISP=OLD                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSTSIN DD *                                                                  
+ DSN SYSTEM(DSN)                                                                
+ RUN  PROGRAM(BP13Q747) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+ END                                                                            
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT BY REGN-NO/NRIC/SCH-ACC(X9)/MOVE-IN(DESCENDING)/MOVE-OUT               
+//* FOR SALES TYPE 8                                                            
+//*---------------------------------------------------------------------        
+//STEP10A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F716.A535Q747.BB22,DISP=OLD                              
+//SORTOUT  DD DSN=&&F716TYP8,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(80,50),RLSE),                              
+//            DCB=(BLKSIZE=27650,LRECL=350,RECFM=FB)                            
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,17,A,51,9,A,115,8,D,123,8,A),FORMAT=CH                        
+   INCLUDE COND=(133,2,CH,NE,C'2A')                                             
+//*---------------------------------------------------------------------        
+//* MATCH BY REGN-NO/NRIC IN BP13F716 TO BP13F558, THE F716-SCHE-ACC            
+//* MUST BE = F558-HDBREF-SMS                                                   
+//* TO GET THE DIRECT PURCHASE FLAT REC IN BP13F716                             
+//* SELECT EARLIER MOVE-IN-DATE FROM MOBILITY TABEL, COUNTLAPSE 3 MONTH         
+//*--------------------------------------------------------------------         
+//STEP10B  EXEC PGM=BP13C626,COND=(0,NE)                                        
+//BP13F716 DD DSN=&&F716TYP8,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558MTH,DISP=(OLD,PASS)                                     
+//P13F716A DD DSN=&&F716MRES,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(150,90),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=350,BLKSIZE=27650)                            
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT BY REGN-NO/NRIC/SCH-ACC(X9)/MOVE-IN(DESCENDING)/MOVE-OUT               
+//* FOR SALES TYPE 2A, DO NOT CONSIDER LAPSE                                    
+//*---------------------------------------------------------------------        
+//STEP11   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F716.A535Q747.BB22,DISP=OLD                              
+//SORTOUT  DD DSN=&&F716TY2A,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(80,50),RLSE),                              
+//            DCB=(BLKSIZE=27650,LRECL=350,RECFM=FB)                            
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,17,A,51,9,A,115,8,D,123,8,A),FORMAT=CH                        
+   INCLUDE COND=(133,2,CH,EQ,C'2A')                                             
+//*---------------------------------------------------------------------        
+//* MATCH BY REGN-NO/NRIC IN BP13F716 TO BP13F558, THE F716-SCHE-ACC            
+//* MUST BE = F558-HDBREF-SMS                                                   
+//* TO GET THE DIRECT PURCHASE FLAT REC IN BP13F716                             
+//* SELECT EARLIER MOVE-IN-DATE FROM MOBILITY TABEL, DO NOT COUNT LAPSE         
+//*--------------------------------------------------------------------         
+//STEP12   EXEC PGM=BP13C050,COND=(0,NE)                                        
+//BP13F716 DD DSN=&&F716TY2A,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558MTH,DISP=(OLD,PASS)                                     
+//P13F716A DD DSN=&&F716MRES,DISP=(MOD,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(150,90),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=350,BLKSIZE=27650)                            
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT OUT ONLY SALES FLATS IN NRIC/SCH-ACC-NO DATE ACCEPT RELATN             
+//*---------------------------------------------------------------------        
+//STEP13   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F716MRES,DISP=(OLD,PASS)                                    
+//         DD DSN=BP13.F716.SMS5YR.WEEK.BB22,DISP=SHR                           
+//SORTOUT  DD DSN=&&F716STAY,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(45,9),RLSE),                               
+//            DCB=(RECFM=FB,LRECL=350,BLKSIZE=27650)                            
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,17,A),FORMAT=CH                                               
+   INCLUDE COND=(51,9,CH,GE,C'700000000')                                       
+//*---------------------------------------------------------------------        
+//* COMPUTE THE LENGTH OF OCCUPATION BASE ON MOVING-IN-DATE AND 10/94           
+//* FOR DUPLICATE HH TAKE IN LSE/CO-LSE OR LATEST DATE ACCEPTED                 
+//* IF RECORD NOT MATCH IN RDB, UPDATE 9999 TO MTH-RESIDE                       
+//*--------------------------------------------------------------------         
+//* FOR NEW APPLN, USE DTE-REGN TO COMPUTE 10-YR OCCP = BP13C805                
+//* FOR OLD APPLN, USE DTE-BALLOT TO COMPUTE 10-YR OCCP = BP13U726              
+//* DELETE BP13C805, USE BP13F713, CDE-COHORT=WK (WEEKLY JOB)                   
+//*--------------------------------------------------------------------         
+//STEP16   EXEC PGM=BP13U726,COND=(0,NE)                                        
+//STEPLIB  DD DSN=BP13.BATCH.LOADCOB.BALLOT,DISP=SHR                            
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F716 DD DSN=&&F716STAY,DISP=(OLD,PASS)                                    
+//P13F716A DD DSN=BP13.F716.RDB5YR.WEEK.BB22,DISP=OLD                           
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* MATCH BY REGN-NO/NRIC                                                       
+//* WRITE F716-MTH-RESIDE TO F558-MTH-RESIDE                                    
+//*--------------------------------------------------------------------         
+//STEP17   EXEC PGM=BP13C625,COND=(0,NE)                                        
+//BP13F716 DD DSN=BP13.F716.RDB5YR.WEEK.BB22,DISP=SHR                           
+//BP13F558 DD DSN=&&F558MTH,DISP=(OLD,PASS)                                     
+//P13F558A DD DSN=BP13.F558.UPGOCCP.BB22,DISP=OLD                               
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT IN REQUEST RECORDS IN REF-NO ORDER                                     
+//*---------------------------------------------------------------------        
+//STEP18   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.BB22,DISP=SHR                              
+//SORTOUT  DD DSN=&&F500SEQ,DISP=(NEW,PASS),                                    
+//            UNIT=SYSDA,SPACE=(CYL,(90,6),RLSE),                               
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+//*---------------------------------------------------------------------        
+//* BROWSE SOC OCCUPIER BP13K558, SO LONG AS ONE HA TAG AS 'N' FOR              
+//* 5YR-OCCUPN TAG, UPDATE THE CASE AS 'N' INELIGIBLE                           
+//* F713-CDE-COHORT = OP, EC OPEN CATEGORY COMPUTE 5-YR                         
+//* F713-CDE-COHORT = QT, WK COMPUTE 10-YR                                      
+//*---------------------------------------------------------------------        
+//STEP19   EXEC PGM=BP13U722,COND=(0,NE)                                        
+//STEPLIB  DD DSN=BP13.BATCH.LOADCOB.BALLOT,DISP=SHR                            
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F558 DD DSN=BP13.F558.UPGOCCP.BB22,DISP=SHR                               
+//BP13F500 DD DSN=&&F500SEQ,DISP=(OLD,PASS)                                     
+//BP13F520 DD DSN=BP13.F500.SEQUENCE.BB22,DISP=OLD                              
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* INCLUDE 10YR=NO CASES                                                       
+//*---------------------------------------------------------------------        
+//STEP20   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.BB22,DISP=SHR                               
+//SORTOUT  DD DSN=&&F558ADST,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(150,15),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(1,17,A),FORMAT=CH                                                
+  INCLUDE COND=(34,3,CH,LT,C'120',AND,                                          
+                34,3,CH,NE,C'000',AND,                                          
+                34,3,CH,NE,C'   ')                                              
+  SUM FIELDS=NONE                                                               
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT BY REGN-NO ORDER                                                       
+//*---------------------------------------------------------------------        
+//STEP21   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.BB22,DISP=SHR                              
+//SORTOUT  DD DSN=&&BP13F520,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(300,20),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(123,8,A),FORMAT=CH                                               
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* TO CONFIRM WITH BP13F520 THE 10YR=NO                                        
+//*---------------------------------------------------------------------        
+//STEP22   EXEC PGM=BP13C638,COND=(0,NE)                                        
+//BP13F520 DD DSN=&&BP13F520,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558ADST,DISP=(OLD,PASS)                                    
+//P13F558O DD DSN=&&F558YR10,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(150,15),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------                
+//* SORT BY REGN/NRIC ORDER                                                     
+//*-------------------------------------------------------------                
+//STEP23   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.BB22,DISP=SHR                               
+//SORTOUT  DD DSN=&&F558LONG,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(150,15),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(1,17,A),FORMAT=CH                                                
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* MATCH TO EXTRACT FULL BP13F558 RECORDS                                      
+//*---------------------------------------------------------------------        
+//STEP24   EXEC PGM=BP13C637,COND=(0,NE)                                        
+//BP13F558 DD DSN=&&F558LONG,DISP=(OLD,PASS)                                    
+//P13F558A DD DSN=&&F558YR10,DISP=(OLD,PASS)                                    
+//P13F558O DD DSN=&&F558CHK,DISP=(,PASS),                                       
+//            UNIT=SYSDA,SPACE=(CYL,(150,15),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------------          
+//* PRINT REPORT TO VERIFY PARENT/CHILD OR HUSBAND/WIFE CASES ON 10YR           
+//* FOR 1 "YES"  AND 1 "NO", MTH-RESIDE DIFFERENT BUT SAME FLAT,                
+//* TAKE THE LONGER MTH-RESIDE, OUTPUT FILE SO AS TO FORCE AS 'YES'             
+//*-------------------------------------------------------------------          
+//STEP25   EXEC PGM=BP13C639,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F558 DD DSN=&&F558CHK,DISP=(OLD,PASS)                                     
+//BP13F500 DD DSN=&&BP13F520,DISP=(OLD,PASS)                                    
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR                                    
+//P13F558A DD DSN=&&F558SON,DISP=(,PASS),                                       
+//            UNIT=SYSDA,DCB=(RECFM=FB,LRECL=600),                              
+//            SPACE=(CYL,(150,20),RLSE)                                         
+//P13F558B DD DSN=&&F558PART,DISP=(,PASS),                                      
+//            UNIT=SYSDA,DCB=(RECFM=FB,LRECL=600),                              
+//            SPACE=(CYL,(150,20),RLSE)                                         
+//P13L639A DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//P13L639B DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//P13L639C DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD DUMMY                                                             
+//*                                                                             
+//*-------------------------------------------------------------                
+//* SORT BY REGN ORDER, MTH-RESIDE IN DECENDING ORDER                           
+//*-------------------------------------------------------------                
+//STEP26   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=&&F558SON,DISP=(OLD,PASS)                                     
+//         DD DSN=&&F558PART,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F558MTF,DISP=(NEW,PASS),                                    
+//            UNIT=SYSDA,SPACE=(CYL,(150,15),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(1,8,A,34,3,D),FORMAT=CH                                          
+  OMIT COND=(34,3,CH,EQ,C'   ')                                                 
+/*                                                                              
+//*-------------------------------------------------------------------          
+//* UPDATE 10-YR FROM NO TO YES, UPDATE WITH THE BIGGEST MTH-RESIDE             
+//*-------------------------------------------------------------------          
+//STEP27   EXEC PGM=BP13C698,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F500 DD DSN=&&BP13F520,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558MTF,DISP=(OLD,PASS)                                     
+//BP13F520 DD DSN=BP13.F500.SEQUENCE.BB22,DISP=OLD                              
+//BP13F510 DD DSN=&&F500AYES,DISP=(,PASS),                                      
+//             UNIT=SYSDA,SPACE=(CYL,(20,30),RLSE),                             
+//             DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                           
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD DUMMY                                                             
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* SORT BY REGN-NO ORDER INCLUDE CASES RE-UPDATE AS 10YR=YES                   
+//*---------------------------------------------------------------------        
+//STEP28   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.BB22,DISP=SHR                              
+//SORTOUT  DD DSN=&&F520YES,DISP=(NEW,PASS),                                    
+//            UNIT=SYSDA,SPACE=(CYL,(300,20),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(123,8,A),FORMAT=CH                                               
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* TO CONFIRM WITH BP13F520 THE 10YR=NO                                        
+//*---------------------------------------------------------------------        
+//STEP29   EXEC PGM=BP13C638,COND=(0,NE)                                        
+//BP13F520 DD DSN=&&F520YES,DISP=(OLD,PASS)                                     
+//BP13F558 DD DSN=&&F558ADST,DISP=(OLD,PASS)                                    
+//P13F558O DD DSN=&&F558NO,DISP=(,PASS),                                        
+//            UNIT=SYSDA,SPACE=(CYL,(150,20),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* MATCH TO EXTRACT FULL BP13F558 RECORDS                                      
+//*---------------------------------------------------------------------        
+//STEP30   EXEC PGM=BP13C637,COND=(0,NE)                                        
+//BP13F558 DD DSN=&&F558LONG,DISP=(OLD,PASS)                                    
+//P13F558A DD DSN=&&F558NO,DISP=(OLD,PASS)                                      
+//P13F558O DD DSN=&&F558REC,DISP=(,PASS),                                       
+//            UNIT=SYSDA,SPACE=(CYL,(150,20),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------------          
+//* FOR 10-YR=NO CASES, TO FURTHER CHECK,                                       
+//* FOR TWO "NO" , MTH-RESIDE DIFFERENT BUT SAME FLAT, TAKE LONGER              
+//* MTH-RESIDE                                                                  
+//*-------------------------------------------------------------------          
+//STEP31   EXEC PGM=BP13C640,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F558 DD DSN=&&F558REC,DISP=(OLD,PASS)                                     
+//BP13F500 DD DSN=&&F520YES,DISP=(OLD,PASS)                                     
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR                                    
+//P13F558A DD DSN=&&F558NO1,DISP=(,PASS),                                       
+//            UNIT=SYSDA,DCB=(RECFM=FB,LRECL=600),                              
+//            SPACE=(CYL,(150,20),RLSE)                                         
+//P13F558B DD DSN=&&F558NO2,DISP=(,PASS),                                       
+//            UNIT=SYSDA,DCB=(RECFM=FB,LRECL=600),                              
+//            SPACE=(CYL,(150,20),RLSE)                                         
+//P13L640A DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//P13L640B DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD DUMMY                                                             
+//*                                                                             
+//*-------------------------------------------------------------                
+//* SORT BY REGN ORDER, MTH-RESIDE IN DECENDING ORDER                           
+//*-------------------------------------------------------------                
+//STEP32   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=&&F558NO2,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&F558REST,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(150,20),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(1,8,A,34,3,D),FORMAT=CH                                          
+  OMIT COND=(34,3,CH,EQ,C'   ')                                                 
+/*                                                                              
+//*-------------------------------------------------------------------          
+//* UPDATE 10-YR FROM NO TO YES, UPDATE WITH THE BIGGEST MTH-RESIDE             
+//*-------------------------------------------------------------------          
+//STEP33   EXEC PGM=BP13C677,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F500 DD DSN=&&F520YES,DISP=(OLD,PASS)                                     
+//BP13F558 DD DSN=&&F558REST,DISP=(OLD,PASS)                                    
+//BP13F520 DD DSN=BP13.F500.SEQUENCE.BB22,DISP=OLD                              
+//BP13F510 DD DSN=&&F500ANO,DISP=(,PASS),                                       
+//            UNIT=SYSDA,SPACE=(CYL,(20,30),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD DUMMY                                                             
+//*                                                                             
+//*--------------------------------------------------------------------         
+//* SORT REC UPDATE THRU BP13C698, BP13C677                                     
+//*--------------------------------------------------------------------         
+//STEP34   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F500AYES,DISP=(OLD,PASS)                                    
+//         DD DSN=&&F500ANO,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&F520UPD,DISP=(,PASS),                                       
+//            UNIT=SYSDA,SPACE=(CYL,(100,20),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+//**--------------------------------------------------------------------        
+//* UPDATE LONGER MTH-RESIDE AFTER ADJUSTMENT FROM BP13C639, C640               
+//* TO BP13F558                                                                 
+//*---------------------------------------------------------------------        
+//STEP35   EXEC PGM=BP13C693,COND=(0,NE)                                        
+//BP13F520 DD DSN=&&F520UPD,DISP=(OLD,PASS)                                     
+//BP13F558 DD DSN=&&F558LONG,DISP=(OLD,PASS)                                    
+//P13F558O DD DSN=BP13.F558.UPGOCCP.BB22,DISP=OLD                               
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT UPGRADER REQUEST RECORD BY REGN-NO,                                    
+//* INCLUDE UPGRADER 'G' AND 10-YR=YES                                          
+//*---------------------------------------------------------------------        
+//STEP36   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.BB22,DISP=SHR                              
+//SORTOUT  DD DSN=&&F500EXAP,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(100,10),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD  *                                                                
+      SORT FIELDS=(123,8,A),FORMAT=CH                                           
+      INCLUDE COND=(116,1,CH,EQ,C'G',AND,175,1,CH,NE,C'N')                      
+//*---------------------------------------------------------------------        
+//* EXCLUDE CASES FOUND IN DEBRAMENT AS '62','64','66',TREAT AS UPGRADER        
+//* BUT BYPASS 5-YR CHECK, CDE-EXIST-FLAT-TYE = 'DB'                            
+//*---------------------------------------------------------------------        
+//*STEP22   EXEC SORT,COND=(0,NE)                                               
+//*SORTIN   DD DSN=&&F500RSL,DISP=(OLD,PASS)                                    
+//*SORTOUT  DD DSN=&&F500EXAP,DISP=(NEW,PASS),                                  
+//*            UNIT=SYSDA,SPACE=(CYL,(100,10),RLSE),                            
+//*            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                           
+//*SYSIN    DD  *                                                               
+//*      SORT FIELDS=(123,8,A),FORMAT=CH                                        
+//*      OMIT COND=(116,1,CH,EQ,C'G',AND,185,2,CH,EQ,C'DB')                     
+//*---------------------------------------------------------------------        
+//* SORT REQUEST OCCUPIER BY REF-NO                                             
+//*---------------------------------------------------------------------        
+//STEP37   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.BB22,DISP=SHR                               
+//SORTOUT  DD DSN=&&F558EXAP,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(160,10),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD  *                                                                
+      SORT FIELDS=(1,8,A,9,9,A),FORMAT=CH                                       
+      INCLUDE COND=(84,1,CH,EQ,C'Y')                                            
+//*---------------------------------------------------------------------        
+//* BASED ON THE REF-NO IN REQUEST MATCH SOC-OCCUPIER FILE                      
+//* EXTRACT UPGRADER RECORD IN SOC-OCCUPIER FILE                                
+//*---------------------------------------------------------------------        
+//STEP38   EXEC PGM=BP13C627,COND=(0,NE)                                        
+//BP13F500 DD DSN=&&F500EXAP,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558EXAP,DISP=(OLD,PASS)                                    
+//P13F558O DD DSN=&&F558FND,DISP=(NEW,PASS),                                    
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(180,15),RLSE)                              
+//P13F558A DD DSN=&&F558NHH,DISP=(NEW,PASS),                                    
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(180,15),RLSE)                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//*---------------------------------------------------------------------        
+//* 1) FOR EX-LESSEE -TCP/HUDC, MATCH RESALE HISTORY, COMPUTE THE 10 YR         
+//*    BASED ON DATE-SOLD-TO-SELLER                                             
+//* 2) SUBTRACT SUBLET-RSL (DUE TO RESALE FLAT) FROM 10-YR OCCP-PERIOD          
+//*---------------------------------------------------------------------        
+//* FOR NEW APPLN, USE DTE-REGN TO COMPUTE 10-YR-OCCP = BP13U728(DELETE)        
+//* FOR OLD APPLN, USE DTE-BALLOT TO COMPUTE 10-YR-OCCP = BP13U724              
+//* FOR EXEC OPEN CATEGORY, USE CURRENT DATE TO COMPUTE 5-YR-OCCP               
+//*                                                     = BP13C810 (DEL)        
+//* F713-CDE-COHORT = OP, EC OPEN CATEGORY COMPUTE 5-YR                         
+//* F713-CDE-COHORT = QT, WK COMPUTE 10-YR                                      
+//*---------------------------------------------------------------------        
+//STEP39   EXEC PGM=BP13U724,COND=(0,NE)                                        
+//STEPLIB  DD DSN=BP13.BATCH.LOADCOB.BALLOT,DISP=SHR                            
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F558 DD DSN=&&F558FND,DISP=(OLD,PASS)                                     
+//P13F558O DD DSN=&&F558HIST,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(80,5),RLSE),                               
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//BP13L724 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT BY REGN-NO ORDER                                                       
+//*---------------------------------------------------------------------        
+//STEP40   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F558HIST,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F558RESL,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(80,10),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,8,A),FORMAT=CH                                                
+//*---------------------------------------------------------------------        
+//* SORT REQUEST FILE IN REGNO ORDER FOR RESALE MATCHING REC                    
+//*---------------------------------------------------------------------        
+//STEP41   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.BB22,DISP=SHR                              
+//SORTOUT  DD DSN=&&F500RESL,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(90,6),RLSE),                               
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+//*---------------------------------------------------------------------        
+//* UPDATE 10YR-OCCUPN TAG TO SOC REQUEST AS INEILIGIBLE CASE (N)               
+//*        - FOR EX-LESSEE                                                      
+//*---------------------------------------------------------------------        
+//* TO  COMPUTE 10-YR-OCCP = BP13U725                                           
+//* FOR EXEC OPEN CATEGORY, USE CURRENT DATE TO COMPUTE 5-YR-OCCP               
+//*                        = BP13U711                                           
+//* F713-CDE-COHORT = OP, EC OPEN CATEGORY COMPUTE 5-YR                         
+//* F713-CDE-COHORT = QT, WK COMPUTE 10-YR                                      
+//*---------------------------------------------------------------------        
+//STEP42   EXEC PGM=BP13U725,COND=(0,NE)                                        
+//STEPLIB  DD DSN=BP13.BATCH.LOADCOB.BALLOT,DISP=SHR                            
+//BP13F500 DD DSN=&&F500RESL,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558RESL,DISP=(OLD,PASS)                                    
+//BP13F520 DD DSN=BP13.F500.SEQUENCE.BB22,DISP=OLD                              
+//BP13L725 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* MERGE BP13F558 FR SMS-10YR AND RSL-10YR                                     
+//*---------------------------------------------------------------------        
+//STEP43   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F558RESL,DISP=(OLD,PASS)                                    
+//         DD DSN=&&F558NHH,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=BP13.F558.UPGOCCP.BB22,DISP=OLD                               
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,17,A),FORMAT=CH                                               
+//*********************************************************************         
+//* 1) PRINT REPORT TO CHECK MTH-RESIDE IN RESALE < SMS-MTH-RESIDE              
+//*---------------------------------------------------------------------        
+//* INCLUDE ONLY SMS-MTH-RESIDE > 000 AND SMS-MTH-RESIDE < 120                  
+//*              RSL-MTH-RESIDE > 000 AND RSL-MTH-RESIDE < 120                  
+//* SORT BY REGN-NO/NRIC ORDER,                                                 
+//*---------------------------------------------------------------------        
+//STEP44   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.BB22,DISP=SHR                               
+//SORTOUT  DD DSN=&&F558RSL,DISP=(,PASS),                                       
+//            UNIT=SYSDA,SPACE=(CYL,(120,10),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,17,A),FORMAT=CH                                               
+   INCLUDE COND=(21,3,CH,GT,C'000',AND,21,3,CH,LT,C'120',AND,                   
+                 24,3,CH,GT,C'000',AND,24,3,CH,LT,C'120')                       
+//*---------------------------------------------------------------------        
+//* MATCH TO EXTRACT FULL BP13F558 RECORDS                                      
+//*---------------------------------------------------------------------        
+//STEP45   EXEC PGM=BP13C637,COND=(0,NE)                                        
+//BP13F558 DD DSN=BP13.F558.UPGOCCP.BB22,DISP=SHR                               
+//P13F558A DD DSN=&&F558RSL,DISP=(OLD,PASS)                                     
+//P13F558O DD DSN=&&F558C637,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(150,10),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT REQUEST FILE IN REGNO ORDER FOR RESALE MATCHING REC                    
+//*---------------------------------------------------------------------        
+//STEP46   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.BB22,DISP=SHR                              
+//SORTOUT  DD DSN=&&F500RSL,DISP=(NEW,PASS),                                    
+//            UNIT=SYSDA,SPACE=(CYL,(240,40),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+//*---------------------------------------------------------------------        
+//* CHECK RESALE-MTH-RESIDE < SMS-MTH-RESIDE                                    
+//* UPDATE BP13F520 MTH-RESIDE                                                  
+//*---------------------------------------------------------------------        
+//STEP47   EXEC PGM=BP13U730,COND=(0,NE)                                        
+//STEPLIB  DD DSN=BP13.BATCH.LOADCOB.BALLOT,DISP=SHR                            
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F500 DD DSN=&&F500RSL,DISP=(OLD,PASS)                                     
+//BP13F558 DD DSN=&&F558C637,DISP=(OLD,PASS)                                    
+//BP13F520 DD DSN=BP13.F500.SEQUENCE.BB22,DISP=OLD                              
+//BP13L730 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*                                                                             
+//*=====================================================================        
+//* AFTER RESALE,RUN TO CHECK MULTI-TIER FAMILY/HUSBAND WIFE WITH 2 FLAT        
+//* SELECT LONGER MTH-RESIDE RUN ON LY BP13C639                                 
+//*=====================================================================        
+//* INCLUDE 10YR=NO CASES                                                       
+//*---------------------------------------------------------------------        
+//STEP48   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.BB22,DISP=SHR                               
+//SORTOUT  DD DSN=&&F558BEST,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(150,15),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(1,17,A),FORMAT=CH                                                
+  INCLUDE COND=(34,3,CH,LT,C'120',AND,                                          
+                34,3,CH,NE,C'000',AND,                                          
+                34,3,CH,NE,C'   ')                                              
+  SUM FIELDS=NONE                                                               
+/*                                                                              
+//*-----------------------------------------------------------------            
+//* SORT BY REGN/NRIC ORDER                                                     
+//*-----------------------------------------------------------------            
+//STEP49   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.BB22,DISP=SHR                               
+//SORTOUT  DD DSN=&&F558SP48,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(150,15),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(1,17,A),FORMAT=CH                                                
+/*                                                                              
+//*-----------------------------------------------------------------            
+//* SORT BY REGN-NO ORDER                                                       
+//*-----------------------------------------------------------------            
+//STEP50   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.BB22,DISP=SHR                              
+//SORTOUT  DD DSN=&&F520BEST,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(240,10),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(123,8,A),FORMAT=CH                                               
+/*                                                                              
+//*-----------------------------------------------------------------            
+//* TO CONFIRM WITH BP13F520 THE 10YR=NO                                        
+//*-----------------------------------------------------------------            
+//STEP51   EXEC PGM=BP13C638,COND=(0,NE)                                        
+//BP13F520 DD DSN=&&F520BEST,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558BEST,DISP=(OLD,PASS)                                    
+//P13F558O DD DSN=&&F558YEAR,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(150,15),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-----------------------------------------------------------------            
+//* MATCH TO EXTRACT FULL BP13F558 RECORDS                                      
+//*-----------------------------------------------------------------            
+//STEP52   EXEC PGM=BP13C637,COND=(0,NE)                                        
+//BP13F558 DD DSN=&&F558SP48,DISP=(OLD,PASS)                                    
+//P13F558A DD DSN=&&F558YEAR,DISP=(OLD,PASS)                                    
+//P13F558O DD DSN=&&F558CASE,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(150,15),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------------          
+//* PRINT REPORT TO VERIFY PARENT/CHILD OR HUSBAND/WIFE CASES ON 10YR           
+//* FOR 1 "YES"  AND 1 "NO", MTH-RESIDE DIFFERENT BUT SAME FLAT,                
+//* TAKE THE LONGER MTH-RESIDE, OUTPUT FILE SO AS TO FORCE AS 'YES'             
+//*-------------------------------------------------------------------          
+//STEP53   EXEC PGM=BP13C639,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F558 DD DSN=&&F558CASE,DISP=(OLD,PASS)                                    
+//BP13F500 DD DSN=&&F520BEST,DISP=(OLD,PASS)                                    
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR                                    
+//P13F558A DD DSN=&&F558SONA,DISP=(,PASS),                                      
+//            UNIT=SYSDA,DCB=(RECFM=FB,LRECL=600),                              
+//            SPACE=(CYL,(150,20),RLSE)                                         
+//P13F558B DD DSN=&&F558PARA,DISP=(,PASS),                                      
+//            UNIT=SYSDA,DCB=(RECFM=FB,LRECL=600),                              
+//            SPACE=(CYL,(150,20),RLSE)                                         
+//P13L639A DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//P13L639B DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//P13L639C DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD DUMMY                                                             
+//*                                                                             
+//*-------------------------------------------------------------                
+//* SORT BY REGN ORDER, MTH-RESIDE IN DECENDING ORDER                           
+//*-------------------------------------------------------------                
+//STEP54   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=&&F558SONA,DISP=(OLD,PASS)                                    
+//         DD DSN=&&F558PARA,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F558MTFA,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(150,15),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(1,8,A,34,3,D),FORMAT=CH                                          
+  OMIT COND=(34,3,CH,EQ,C'   ')                                                 
+/*                                                                              
+//*-------------------------------------------------------------------          
+//* UPDATE 10-YR FROM NO TO YES, UPDATE WITH THE BIGGEST MTH-RESIDE             
+//*-------------------------------------------------------------------          
+//STEP55   EXEC PGM=BP13C698,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F500 DD DSN=&&F520BEST,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558MTFA,DISP=(OLD,PASS)                                    
+//BP13F520 DD DSN=BP13.F500.SEQUENCE.BB22,DISP=OLD                              
+//BP13F510 DD DSN=&&F500BYES,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(80,30),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD DUMMY                                                             
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* SORT BY REGN-NO ORDER INCLUDE CASES RE-UPDATE AS 10YR=YES                   
+//*---------------------------------------------------------------------        
+//STEP56   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.BB22,DISP=SHR                              
+//SORTOUT  DD DSN=&&F520YESA,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(240,10),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(123,8,A),FORMAT=CH                                               
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* TO CONFIRM WITH BP13F520 THE 10YR=NO                                        
+//*---------------------------------------------------------------------        
+//STEP57   EXEC PGM=BP13C638,COND=(0,NE)                                        
+//BP13F520 DD DSN=&&F520YESA,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558BEST,DISP=(OLD,PASS)                                    
+//P13F558O DD DSN=&&F558NOA,DISP=(,PASS),                                       
+//            UNIT=SYSDA,SPACE=(CYL,(150,20),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* MATCH TO EXTRACT FULL BP13F558 RECORDS                                      
+//*---------------------------------------------------------------------        
+//STEP58   EXEC PGM=BP13C637,COND=(0,NE)                                        
+//BP13F558 DD DSN=&&F558SP48,DISP=(OLD,PASS)                                    
+//P13F558A DD DSN=&&F558NOA,DISP=(OLD,PASS)                                     
+//P13F558O DD DSN=&&F558RECA,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(150,20),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------------          
+//* FOR 10-YR=NO CASES, TO FURTHER CHECK,                                       
+//* FOR TWO "NO" , MTH-RESIDE DIFFERENT BUT SAME FLAT, TAKE LONGER              
+//* MTH-RESIDE                                                                  
+//*-------------------------------------------------------------------          
+//STEP59   EXEC PGM=BP13C640,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F558 DD DSN=&&F558RECA,DISP=(OLD,PASS)                                    
+//BP13F500 DD DSN=&&F520YESA,DISP=(OLD,PASS)                                    
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR                                    
+//P13F558A DD DSN=&&F558NO1A,DISP=(,PASS),                                      
+//            UNIT=SYSDA,DCB=(RECFM=FB,LRECL=600),                              
+//            SPACE=(CYL,(150,20),RLSE)                                         
+//P13F558B DD DSN=&&F558NO2A,DISP=(,PASS),                                      
+//            UNIT=SYSDA,DCB=(RECFM=FB,LRECL=600),                              
+//            SPACE=(CYL,(150,20),RLSE)                                         
+//P13L640A DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//P13L640B DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD DUMMY                                                             
+//*                                                                             
+//*-------------------------------------------------------------                
+//* SORT BY REGN ORDER, MTH-RESIDE IN DECENDING ORDER                           
+//*-------------------------------------------------------------                
+//STEP60   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=&&F558NO2A,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F558RESA,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(150,20),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(1,8,A,34,3,D),FORMAT=CH                                          
+  OMIT COND=(34,3,CH,EQ,C'   ')                                                 
+/*                                                                              
+//*-------------------------------------------------------------------          
+//* UPDATE 10-YR FROM NO TO YES, UPDATE WITH THE BIGGEST MTH-RESIDE             
+//*-------------------------------------------------------------------          
+//STEP61   EXEC PGM=BP13C677,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.YR10WEEK.BB22,DISP=SHR                       
+//BP13F500 DD DSN=&&F520YESA,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558RESA,DISP=(OLD,PASS)                                    
+//BP13F520 DD DSN=BP13.F500.SEQUENCE.BB22,DISP=OLD                              
+//BP13F510 DD DSN=&&F500BNO,DISP=(,PASS),                                       
+//            UNIT=SYSDA,SPACE=(CYL,(20,30),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD DUMMY                                                             
+//*                                                                             
+//*--------------------------------------------------------------------         
+//* SORT REC UPDATE THRU BP13C698, BP13C677                                     
+//*--------------------------------------------------------------------         
+//STEP62   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F500BYES,DISP=(OLD,PASS)                                    
+//         DD DSN=&&F500BNO,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&F520SONA,DISP=(,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(80,10),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+//**--------------------------------------------------------------------        
+//* UPDATE LONGER MTH-RESIDE AFTER ADJUSTMENT FROM BP13C639, C640               
+//* TO BP13F558                                                                 
+//*---------------------------------------------------------------------        
+//STEP63   EXEC PGM=BP13C693,COND=(0,NE)                                        
+//BP13F520 DD DSN=&&F520SONA,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558SP48,DISP=(OLD,PASS)                                    
+//P13F558O DD DSN=BP13.F558.UPGOCCP.BB22,DISP=OLD                               
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+

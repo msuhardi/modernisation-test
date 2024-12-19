@@ -1,0 +1,582 @@
+      *------------------------*                                                
+       IDENTIFICATION DIVISION.                                                 
+      *------------------------*                                                
+       PROGRAM-ID. BP13CBA1.                                                    
+       AUTHOR. RJB1.                                                            
+      *DATE-WRITTEN. 13/10/2016.                                                
+                                                                                
+      ******************************************************************        
+      *                    SYSTEM OF COMMITMENT (BP13)                 *        
+      *================================================================*        
+      *  THIS PROGRAM IS TO SURFACE AN EMAIL ALERT EVERYTIME PCD IS    *        
+      *  UPDATED                                                       *        
+      *================================================================*        
+      *  MODIFICATIONS :                                               *        
+      *  CHGE REQ # DATE       AUTHOR  REMARKS                         *        
+      *  ---------- ----       ------  -------------------------       *        
+      *  BP136025   13/10/2016 RJB1    NEW PROGRAM                     *        
+      *  BP136025   25/10/2016 RJB1    TO INCLUDE CHECKING OF BP13K410 *        
+      *                                AND SALES TYPE                  *        
+      *  BP138757   23/07/2021 KV8     REPLACEING KATHIJAH TO SUZANNE  *        
+      ******************************************************************        
+                                                                                
+      *------------------------*                                                
+       ENVIRONMENT DIVISION.                                                    
+      *------------------------*                                                
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER.  IBM-3090.                                              
+       OBJECT-COMPUTER.  IBM-3090.                                              
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F491 ASSIGN TO BP13F491.                                  
+                                                                                
+           SELECT BP13F800 ASSIGN TO BP13F800.                                  
+                                                                                
+           SELECT BP13K410 ASSIGN TO BP13K410                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K410-KEY-FLD                               
+                  ACCESS MODE     IS RANDOM                                     
+                  FILE STATUS     IS WS-K410-FILE-STATUS.                       
+                                                                                
+           SELECT AB03K030 ASSIGN TO AB03K030                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K030-NUM-HDB-REF                           
+                  ACCESS MODE     IS RANDOM                                     
+                  FILE STATUS     IS WS-K030-FILE-STATUS.                       
+                                                                                
+           SELECT AB03K080 ASSIGN TO AB03K080                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K080-KEY                                   
+                  ACCESS MODE     IS DYNAMIC                                    
+                  FILE STATUS     IS WS-K080-FILE-STATUS.                       
+                                                                                
+           SELECT BP13LBA1 ASSIGN TO BP13LBA1.                                  
+                                                                                
+                                                                                
+      *------------------------*                                                
+       DATA DIVISION.                                                           
+      *------------------------*                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F800                                                            
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            RECORDING MODE  IS   F.                                             
+       COPY BP13F800.                                                           
+                                                                                
+       FD   BP13F491                                                            
+            RECORD CONTAINS 200 CHARACTERS                                      
+            RECORDING MODE  IS   F.                                             
+       COPY BP13F491.                                                           
+                                                                                
+       FD   BP13K410                                                            
+            RECORD CONTAINS 2000 CHARACTERS.                                    
+       COPY BP13K410.                                                           
+                                                                                
+       FD   AB03K030                                                            
+            RECORD CONTAINS 800 CHARACTERS.                                     
+       COPY AB03K030.                                                           
+                                                                                
+       FD   AB03K080                                                            
+            RECORD CONTAINS 50 CHARACTERS.                                      
+       COPY AB03K080.                                                           
+                                                                                
+       FD   BP13LBA1                                                            
+            RECORD CONTAINS 80 CHARACTERS                                       
+            RECORDING MODE IS F.                                                
+       01   BP13LBA1-REC         PIC X(80).                                     
+                                                                                
+                                                                                
+      *------------------------*                                                
+       WORKING-STORAGE SECTION.                                                 
+      *------------------------*                                                
+                                                                                
+       01  WS-FILE-FLAGS.                                                       
+           05  WS-K080-EOF               PIC X     VALUE 'N'.                   
+           05  WS-F800-EOF               PIC X     VALUE 'N'.                   
+           05  WS-F491-EOF               PIC X     VALUE 'N'.                   
+           05  WS-K410-FND               PIC X     VALUE 'N'.                   
+           05  WS-SMS-FND                PIC X     VALUE 'N'.                   
+           05  WS-K030-FILE-STATUS       PIC 99    VALUE ZEROES.                
+           05  WS-K080-FILE-STATUS       PIC 99    VALUE ZEROES.                
+           05  WS-K410-FILE-STATUS       PIC 99    VALUE ZEROES.                
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F800-CNT-READ          PIC 9(8)  VALUE ZEROS.                 
+           05  WS-F491-CNT-READ          PIC 9(8)  VALUE ZEROS.                 
+           05  WS-MATCHED                PIC 9(8)  VALUE ZEROS.                 
+           05  WS-CNT-WRITE              PIC 9(8)  VALUE ZEROS.                 
+                                                                                
+       01  WS-NUM-HDB-REF                PIC X(11) VALUE SPACES.                
+       01  WS-SALES-TYPE                 PIC X(2)  VALUE SPACES.                
+       01  WS-NUM-NRIC                   PIC X(9)  VALUE SPACES.                
+       01  WS-DATE                       PIC X(8)  VALUE SPACES.                
+                                                                                
+      *-------------------------------------------------------------            
+      * LAYOUT BP13MAIL  -  DATASET FOR EMAIL                                   
+      *-------------------------------------------------------------            
+       01  MAIL-HDR1.                                                           
+           05  FILLER          PIC X(12)  VALUE 'HELO SGPHDB1'.                 
+           05  FILLER          PIC X(68)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-HDR2.                                                           
+           05  FILLER          PIC X(11)  VALUE 'MAIL FROM:<'.                  
+           05  MAIL-SENDID     PIC X(04)  VALUE 'OPCP'.                         
+           05  FILLER          PIC X(09)  VALUE '@SGPHDB1>'.                    
+           05  FILLER          PIC X(56)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL1.                                                           
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  MAIL-BOMAILID   PIC X(60)  VALUE                                 
+               'TENG_SIEW_HONG@HDB.GOV.SG>'.                                    
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL2.                                                           
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  MAIL-CCMAILID   PIC X(60)  VALUE                                 
+      *        'KATHIJAH_BEE_ALI_MOHAMED@HDB.GOV.SG>'.                          
+               'SUZANNE_SC_HENG@HDB.GOV.SG>'.                                   
+           05  FILLER          PIC X(11)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL3.                                                           
+           05  FILLER          PIC X(04)  VALUE 'DATA'.                         
+           05  FILLER          PIC X(76)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL4.                                                           
+           05  FILLER          PIC X(05)  VALUE 'FROM:'.                        
+           05  MAIL-SENDMAILID PIC X(26)  VALUE                                 
+               'SOC System - Email Alert'.                                      
+           05  FILLER          PIC X(49)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL5.                                                           
+           05  FILLER          PIC X(4)   VALUE 'TO:<'.                         
+           05  MAIL-BOMAILID1  PIC X(60)  VALUE                                 
+               'TENG_SIEW_HONG@HDB.GOV.SG>'.                                    
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL6.                                                           
+           05  FILLER          PIC X(4)   VALUE 'TO:<'.                         
+           05  MAIL-CCMAILID1  PIC X(60)  VALUE                                 
+      *        'KATHIJAH_BEE_ALI_MOHAMED@HDB.GOV.SG>'.                          
+               'SUZANNE_SC_HENG@HDB.GOV.SG>'.                                   
+           05  FILLER          PIC X(16)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL7.                                                           
+           05  FILLER          PIC X(10)  VALUE 'SUBJECT : '.                   
+           05  MAIL-SUBJECT    PIC X(60)  VALUE                                 
+               'EMAIL ALERT FOR PARENT/CHILD = P'.                              
+                                                                                
+       01  MAIL-DTL8.                                                           
+           05 FILLER                   PIC X(6)   VALUE 'DATE: '.               
+           05 MAIL-DATE                PIC X(10)  VALUE SPACES.                 
+                                                                                
+       01  MAIL-COL-HEADING1.                                                   
+           05  FILLER                    PIC X(02) VALUE SPACES.                
+           05  FILLER                    PIC X(08)                              
+               VALUE 'REGN NO '.                                                
+           05  FILLER                    PIC X(02) VALUE SPACES.                
+           05  FILLER                    PIC X(10)                              
+               VALUE 'SALES TYPE'.                                              
+           05  FILLER                    PIC X(02) VALUE SPACES.                
+           05  FILLER                    PIC X(09)                              
+               VALUE 'NRIC     '.                                               
+           05  FILLER                    PIC X(02) VALUE SPACES.                
+           05  FILLER                    PIC X(11)                              
+               VALUE 'HDB REF    '.                                             
+                                                                                
+       01  WS-HORIZONTAL-LINE.                                                  
+           05  FILLER                    PIC X(80)                              
+               VALUE ALL '-'.                                                   
+                                                                                
+       01  MAIL-BODY.                                                           
+           05  FILLER                    PIC X(02) VALUE SPACES.                
+           05  LBA1-REGNO                PIC X(08) VALUE SPACES.                
+           05  FILLER                    PIC X(02) VALUE SPACES.                
+           05  LBA1-SALESTYP             PIC X(02) VALUE SPACES.                
+           05  FILLER                    PIC X(10) VALUE SPACES.                
+           05  LBA1-NRIC                 PIC X(09) VALUE SPACES.                
+           05  FILLER                    PIC X(02) VALUE SPACES.                
+           05  LBA1-HDBREF               PIC X(11) VALUE SPACES.                
+                                                                                
+       01  WS-END-OF-REPORT.                                                    
+           05  FILLER                    PIC X(29) VALUE SPACES.                
+           05  FILLER                    PIC X(21)                              
+               VALUE '*** END OF REPORT ***'.                                   
+           05  FILLER                    PIC X(30) VALUE SPACES.                
+                                                                                
+       01  WS-EMPTY-REPORT.                                                     
+           05  FILLER                    PIC X(30) VALUE SPACES.                
+           05  FILLER                    PIC X(20)                              
+               VALUE '*** EMPTY REPORT ***'.                                    
+           05  FILLER                    PIC X(30) VALUE SPACES.                
+                                                                                
+       01  MAIL-SPACES.                                                         
+           05 FILLER                     PIC X(80) VALUE SPACES.                
+                                                                                
+      *------------------------*                                                
+       PROCEDURE DIVISION.                                                      
+      *------------------------*                                                
+      ******************************************************************        
+       0000-CONTROL.                                                            
+      ******************************************************************        
+           PERFORM 1000-OPEN-FILES    THRU 1000-EXIT.                           
+           PERFORM 2000-READ-BP13F491 THRU 2000-EXIT.                           
+           PERFORM 3000-READ-BP13F800 THRU 3000-EXIT.                           
+           PERFORM 4000-PROCESS       THRU 4000-EXIT                            
+                   UNTIL WS-F491-EOF = 'Y' OR                                   
+                         WS-F800-EOF = 'Y'.                                     
+           PERFORM 9000-CLOSE-FILES   THRU 9000-EXIT.                           
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       1000-OPEN-FILES.                                                         
+      ******************************************************************        
+           OPEN INPUT  BP13F800                                                 
+                       BP13F491                                                 
+                       BP13K410                                                 
+                       AB03K030                                                 
+                       AB03K080                                                 
+                OUTPUT BP13LBA1.                                                
+                                                                                
+           IF WS-K410-FILE-STATUS NOT = 00 AND 97                               
+              DISPLAY 'BP13K410 - ERROR OPENING : ' WS-K410-FILE-STATUS         
+              PERFORM  9000-CLOSE-FILES    THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF WS-K030-FILE-STATUS NOT = 00 AND 97                               
+              DISPLAY 'AB03K030 - ERROR OPENING : ' WS-K030-FILE-STATUS         
+              PERFORM  9000-CLOSE-FILES    THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF WS-K080-FILE-STATUS NOT = 00 AND 97                               
+              DISPLAY 'AB03K080 - ERROR OPENING : ' WS-K080-FILE-STATUS         
+              PERFORM  9000-CLOSE-FILES    THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8) TO WS-DATE.                          
+           STRING WS-DATE(7:2) '/' WS-DATE(5:2) '/' WS-DATE(1:4)                
+                  DELIMITED BY SIZE INTO MAIL-DATE.                             
+                                                                                
+           WRITE BP13LBA1-REC    FROM MAIL-HDR1                                 
+           WRITE BP13LBA1-REC    FROM MAIL-HDR2.                                
+           WRITE BP13LBA1-REC    FROM MAIL-DTL1.                                
+           WRITE BP13LBA1-REC    FROM MAIL-DTL2.                                
+           WRITE BP13LBA1-REC    FROM MAIL-DTL3.                                
+           WRITE BP13LBA1-REC    FROM MAIL-DTL4.                                
+           WRITE BP13LBA1-REC    FROM MAIL-DTL5.                                
+           WRITE BP13LBA1-REC    FROM MAIL-DTL6.                                
+           WRITE BP13LBA1-REC    FROM MAIL-DTL7.                                
+           WRITE BP13LBA1-REC    FROM MAIL-DTL8.                                
+                                                                                
+           WRITE BP13LBA1-REC    FROM MAIL-COL-HEADING1.                        
+           WRITE BP13LBA1-REC    FROM WS-HORIZONTAL-LINE.                       
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       2000-READ-BP13F491.                                                      
+      ******************************************************************        
+           READ BP13F491 AT END                                                 
+                         MOVE 'Y' TO WS-F491-EOF                                
+                         GO TO 2000-EXIT                                        
+           END-READ.                                                            
+                                                                                
+           ADD 1 TO WS-F491-CNT-READ.                                           
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3000-READ-BP13F800.                                                      
+      ******************************************************************        
+           READ BP13F800 AT END                                                 
+                         MOVE 'Y' TO WS-F800-EOF                                
+                         GO TO 3000-EXIT                                        
+           END-READ.                                                            
+                                                                                
+           ADD 1 TO WS-F800-CNT-READ.                                           
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4000-PROCESS.                                                            
+      ******************************************************************        
+                                                                                
+           IF F491-NUM-REGN = F800-NUM-REGN                                     
+              ADD 1    TO WS-MATCHED                                            
+              PERFORM 4500-READ-BP13K410                                        
+                 THRU 4500-EXIT                                                 
+              IF WS-K410-FND = 'N'                                              
+                 PERFORM 5000-CHECK-NRIC                                        
+                    THRU 5000-EXIT                                              
+              END-IF                                                            
+              PERFORM 2000-READ-BP13F491                                        
+                 THRU 2000-EXIT                                                 
+           ELSE                                                                 
+              IF F491-NUM-REGN > F800-NUM-REGN                                  
+                 PERFORM 3000-READ-BP13F800                                     
+                    THRU 3000-EXIT                                              
+              ELSE                                                              
+                 PERFORM 2000-READ-BP13F491                                     
+                    THRU 2000-EXIT                                              
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4500-READ-BP13K410.                                                      
+      ******************************************************************        
+           READ BP13K410                                                        
+                                                                                
+           EVALUATE WS-K410-FILE-STATUS                                         
+           WHEN 00                                                              
+              MOVE 'Y'                TO WS-K410-FND                            
+              DISPLAY 'RECORD FOUND IN BP13K410 - ' K410-KEY-FLD                
+           WHEN 23                                                              
+              MOVE 'N'                TO WS-K410-FND                            
+           WHEN OTHER                                                           
+              DISPLAY 'ERROR READ AB03K030,STATUS ' WS-K030-FILE-STATUS         
+              PERFORM 9000-CLOSE-FILES                                          
+                 THRU 9000-EXIT                                                 
+           END-EVALUATE.                                                        
+                                                                                
+       4500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5000-CHECK-NRIC.                                                         
+      ******************************************************************        
+           MOVE SPACES                     TO K080-KEY                          
+                                              WS-NUM-NRIC.                      
+           MOVE F800-NUM-NRIC1             TO K080-NUM-UIN                      
+                                              WS-NUM-NRIC.                      
+           PERFORM 5200-START-AB03K080                                          
+              THRU 5200-EXIT.                                                   
+           IF WS-SMS-FND = 'Y'                                                  
+              PERFORM 6000-WRITE-REPORT                                         
+                 THRU 6000-EXIT                                                 
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-NRIC2 NOT = SPACES AND LOW-VALUES AND                    
+              (WS-SMS-FND NOT = 'Y')                                            
+              MOVE SPACES                  TO K080-KEY                          
+                                              WS-NUM-NRIC                       
+              MOVE F800-NUM-NRIC2          TO K080-NUM-UIN                      
+                                              WS-NUM-NRIC                       
+              PERFORM 5200-START-AB03K080                                       
+                 THRU 5200-EXIT                                                 
+              IF WS-SMS-FND = 'Y'                                               
+                 PERFORM 6000-WRITE-REPORT                                      
+                    THRU 6000-EXIT                                              
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-NRIC3 NOT = SPACES AND LOW-VALUES AND                    
+              (WS-SMS-FND NOT = 'Y')                                            
+              MOVE SPACES                  TO K080-KEY                          
+                                              WS-NUM-NRIC                       
+              MOVE F800-NUM-NRIC3          TO K080-NUM-UIN                      
+                                              WS-NUM-NRIC                       
+              PERFORM 5200-START-AB03K080                                       
+                 THRU 5200-EXIT                                                 
+              IF WS-SMS-FND = 'Y'                                               
+                 PERFORM 6000-WRITE-REPORT                                      
+                    THRU 6000-EXIT                                              
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-NRIC4 NOT = SPACES AND LOW-VALUES AND                    
+              (WS-SMS-FND NOT = 'Y')                                            
+              MOVE SPACES                  TO K080-KEY                          
+                                              WS-NUM-NRIC                       
+              MOVE F800-NUM-NRIC4          TO K080-NUM-UIN                      
+                                              WS-NUM-NRIC                       
+              PERFORM 5200-START-AB03K080                                       
+                 THRU 5200-EXIT                                                 
+              IF WS-SMS-FND = 'Y'                                               
+                 PERFORM 6000-WRITE-REPORT                                      
+                    THRU 6000-EXIT                                              
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5200-START-AB03K080.                                                     
+      ******************************************************************        
+           MOVE 'N' TO WS-K080-EOF                                              
+                       WS-SMS-FND.                                              
+                                                                                
+           START AB03K080                                                       
+              KEY >= K080-NUM-UIN.                                              
+                                                                                
+           EVALUATE WS-K080-FILE-STATUS                                         
+              WHEN 00                                                           
+                 PERFORM 5300-READNXT-AB03K080                                  
+                   UNTIL WS-NUM-NRIC NOT = K080-NUM-UIN                         
+                      OR WS-K080-EOF = 'Y'                                      
+              WHEN 23                                                           
+                 DISPLAY 'AB03K080 REC NOT FOUND : ' K080-NUM-UIN               
+              WHEN OTHER                                                        
+                 DISPLAY 'AB03K080 START ERROR : ' WS-K080-FILE-STATUS          
+                        ' RECORD ' K080-NUM-UIN                                 
+                 PERFORM 9000-CLOSE-FILES                                       
+                    THRU 9000-EXIT                                              
+           END-EVALUATE.                                                        
+                                                                                
+       5200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5300-READNXT-AB03K080.                                                   
+      ******************************************************************        
+           READ AB03K080 NEXT RECORD                                            
+                AT END MOVE 'Y' TO WS-K080-EOF                                  
+                GO TO 5300-EXIT.                                                
+                                                                                
+           EVALUATE WS-K080-FILE-STATUS                                         
+           WHEN 00                                                              
+           WHEN 02                                                              
+              IF WS-NUM-NRIC = K080-NUM-UIN                                     
+                 MOVE SPACES  TO K030-NUM-HDB-REF                               
+                                 WS-NUM-HDB-REF                                 
+                                 WS-SALES-TYPE                                  
+                 MOVE K080-NUM-HDB-REF TO K030-NUM-HDB-REF                      
+                                          WS-NUM-HDB-REF                        
+                 PERFORM 5400-READ-AB03K030                                     
+                    THRU 5400-EXIT                                              
+              ELSE                                                              
+                 MOVE 'Y'     TO WS-K080-EOF                                    
+              END-IF                                                            
+           WHEN 10                                                              
+           WHEN 23                                                              
+              MOVE 'Y'        TO WS-K080-EOF                                    
+           WHEN OTHER                                                           
+              DISPLAY 'AB03K080 READNXT ERROR: ' WS-K080-FILE-STATUS            
+                     ' RECORD ' K080-NUM-UIN                                    
+              PERFORM 9000-CLOSE-FILES                                          
+                 THRU 9000-EXIT                                                 
+           END-EVALUATE.                                                        
+                                                                                
+       5300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5400-READ-AB03K030.                                                      
+      ******************************************************************        
+           READ AB03K030                                                        
+                                                                                
+           EVALUATE WS-K030-FILE-STATUS                                         
+           WHEN 00                                                              
+              PERFORM 5500-GET-SMS-DATA                                         
+                 THRU 5500-EXIT                                                 
+           WHEN 23                                                              
+              MOVE 'N'                TO WS-SMS-FND                             
+              DISPLAY 'RECORD NOT FND IN AB03K030 ' K030-NUM-HDB-REF            
+           WHEN OTHER                                                           
+              DISPLAY 'ERROR READ AB03K030,STATUS ' WS-K030-FILE-STATUS         
+              PERFORM 9000-CLOSE-FILES                                          
+                 THRU 9000-EXIT                                                 
+           END-EVALUATE.                                                        
+                                                                                
+       5400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5500-GET-SMS-DATA.                                                       
+      ******************************************************************        
+                                                                                
+           IF K030-CDE-SALES-TYP = '1 ' OR '1A' OR '1B' OR '10' OR '11'         
+                                OR '12' OR '13' OR '14' OR '14' OR '15'         
+                                OR '2 ' OR '2B' OR '3 ' OR '3A' OR '5A'         
+                                OR '5B' OR '5C' OR '6 ' OR '6J' OR '7J'         
+                                OR '8 ' OR '8C' OR '8D' OR '8E' OR '8F'         
+                                OR '8G' OR '8J' OR '9B'                         
+              MOVE 'Y'                TO WS-SMS-FND                             
+                                         WS-K080-EOF                            
+              MOVE K030-CDE-SALES-TYP TO WS-SALES-TYPE                          
+           ELSE                                                                 
+              MOVE 'N'                TO WS-SMS-FND                             
+           END-IF.                                                              
+                                                                                
+       5500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       6000-WRITE-REPORT.                                                       
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                        TO MAIL-BODY.                     
+           ADD  1                             TO WS-CNT-WRITE.                  
+           MOVE F800-NUM-REGN                 TO LBA1-REGNO.                    
+           MOVE WS-NUM-NRIC                   TO LBA1-NRIC.                     
+           MOVE WS-NUM-HDB-REF                TO LBA1-HDBREF.                   
+           MOVE WS-SALES-TYPE                 TO LBA1-SALESTYP.                 
+                                                                                
+           WRITE BP13LBA1-REC FROM MAIL-BODY.                                   
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       9000-CLOSE-FILES.                                                        
+      ******************************************************************        
+           DISPLAY '                                  '.                        
+           DISPLAY ' *****  BP13CBA1  *****           '.                        
+           DISPLAY '                                  '.                        
+           DISPLAY ' NO. OF REC READ FROM F800  = ' WS-F800-CNT-READ.           
+           DISPLAY ' NO. OF REC READ FROM F491  = ' WS-F491-CNT-READ.           
+           DISPLAY ' NO. OF REC WRITTEN         = ' WS-CNT-WRITE.               
+                                                                                
+           CLOSE BP13F800                                                       
+                 BP13F491                                                       
+                 BP13K410                                                       
+                 AB03K030                                                       
+                 AB03K080.                                                      
+                                                                                
+           IF WS-K410-FILE-STATUS NOT = 00                                      
+              DISPLAY 'CLOSING ERROR, BP13K410 ' WS-K410-FILE-STATUS            
+              MOVE WS-K410-FILE-STATUS TO RETURN-CODE                           
+           END-IF.                                                              
+                                                                                
+           IF WS-K030-FILE-STATUS NOT = 00                                      
+              DISPLAY 'CLOSING ERROR, AB03K030 ' WS-K030-FILE-STATUS            
+              MOVE WS-K030-FILE-STATUS TO RETURN-CODE                           
+           END-IF.                                                              
+                                                                                
+           IF WS-K080-FILE-STATUS NOT = 00                                      
+              DISPLAY 'CLOSING ERROR, AB03K080 ' WS-K080-FILE-STATUS            
+              MOVE WS-K080-FILE-STATUS TO RETURN-CODE                           
+           END-IF.                                                              
+                                                                                
+           IF WS-CNT-WRITE = ZEROES                                             
+              MOVE SPACES                  TO BP13LBA1-REC                      
+              WRITE BP13LBA1-REC         FROM WS-EMPTY-REPORT                   
+           ELSE                                                                 
+              MOVE  SPACES                 TO BP13LBA1-REC                      
+              WRITE BP13LBA1-REC         FROM MAIL-SPACES                       
+              MOVE  SPACES                 TO BP13LBA1-REC                      
+              WRITE BP13LBA1-REC         FROM WS-END-OF-REPORT                  
+           END-IF.                                                              
+                                                                                
+           CLOSE BP13LBA1.                                                      
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+      * >>>>>>>>>>>>>>>>>>>>>>> END OF BP13CBA1 <<<<<<<<<<<<<<<<<<<<<< *        
+      *----------------------------------------------------------------*        
+

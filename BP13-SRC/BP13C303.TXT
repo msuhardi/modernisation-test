@@ -1,0 +1,748 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID. BP13C303.                                                    
+       AUTHOR. ACK.                                                             
+      * ========================================================= *             
+      *               SYSTEM OF COMMITMENT  (BP13)                *             
+      * ========================================================= *             
+      *    PURPOSE :                                              *             
+      *      TO UPDATE THE OCCUPIER INFORMATION FROM SALES        *             
+      *      AGREEMENT ORDER FILE                                 *             
+      *                                                           *             
+      *    FLAG INDICATOR:                                        *             
+      *      1.  WS-FLAG     - INDICATOR FOR STORED TABLE         *             
+      *      2.  WS-CHG-NRIC - INDICATE CHANGE OF NRIC            *             
+      *      3.  WS-IND      - SUBSCRIPT FOR STORED OCCUPIER      *             
+      *      4.  WS-OCC      - NO OF OCCUPIER IN BP13K820         *             
+      *      5.  WS-APP      - SUBSCRIPT FOR STORED APPLICANT     *             
+      *      6.  WS-APP-CNT  - NO OF APPLICANT STORED             *             
+      *                                                           *             
+      *    REMARKS :                                              *             
+      *      1.  CDE-LESSEE-CHG                                   *             
+      *          'D' - DELETE APPLICANT FROM THE OCCUPIER FILE    *             
+      *          'O' - APPLICANT CHANGE TO OCCUPIER               *             
+      *          'N' - NEW APPLICANT                              *             
+      *          'E' - EXISTING APPLICANT                         *             
+      *                                                           *             
+      *      2.  SEQ-NO                                           *             
+      *          '101' - APPLICANT                                *             
+      *          '102' - CO-APPLICANT                             *             
+      *          OTHERS - 3RD OR 4TH APPLICANT OR OCCUPIERS       *             
+      *                                                           *             
+      * ========================================================= *             
+      * CHG REQ  DATE   OIC  DESCRIPTION                          *             
+      * -------- ------ ---  -----------                          *             
+      *          940820 LMS  TO AMEND PARA 7100 - 7400 LESSEE-CHG *             
+      * BP130020 951010 SSS  REPOSITION RPT-ID TO COL 1           *             
+      * BP130418 980603 SGK  TO CATER FOR Y2K.                    *             
+      * BP130850 011105 AS1  WRITE CDB INFO. INTO BP13F915        *             
+      * BP130850 011214 AS1  ADD REGN-NO TO BP13F915              *             
+      * BP137200 080318 FNP1 CHANGE 'DE' TXN-TYPE TO 'TE' IN F915 *             
+      * ========================================================= *             
+      *                                                                         
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-4341.                                               
+       OBJECT-COMPUTER. IBM-4341.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT BP13K800 ASSIGN TO BP13K800                                   
+                  ORGANIZATION IS INDEXED                                       
+                  ACCESS MODE IS RANDOM                                         
+                  RECORD KEY IS K800-NUM-REGN                                   
+                  FILE STATUS IS WS-K800-STATUS.                                
+                                                                                
+           SELECT BP13K820 ASSIGN TO BP13K820                                   
+                  ORGANIZATION IS INDEXED                                       
+                  ACCESS MODE IS RANDOM                                         
+                  RECORD KEY IS K820-KEY-FLD                                    
+                  FILE STATUS IS WS-K820-STATUS.                                
+                                                                                
+           SELECT BP13F300 ASSIGN TO BP13F300                                   
+                  ACCESS MODE IS SEQUENTIAL.                                    
+                                                                                
+           SELECT BP13OUT  ASSIGN TO BP13OUT                                    
+                  ACCESS MODE IS SEQUENTIAL.                                    
+                                                                                
+           SELECT BP13F915 ASSIGN TO BP13F915.                                  
+                                                                                
+           SELECT BP13L303 ASSIGN TO BP13L303.                                  
+           EJECT                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+       FD  BP13K800                                                             
+                                   RECORD CONTAINS 2000 CHARACTERS.             
+       COPY BP13K800.                                                           
+                                                                                
+       FD  BP13K820                                                             
+                                   BLOCK CONTAINS 0 RECORDS                     
+                                   RECORD CONTAINS 400 CHARACTERS               
+                                   LABEL RECORDS ARE STANDARD.                  
+       COPY BP13K820.                                                           
+       FD  BP13F300                                                             
+                                   BLOCK CONTAINS 0 RECORDS                     
+                                   RECORD CONTAINS 2000 CHARACTERS              
+                                   LABEL RECORDS ARE STANDARD                   
+                                   RECORDING MODE IS F.                         
+       COPY BP13F300.                                                           
+                                                                                
+       FD  BP13OUT                                                              
+                                   BLOCK CONTAINS 0 RECORDS                     
+                                   RECORD CONTAINS 2000 CHARACTERS              
+                                   LABEL RECORDS ARE STANDARD                   
+                                   RECORDING MODE IS F.                         
+       01  BP13OUT-REC             PIC X(2000).                                 
+                                                                                
+       FD  BP13F915                                                             
+                                   BLOCK CONTAINS 0 RECORDS                     
+                                   RECORD CONTAINS 800 CHARACTERS               
+                                   LABEL RECORDS ARE STANDARD                   
+                                   RECORDING MODE IS F.                         
+       COPY BP13F915.                                                           
+                                                                                
+       FD  BP13L303                                                             
+                                   LABEL RECORDS ARE OMITTED                    
+                                   RECORDING MODE IS F.                         
+                                                                                
+       01  BP13L303-REC                PIC X(133).                              
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-NAME                 PIC X(66)   VALUE SPACES.                
+           05  WS-K800-STATUS          PIC 99      VALUE ZERO.                  
+           05  WS-K820-STATUS          PIC 99      VALUE ZERO.                  
+           05  WS-F300-COUNT           PIC 9(8)    VALUE ZERO.                  
+           05  WS-K820-REWRITE         PIC 9(8)    VALUE ZERO.                  
+           05  WS-F915-WRITE           PIC 9(8)    VALUE ZERO.                  
+           05  WS-K800-READ            PIC 9(8)    VALUE ZERO.                  
+           05  WS-K820-INSERT          PIC 9(8)    VALUE ZERO.                  
+           05  WS-K820-DELETE          PIC 9(8)    VALUE ZERO.                  
+           05  WS-OUTPUT               PIC 9(8)    VALUE ZERO.                  
+           05  WS-EOF-F300             PIC X(3)    VALUE 'NO '.                 
+               88  EOF-OF-F300                     VALUE 'YES'.                 
+                                                                                
+       01  WS-DATE.                                                             
+           05   WS-CCYY                PIC X(4).                                
+           05   WS-MM                  PIC X(2).                                
+           05   WS-DD                  PIC X(2).                                
+                                                                                
+       01  WS-CUR-DATE.                                                         
+           05   WS-CUR-DD              PIC X(2)    VALUE SPACES.                
+           05   WS-SLASH1              PIC X       VALUE SPACES.                
+           05   WS-CUR-MM              PIC X(2)    VALUE SPACES.                
+           05   WS-SLASH2              PIC X       VALUE SPACES.                
+           05   WS-CUR-CCYY            PIC X(4)    VALUE SPACES.                
+                                                                                
+       01  WS-HEADER1.                                                          
+           05   FILLER                 PIC X(30)   VALUE 'BP13L303'.            
+           05   FILLER                 PIC X(22)   VALUE SPACES.                
+           05   FILLER                 PIC X(50)   VALUE                        
+                'ERROR   LIST'.                                                 
+           05   FILLER                 PIC X(8)    VALUE                        
+                'DATE : '.                                                      
+           05   PRT-DATE               PIC X(10)   VALUE SPACES.                
+                                                                                
+       01  WS-HEADER2.                                                          
+           05   FILLER                 PIC X(10)   VALUE SPACES.                
+           05   PRT-REG                PIC X(8)    VALUE SPACES.                
+           05   FILLER                 PIC X(20)   VALUE SPACES.                
+           05   PRT-NRIC               PIC X(9)    VALUE SPACES.                
+           05   FILLER                 PIC X(20)   VALUE SPACES.                
+           05   PRT-REMARK             PIC X(20)   VALUE SPACES.                
+           05   FILLER                 PIC X(10)   VALUE SPACES.                
+           05   PRT-STATUS             PIC X(4)    VALUE SPACES.                
+                                                                                
+       01  WS-SUMMARY.                                                          
+           05   FILLER                 PIC X(10)   VALUE SPACES.                
+           05   PRT-DESC               PIC X(40)   VALUE SPACES.                
+           05   PRT-TOTAL              PIC ZZZZZZZ9.                            
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+       00-MAIN-LOGIC.                                                           
+                                                                                
+           PERFORM 10-INITIALIZATION.                                           
+           PERFORM 20-READ-F300    THRU 20-EXIT.                                
+           PERFORM 30-PROCESS-RTN  THRU 30-EXIT                                 
+                   UNTIL EOF-OF-F300.                                           
+           PERFORM 40-FINALIZATION THRU 40-EXIT.                                
+           PERFORM 50-CLOSE-FILES  THRU 50-EXIT.                                
+                                                                                
+       10-INITIALIZATION.                                                       
+                                                                                
+           OPEN INPUT  BP13F300                                                 
+                       BP13K800                                                 
+                I-O    BP13K820                                                 
+                OUTPUT BP13OUT                                                  
+                       BP13F915                                                 
+                       BP13L303.                                                
+                                                                                
+           IF WS-K800-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'K800 OPEN ERROR ' WS-K800-STATUS                         
+              MOVE WS-K800-STATUS TO RETURN-CODE                                
+              GO TO 50-CLOSE-FILES.                                             
+                                                                                
+           IF WS-K820-STATUS NOT = ZEROES AND 97                                
+              DISPLAY 'K820 OPEN ERROR ' WS-K820-STATUS                         
+              MOVE WS-K820-STATUS TO RETURN-CODE                                
+              GO TO 50-CLOSE-FILES.                                             
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8)  TO  WS-DATE.                        
+           MOVE WS-DD        TO WS-CUR-DD.                                      
+           MOVE WS-MM        TO WS-CUR-MM.                                      
+           MOVE WS-CCYY      TO WS-CUR-CCYY.                                    
+           MOVE '/'          TO WS-SLASH1 WS-SLASH2.                            
+           MOVE WS-CUR-DATE  TO PRT-DATE.                                       
+                                                                                
+       20-READ-F300.                                                            
+                                                                                
+           READ BP13F300                                                        
+               AT END MOVE 'YES' TO WS-EOF-F300                                 
+               GO TO 20-EXIT.                                                   
+            ADD 1 TO WS-F300-COUNT.                                             
+                                                                                
+       20-EXIT.                                                                 
+           EXIT.                                                                
+                                                                                
+      ********************************                                          
+      *       PROCESS ROUTINE        *                                          
+      ********************************                                          
+       30-PROCESS-RTN.                                                          
+                                                                                
+           IF F300-NRIC1 = SPACES OR LOW-VALUES                                 
+              MOVE '99'                TO RETURN-CODE                           
+              PERFORM 50-CLOSE-FILES   THRU 50-EXIT                             
+           ELSE                                                                 
+              PERFORM 1000-CHECK-NRIC1 THRU 1000-EXIT.                          
+                                                                                
+           IF (F300-NRIC2 = SPACES OR LOW-VALUES) AND                           
+              (F300-CDE-LESSEE-CHG2 = ' ')                                      
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              PERFORM 2000-CHECK-NRIC2 THRU 2000-EXIT.                          
+                                                                                
+           IF F300-NRIC3 = SPACES OR LOW-VALUES  AND                            
+              (F300-CDE-LESSEE-CHG3 = ' ')                                      
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              PERFORM 3000-CHECK-NRIC3 THRU 3000-EXIT.                          
+                                                                                
+           IF F300-NRIC4 = SPACES OR LOW-VALUES AND                             
+              (F300-CDE-LESSEE-CHG4 = ' ')                                      
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              PERFORM 4000-CHECK-NRIC4 THRU 4000-EXIT.                          
+                                                                                
+           WRITE BP13OUT-REC FROM BP13F300-REC.                                 
+           ADD 1 TO WS-OUTPUT.                                                  
+           PERFORM 20-READ-F300 THRU 20-EXIT.                                   
+                                                                                
+       30-EXIT.                                                                 
+           EXIT.                                                                
+                                                                                
+       40-FINALIZATION.                                                         
+                                                                                
+           WRITE BP13L303-REC FROM WS-HEADER1 AFTER PAGE.                       
+           MOVE SPACES TO BP13L303-REC                                          
+           WRITE BP13L303-REC AFTER 1.                                          
+           WRITE BP13L303-REC FROM WS-SUMMARY AFTER 2.                          
+                                                                                
+           MOVE 'TOTAL NO OF F300 READ     : ' TO PRT-DESC.                     
+           MOVE WS-F300-COUNT TO PRT-TOTAL.                                     
+           WRITE BP13L303-REC FROM WS-SUMMARY AFTER 2.                          
+                                                                                
+           MOVE 'TOTAL NO OF F300 OUTPUT   : ' TO PRT-DESC.                     
+           MOVE WS-OUTPUT     TO PRT-TOTAL.                                     
+           WRITE BP13L303-REC FROM WS-SUMMARY AFTER 2.                          
+                                                                                
+           MOVE 'TOTAL NO OF K800 READ     : ' TO PRT-DESC.                     
+           MOVE WS-K800-READ   TO PRT-TOTAL.                                    
+           WRITE BP13L303-REC FROM WS-SUMMARY AFTER 2.                          
+                                                                                
+           MOVE 'TOTAL NO OF K820 INSERTED : ' TO PRT-DESC.                     
+           MOVE WS-K820-INSERT TO PRT-TOTAL.                                    
+           WRITE BP13L303-REC FROM WS-SUMMARY AFTER 2.                          
+                                                                                
+           MOVE 'TOTAL NO OF K820 DELETED  : ' TO PRT-DESC.                     
+           MOVE WS-K820-DELETE TO PRT-TOTAL.                                    
+           WRITE BP13L303-REC FROM WS-SUMMARY AFTER 2.                          
+                                                                                
+           MOVE 'TOTAL NO OF K820 UPDATE   : ' TO PRT-DESC.                     
+           MOVE WS-K820-REWRITE TO PRT-TOTAL.                                   
+           WRITE BP13L303-REC FROM WS-SUMMARY AFTER 2.                          
+                                                                                
+           MOVE 'TOTAL NO OF F915 WRITE    : ' TO PRT-DESC.                     
+           MOVE WS-F915-WRITE   TO PRT-TOTAL.                                   
+           WRITE BP13L303-REC FROM WS-SUMMARY AFTER 2.                          
+                                                                                
+       40-EXIT.                                                                 
+           EXIT.                                                                
+                                                                                
+       50-CLOSE-FILES.                                                          
+                                                                                
+           CLOSE      BP13F300                                                  
+                      BP13K800                                                  
+                      BP13K820                                                  
+                      BP13OUT                                                   
+                      BP13F915                                                  
+                      BP13L303.                                                 
+                                                                                
+           IF WS-K820-STATUS NOT = ZEROS                                        
+              DISPLAY 'CLOSING ERROR-BP13K820 '  WS-K820-STATUS                 
+              MOVE WS-K820-STATUS TO RETURN-CODE.                               
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       50-EXIT.                                                                 
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *===========================================================*             
+      *  1000  CHECK NRIC 1                                       *             
+      *===========================================================*             
+       1000-CHECK-NRIC1.                                                        
+                                                                                
+            MOVE F300-CUR-REG TO K820-NUM-REGN                                  
+                                 K800-NUM-REGN.                                 
+            MOVE F300-NRIC1   TO K820-NUM-NRIC.                                 
+            READ BP13K820.                                                      
+                                                                                
+            IF WS-K820-STATUS = 00                                              
+               IF F300-CDE-LESSEE-CHG1 = 'E' OR 'N'                             
+                  MOVE F300-NAME1 TO WS-NAME                                    
+                  PERFORM 6000-CHECK-NAME THRU 6000-EXIT                        
+               ELSE                                                             
+                  PERFORM 7100-CHECK-LESSEE-CHG1 THRU 7100-EXIT                 
+               END-IF                                                           
+            ELSE                                                                
+            IF WS-K820-STATUS = 23                                              
+               MOVE SPACES TO BP13K820-REC                                      
+               MOVE F300-CUR-REG TO K820-NUM-REGN                               
+               MOVE F300-NRIC1   TO K820-NUM-NRIC                               
+               MOVE F300-NAME1   TO K820-NME-OCCP                               
+               MOVE F300-CPF1    TO K820-NUM-CPF                                
+               MOVE '00'         TO K820-NUM-RELATIONSHIP                       
+                                                                                
+               PERFORM 8000-CREATE-APPL      THRU  8000-EXIT                    
+            ELSE                                                                
+               MOVE WS-K820-STATUS TO RETURN-CODE                               
+               PERFORM 50-CLOSE-FILES THRU 50-EXIT.                             
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===========================================================*             
+      *  2000 CHECK NRIC 2                                        *             
+      *===========================================================*             
+       2000-CHECK-NRIC2.                                                        
+                                                                                
+            MOVE F300-CUR-REG TO K820-NUM-REGN                                  
+                                 K800-NUM-REGN.                                 
+            IF   F300-NRIC2  NOT = SPACES AND LOW-VALUES                        
+            MOVE F300-NRIC2   TO K820-NUM-NRIC                                  
+            ELSE                                                                
+               IF F300-CDE-LESSEE-CHG2  NOT = 'N' AND 'E'                       
+                  PERFORM 7200-CHECK-LESSEE-CHG2 THRU 7200-EXIT                 
+               GO TO 2000-EXIT                                                  
+            ELSE                                                                
+               GO TO 2000-EXIT.                                                 
+                                                                                
+            READ BP13K820.                                                      
+                                                                                
+            IF WS-K820-STATUS = 00                                              
+               IF F300-CDE-LESSEE-CHG2 = 'E' OR 'N'                             
+                  MOVE F300-NAME2 TO WS-NAME                                    
+                  PERFORM 6000-CHECK-NAME THRU 6000-EXIT                        
+               ELSE                                                             
+                  PERFORM 7200-CHECK-LESSEE-CHG2 THRU 7200-EXIT                 
+               END-IF                                                           
+            ELSE                                                                
+            IF WS-K820-STATUS = 23                                              
+               MOVE SPACES TO BP13K820-REC                                      
+               MOVE F300-CUR-REG TO K820-NUM-REGN                               
+               MOVE F300-NRIC2   TO K820-NUM-NRIC                               
+               MOVE F300-NAME2   TO K820-NME-OCCP                               
+               MOVE F300-CPF2    TO K820-NUM-CPF                                
+               MOVE '00'         TO K820-NUM-RELATIONSHIP                       
+               PERFORM 8000-CREATE-APPL      THRU  8000-EXIT                    
+            ELSE                                                                
+               MOVE WS-K820-STATUS TO RETURN-CODE                               
+               PERFORM 50-CLOSE-FILES THRU 50-EXIT.                             
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===========================================================*             
+      *  3000 CHECK NRIC 3                                        *             
+      *===========================================================*             
+       3000-CHECK-NRIC3.                                                        
+                                                                                
+            MOVE F300-CUR-REG TO K820-NUM-REGN                                  
+                                 K800-NUM-REGN.                                 
+            IF   F300-NRIC3  NOT = SPACES AND LOW-VALUES                        
+            MOVE F300-NRIC3   TO K820-NUM-NRIC                                  
+            ELSE                                                                
+               IF F300-CDE-LESSEE-CHG3  NOT = 'N' AND 'E'                       
+                  PERFORM 7300-CHECK-LESSEE-CHG3 THRU 7300-EXIT                 
+               GO TO 3000-EXIT                                                  
+            ELSE                                                                
+               GO TO 3000-EXIT.                                                 
+                                                                                
+            READ BP13K820.                                                      
+                                                                                
+            IF WS-K820-STATUS = 00                                              
+               IF F300-CDE-LESSEE-CHG3 = 'E' OR 'N'                             
+                  MOVE F300-NAME3 TO WS-NAME                                    
+                  PERFORM 6000-CHECK-NAME THRU 6000-EXIT                        
+               ELSE                                                             
+                  PERFORM 7300-CHECK-LESSEE-CHG3 THRU 7300-EXIT                 
+               END-IF                                                           
+            ELSE                                                                
+            IF WS-K820-STATUS = 23                                              
+               MOVE SPACES TO BP13K820-REC                                      
+               MOVE F300-CUR-REG TO K820-NUM-REGN                               
+               MOVE F300-NRIC3   TO K820-NUM-NRIC                               
+               MOVE F300-NAME3   TO K820-NME-OCCP                               
+               MOVE F300-CPF3    TO K820-NUM-CPF                                
+               MOVE '00'         TO K820-NUM-RELATIONSHIP                       
+               PERFORM 8000-CREATE-APPL      THRU  8000-EXIT                    
+            ELSE                                                                
+               MOVE WS-K820-STATUS TO RETURN-CODE                               
+               PERFORM 50-CLOSE-FILES THRU 50-EXIT.                             
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===========================================================*             
+      *  4000 CHECK NRIC 4                                        *             
+      *===========================================================*             
+       4000-CHECK-NRIC4.                                                        
+                                                                                
+            MOVE F300-CUR-REG TO K820-NUM-REGN                                  
+                                 K800-NUM-REGN.                                 
+            IF   F300-NRIC4  NOT = SPACES AND LOW-VALUES                        
+            MOVE F300-NRIC4   TO K820-NUM-NRIC                                  
+            ELSE                                                                
+               IF F300-CDE-LESSEE-CHG4  NOT = 'N' AND 'E'                       
+                  PERFORM 7400-CHECK-LESSEE-CHG4 THRU 7400-EXIT                 
+               GO TO 4000-EXIT                                                  
+            ELSE                                                                
+               GO TO 4000-EXIT.                                                 
+                                                                                
+            READ BP13K820.                                                      
+                                                                                
+            IF WS-K820-STATUS = 00                                              
+               IF F300-CDE-LESSEE-CHG4 = 'E' OR 'N'                             
+                  MOVE F300-NAME4 TO WS-NAME                                    
+                  PERFORM 6000-CHECK-NAME THRU 6000-EXIT                        
+               ELSE                                                             
+                  PERFORM 7400-CHECK-LESSEE-CHG4 THRU 7400-EXIT                 
+               END-IF                                                           
+            ELSE                                                                
+            IF WS-K820-STATUS = 23                                              
+               MOVE SPACES TO BP13K820-REC                                      
+               MOVE F300-CUR-REG TO K820-NUM-REGN                               
+               MOVE F300-NRIC4   TO K820-NUM-NRIC                               
+               MOVE F300-NAME4   TO K820-NME-OCCP                               
+               MOVE F300-CPF4    TO K820-NUM-CPF                                
+               MOVE '00'         TO K820-NUM-RELATIONSHIP                       
+               PERFORM 8000-CREATE-APPL      THRU  8000-EXIT                    
+            ELSE                                                                
+               MOVE WS-K820-STATUS TO RETURN-CODE                               
+               PERFORM 50-CLOSE-FILES THRU 50-EXIT.                             
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5000-CONVERT-CUSTOMER-ROLE.                                              
+      ******************************************************************        
+      *----------------------------------------------------------------*        
+      *     CUSTOMER ROLE  CODE FOR APPLICANT    IS '011'              *        
+      *     CUSTOMER ROLE  CODE FOR CO-APPLICANT IS '012'              *        
+      *     CUSTOMER ROLE  CODE FOR OCCUPIER     IS '013'              *        
+      *----------------------------------------------------------------*        
+            IF F300-NRIC1  = K820-NUM-NRIC                                      
+                                                                                
+               MOVE '011'  TO   F915-NUM-ROLE                                   
+            ELSE                                                                
+            IF F300-NRIC2  = K820-NUM-NRIC      OR                              
+               F300-NRIC3  = K820-NUM-NRIC      OR                              
+               F300-NRIC4  = K820-NUM-NRIC                                      
+                                                                                
+               MOVE '012'  TO   F915-NUM-ROLE                                   
+            ELSE                                                                
+                                                                                
+               MOVE '013'  TO   F915-NUM-ROLE                                   
+            END-IF.                                                             
+                                                                                
+       5000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+      ******************************************************************        
+       5100-WRITE-BP13F915.                                                     
+      ******************************************************************        
+                                                                                
+           WRITE BP13F915-REC.                                                  
+           ADD  1   TO  WS-F915-WRITE.                                          
+                                                                                
+       5100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      ******************************************************************        
+       5200-UPD-BP13F915-PSN.                                                   
+      ******************************************************************        
+                                                                                
+           INITIALIZE  BP13F915-REC.                                            
+           MOVE SPACES                TO   BP13F915-REC.                        
+                                                                                
+           MOVE  'UA'                 TO   F915-TXN-TYPE.                       
+           MOVE  'P'                  TO   F915-CSTMR-TYPE.                     
+           MOVE  'BP13'               TO   F915-NUM-UPDATE-SOURCE.              
+           MOVE  'BP13C303'           TO   F915-NUM-UPDATE-USERID.              
+                                                                                
+           MOVE   K820-NUM-CSTMR-SOURCE                                         
+                                      TO   F915-NUM-CSTMR-SOURCE.               
+                                                                                
+           MOVE  K820-NUM-REGN        TO   F915-NUM-REGN.                       
+           MOVE  K820-NUM-NRIC        TO   F915-NUM-NRIC.                       
+                                                                                
+           MOVE  K820-NME-OCCP        TO   F915-NUM-NEW-NME-PERSON.             
+                                                                                
+           PERFORM 5100-WRITE-BP13F915     THRU  5100-EXIT.                     
+                                                                                
+       5200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      ******************************************************************        
+       5300-DEL-BP13F915-PSN.                                                   
+      ******************************************************************        
+                                                                                
+           INITIALIZE  BP13F915-REC.                                            
+           MOVE SPACES                TO   BP13F915-REC.                        
+                                                                                
+           MOVE  'TE'                 TO   F915-TXN-TYPE.                       
+           MOVE  'P'                  TO   F915-CSTMR-TYPE.                     
+           MOVE  'BP13'               TO   F915-NUM-UPDATE-SOURCE.              
+           MOVE  'BP13C303'           TO   F915-NUM-UPDATE-USERID.              
+                                                                                
+           MOVE   K820-NUM-CSTMR-SOURCE                                         
+                                      TO F915-NUM-CSTMR-SOURCE.                 
+                                                                                
+           PERFORM 5000-CONVERT-CUSTOMER-ROLE  THRU  5000-EXIT                  
+                                                                                
+           MOVE  K820-NUM-REGN        TO F915-NUM-BSNS-REF.                     
+           MOVE  K820-NUM-NRIC        TO F915-NUM-NRIC.                         
+                                                                                
+           MOVE  '0001-01-01'         TO F915-DTE-ACPTNC.                       
+                                                                                
+      *****   TO  GET THE REGISTRATION DATE   , READ BP13K800   *****           
+           PERFORM 5400-READ-BP13K800     THRU  5400-EXIT                       
+                                                                                
+           STRING K800-DTE-REGN(1:4) '-' K800-DTE-REGN(5:2) '-'                 
+                  K800-DTE-REGN(7:2) DELIMITED BY SIZE                          
+                  INTO F915-DTE-ROLE-START.                                     
+                                                                                
+           PERFORM 5100-WRITE-BP13F915         THRU  5100-EXIT.                 
+                                                                                
+       5300-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       5400-READ-BP13K800.                                                      
+                                                                                
+            READ BP13K800.                                                      
+                                                                                
+            IF WS-K800-STATUS  =  00                                            
+               ADD  1   TO   WS-K800-READ                                       
+            ELSE                                                                
+              IF WS-K800-STATUS =  23                                           
+                 DISPLAY "RECORD IS NOT FND IN BP13K800:" K800-NUM-REGN         
+                 DISPLAY "WS-K800-STATUS : "  WS-K800-STATUS                    
+              ELSE                                                              
+                 MOVE WS-K800-STATUS TO RETURN-CODE                             
+                 PERFORM 50-CLOSE-FILES THRU 50-EXIT                            
+              END-IF                                                            
+            END-IF.                                                             
+                                                                                
+       5400-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       5500-UPDATE-BP13K820.                                                    
+                                                                                
+            PERFORM 5200-UPD-BP13F915-PSN  THRU  5200-EXIT.                     
+            REWRITE BP13K820-REC.                                               
+            IF  WS-K820-STATUS = 00                                             
+                ADD 1 TO WS-K820-REWRITE                                        
+            ELSE                                                                
+                MOVE K820-NUM-REGN  TO   PRT-REG                                
+                MOVE K820-NUM-NRIC  TO   PRT-NRIC                               
+                MOVE '6000 UPDATE BP13K820 ERROR ' TO PRT-REMARK                
+                MOVE WS-K820-STATUS TO   PRT-STATUS                             
+            END-IF.                                                             
+                                                                                
+       5500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       5600-DELETE-BP13K820.                                                    
+                                                                                
+            PERFORM 5300-DEL-BP13F915-PSN  THRU  5300-EXIT.                     
+            DELETE BP13K820.                                                    
+            IF WS-K820-STATUS = 00                                              
+               ADD 1 TO WS-K820-DELETE                                          
+            ELSE                                                                
+               MOVE K820-NUM-REGN  TO   PRT-REG                                 
+               MOVE K820-NUM-NRIC  TO   PRT-NRIC                                
+               MOVE '6000 DELETE BP13K820 ERROR ' TO PRT-REMARK                 
+               MOVE WS-K820-STATUS TO   PRT-STATUS                              
+            END-IF.                                                             
+                                                                                
+       5600-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       6000-CHECK-NAME.                                                         
+                                                                                
+            IF (WS-NAME NOT = SPACES) AND (WS-NAME NOT = K820-NME-OCCP)         
+               MOVE WS-NAME TO K820-NME-OCCP                                    
+               PERFORM 5500-UPDATE-BP13K820 THRU 5500-EXIT                      
+            END-IF.                                                             
+            MOVE SPACES TO       WS-NAME.                                       
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       7100-CHECK-LESSEE-CHG1.                                                  
+                                                                                
+            IF F300-CDE-LESSEE-CHG1 NOT = 'D' AND 'O' AND 'N' AND               
+                                          'E' AND 'S'                           
+               GO TO 7100-EXIT.                                                 
+                                                                                
+            IF F300-CDE-LESSEE-CHG1 = 'D'                                       
+               MOVE F300-PREV-NRIC1 TO K820-NUM-NRIC                            
+               DISPLAY ' DEL REGN ' K820-NUM-REGN                               
+               PERFORM 5600-DELETE-BP13K820 THRU 5600-EXIT                      
+            ELSE                                                                
+            IF F300-CDE-LESSEE-CHG1 = 'S'                                       
+               MOVE F300-NRIC1 TO K820-NUM-NRIC                                 
+               MOVE F300-NAME1 TO K820-NME-OCCP                                 
+               MOVE '00'       TO K820-NUM-RELATIONSHIP                         
+               PERFORM 5500-UPDATE-BP13K820 THRU 5500-EXIT                      
+            ELSE                                                                
+            IF F300-CDE-LESSEE-CHG1 = 'O'                                       
+               MOVE '00'       TO K820-NUM-RELATIONSHIP                         
+               PERFORM 5500-UPDATE-BP13K820   THRU  5500-EXIT                   
+            ELSE                                                                
+               MOVE F300-PREV-NRIC1 TO K820-NUM-NRIC                            
+               MOVE '99'            TO K820-NUM-RELATIONSHIP                    
+               PERFORM 5500-UPDATE-BP13K820   THRU  5500-EXIT                   
+            END-IF.                                                             
+                                                                                
+       7100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       7200-CHECK-LESSEE-CHG2.                                                  
+                                                                                
+            IF F300-CDE-LESSEE-CHG2 NOT = 'D' AND 'O' AND 'N' AND               
+                                          'E' AND 'S'                           
+               GO TO 7200-EXIT.                                                 
+                                                                                
+            IF F300-CDE-LESSEE-CHG2 = 'D'                                       
+               MOVE F300-PREV-NRIC2 TO K820-NUM-NRIC                            
+               DISPLAY ' DEL REGN ' K820-NUM-REGN                               
+               PERFORM 5600-DELETE-BP13K820 THRU 5600-EXIT                      
+            ELSE                                                                
+            IF F300-CDE-LESSEE-CHG2 = 'S'                                       
+               MOVE F300-NRIC2 TO K820-NUM-NRIC                                 
+               MOVE F300-NAME2 TO K820-NME-OCCP                                 
+               MOVE '00'       TO K820-NUM-RELATIONSHIP                         
+               PERFORM 5500-UPDATE-BP13K820   THRU  5500-EXIT                   
+            ELSE                                                                
+            IF F300-CDE-LESSEE-CHG2 = 'O'                                       
+               MOVE '00'       TO K820-NUM-RELATIONSHIP                         
+               PERFORM 5500-UPDATE-BP13K820   THRU  5500-EXIT                   
+            ELSE                                                                
+               MOVE F300-PREV-NRIC2 TO K820-NUM-NRIC                            
+               MOVE '99'            TO K820-NUM-RELATIONSHIP                    
+               PERFORM 5500-UPDATE-BP13K820   THRU  5500-EXIT                   
+            END-IF.                                                             
+                                                                                
+       7200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       7300-CHECK-LESSEE-CHG3.                                                  
+                                                                                
+            IF F300-CDE-LESSEE-CHG3 NOT = 'D' AND 'O' AND 'N' AND               
+                                          'E' AND 'S'                           
+               GO TO 7300-EXIT.                                                 
+                                                                                
+            IF F300-CDE-LESSEE-CHG3 = 'D'                                       
+               MOVE F300-PREV-NRIC3 TO K820-NUM-NRIC                            
+               DISPLAY ' DEL REGN ' K820-NUM-REGN                               
+               PERFORM 5600-DELETE-BP13K820 THRU 5600-EXIT                      
+            ELSE                                                                
+            IF F300-CDE-LESSEE-CHG3 = 'S'                                       
+               MOVE F300-NRIC3 TO K820-NUM-NRIC                                 
+               MOVE F300-NAME3 TO K820-NME-OCCP                                 
+               MOVE '00'       TO K820-NUM-RELATIONSHIP                         
+               PERFORM 5500-UPDATE-BP13K820   THRU  5500-EXIT                   
+            ELSE                                                                
+            IF F300-CDE-LESSEE-CHG3 = 'O'                                       
+               MOVE '00'       TO K820-NUM-RELATIONSHIP                         
+               PERFORM 5500-UPDATE-BP13K820   THRU  5500-EXIT                   
+            ELSE                                                                
+               MOVE F300-PREV-NRIC3 TO K820-NUM-NRIC                            
+               MOVE '99'            TO K820-NUM-RELATIONSHIP                    
+               PERFORM 5500-UPDATE-BP13K820   THRU  5500-EXIT                   
+             END-IF.                                                            
+                                                                                
+       7300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       7400-CHECK-LESSEE-CHG4.                                                  
+                                                                                
+            IF F300-CDE-LESSEE-CHG4 NOT = 'D' AND 'O' AND 'N' AND               
+                                          'E' AND 'S'                           
+               GO TO 7400-EXIT.                                                 
+                                                                                
+            IF F300-CDE-LESSEE-CHG4 = 'D'                                       
+               MOVE F300-PREV-NRIC4 TO K820-NUM-NRIC                            
+               DISPLAY ' DEL REGN ' K820-NUM-REGN                               
+               PERFORM 5600-DELETE-BP13K820 THRU 5600-EXIT                      
+            ELSE                                                                
+            IF F300-CDE-LESSEE-CHG4 = 'S'                                       
+               MOVE F300-NRIC4 TO K820-NUM-NRIC                                 
+               MOVE F300-NAME4 TO K820-NME-OCCP                                 
+               MOVE '00'       TO K820-NUM-RELATIONSHIP                         
+               PERFORM 5500-UPDATE-BP13K820   THRU  5500-EXIT                   
+            ELSE                                                                
+            IF F300-CDE-LESSEE-CHG4 = 'O'                                       
+               MOVE '00'       TO K820-NUM-RELATIONSHIP                         
+               PERFORM 5500-UPDATE-BP13K820   THRU  5500-EXIT                   
+            ELSE                                                                
+               MOVE F300-PREV-NRIC4 TO K820-NUM-NRIC                            
+               MOVE '99'            TO K820-NUM-RELATIONSHIP                    
+               PERFORM 5500-UPDATE-BP13K820   THRU  5500-EXIT                   
+            END-IF.                                                             
+                                                                                
+       7400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       8000-CREATE-APPL.                                                        
+                                                                                
+            WRITE BP13K820-REC.                                                 
+                                                                                
+            IF WS-K820-STATUS = ZEROES  OR '02'                                 
+               ADD 1                TO WS-K820-INSERT                           
+            ELSE                                                                
+               MOVE K820-NUM-REGN  TO   PRT-REG                                 
+               MOVE K820-NUM-NRIC  TO   PRT-NRIC                                
+               MOVE '8000 CREAT BP13K820 ERROR ' TO PRT-REMARK                  
+               MOVE WS-K820-STATUS TO   PRT-STATUS                              
+             END-IF.                                                            
+                                                                                
+       8000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+

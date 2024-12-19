@@ -1,0 +1,147 @@
+  *==============================================================*              
+  * SAS PROGRAM TO PRINT MONTHLY REPORT FOR TRANSACTION ON       *              
+  * FORFEITURE, ADJUSTMANT, REFUND AND REFUND                    *              
+  *==============================================================*              
+  * BP132772 BA3 31/03/2006  NEW PROGRAM                         *              
+  * BP132888 BA3 12/12/2006  INCLUDE TT=63                       *              
+  * BP132888 BA2 26/02/2007  INCLUDE NEGATIVE FOR PAYTYPE = 'OPT'*              
+  *                          AND TT=13                           *              
+  * BP133052 BA2 11/06/2007  INCLUDE JVL AND JVP                 *              
+  * BP133572 JB8 09/06/2009  INCLUDE JVI                         *              
+  *==============================================================*              
+  OPTIONS  NODATE NONUMBER;                                                     
+                                                                                
+     PROC FORMAT;                                                               
+        PICTURE CREDIT LOW-<0='000,000,009.99DR'                                
+                            (FILL=' ' PREFIX='$' MULT=100.00000000001)          
+                        0-HIGH='000,000,009.99CR'                               
+                            (FILL=' ' PREFIX='$' MULT=100.00000000001);         
+                                                                                
+     DATA SY02;                                                                 
+     INFILE SY02F001 END = EOF;                                                 
+     INPUT  @01  DATE_CYM_CURR        YYMMDD8.                                  
+            @21  DATE_CYM_PREV        $CHAR6.                                   
+            @21  DATE_CY_PREV         $CHAR4.                                   
+            @58  PREV_MTH_TXT         $CHAR3.;                                  
+                                                                                
+         CALL SYMPUT ('PREV_MTH',PREV_MTH_TXT);                                 
+         CALL SYMPUT ('PREV_CY',DATE_CY_PREV);                                  
+         CALL SYMPUT ('CURR_DTE',(PUT(DATE_CYM_CURR,DDMMYY10.)));               
+         CALL SYMPUT ('PREVDTE', DATE_CYM_PREV);                                
+         CALL SYMPUT ('PREMTXT', PREV_MTH_TXT);                                 
+                                                                                
+     LENGTH WS_PREV_DATE  $8;                                                   
+     LENGTH WS_PAY_ACCT   $16;                                                  
+     RETAIN WS_PREV_DATE WS_PAY_ACCT;                                           
+                                                                                
+     DATA BP13F136 ;                                                            
+     INFILE BP13F136 END=FINAL;                                                 
+     INPUT  @01  TRANCDE  $CHAR2.      @05  ORIGNO   $CHAR8.                    
+            @13  POSTDTE  YYMMDD8.     @25  NRIC     $CHAR9.                    
+            @66  DOCNO    $CHAR11.                                              
+            @66  DOCNO1   $CHAR14.     @81  AMTRE    ZD9.2                      
+            @90  CRDR     $CHAR1.      @91  TRANDTE  YYMMDD8.                   
+            @99  PAYTYPE  $CHAR3.      @102 SCHNO    $CHAR11.                   
+            @106 ACCT     $CHAR4.      @110 CHK_DG   $CHAR1.                    
+            @111 LSECDE   $CHAR2.                                               
+            @118 FT       $CHAR2.                                               
+            @122 DUEDTE   YYMMDD8.                                              
+            @130 PP_SHD   $CHAR2.;                                              
+                                                                                
+     FORMAT AMTRE CREDIT.;                                                      
+                                                                                
+     IF TRANCDE=13 OR TRANCDE=14 OR TRANCDE=15 OR TRANCDE=16 OR                 
+        TRANCDE=63 OR TRANCDE=69;                                               
+                                                                                
+     IF (TRANCDE = '63') OR (PAYTYPE = 'OPT' AND TRANCDE = '13') THEN           
+        DO;                                                                     
+           AMTRE = AMTRE * -1;                                                  
+        END;                                                                    
+                                                                                
+     PROC SORT; BY PAYTYPE TRANDTE DOCNO;                                       
+                                                                                
+     DATA _NULLS_;                                                              
+     FILE BP13LC02   HEADER=HH NOTITLES;                                        
+                                                                                
+     WS_PREV_DATE = SUBSTR("&PREMTXT",1,3) || ' ' ||                            
+                    SUBSTR("&PREV_CY",1,4);                                     
+                                                                                
+     IF TOTAL = 0 THEN                                                          
+        DO;                                                                     
+          PUT _PAGE_;                                                           
+          PUT // @1 '*** NO RECORDS ';                                          
+        END;                                                                    
+                                                                                
+     SET BP13F136 END=FINAL NOBS=TOTAL;                                         
+     BY PAYTYPE PAYTYPE TRANDTE;                                                
+     OPTIONS PAGESIZE=55 LS=132 NODATE;                                         
+     SUBAMT+AMTRE;                                                              
+     TOTAMT+AMTRE;                                                              
+     GRDTOT+AMTRE;                                                              
+                                                                                
+     M+1;                                                                       
+     IF FIRST.PAYTYPE THEN                                                      
+        DO;                                                                     
+          IF PAYTYPE = 'JVL' THEN                                               
+             WS_PAY_ACCT = ' (0000000540834)';                                  
+          ELSE                                                                  
+          IF PAYTYPE = 'JVI' THEN                                               
+             WS_PAY_ACCT = ' (0000000540834)';                                  
+          ELSE                                                                  
+             WS_PAY_ACCT = ' (0000000404159)';                                  
+          PUT _PAGE_;                                                           
+        END;                                                                    
+                                                                                
+        PUT @10  M                                                              
+            @17  ORIGNO                @30  DUEDTE   DDMMYY10.                  
+            @42  PP_SHD                                                         
+            @49  SCHNO   @53  '-'      @54  ACCT   @58  '-'                     
+            @59  CHK_DG  @60  '-'      @61  LSECDE                              
+            @74  DOCNO1                                                         
+            @89  TRANDTE  DDMMYY10.    @109 AMTRE CREDIT.;                      
+                                                                                
+        IF LAST.TRANDTE THEN DO;                                                
+           PUT //@27 'SUB-TOTAL FOR TRANS DATE '                                
+                 @52 TRANDTE  DDMMYY10.                                         
+                 @109 SUBAMT CREDIT.//;                                         
+           SUBAMT=0;                                                            
+           END;                                                                 
+                                                                                
+        IF LAST.PAYTYPE THEN DO;                                                
+           PUT @27 'TOTAL FOR ' PAYTYPE @109 TOTAMT CREDIT.;                    
+           TOTAMT=0;                                                            
+           END;                                                                 
+                                                                                
+        IF FINAL THEN                                                           
+           PUT //@27 'GRAND-TOTAL ' @109 GRDTOT CREDIT.;                        
+        RETURN;                                                                 
+  HH:                                                                           
+     PAGE + 1;                                                                  
+     CURRENT =DATE();                                                           
+     PUT ///@1 'BP13LC02' @15 'HDBCAT 3'                                        
+         @47  'S Y S T E M   O F   C O M M I T M E N T'                         
+         @98  'DATE :' @105 CURRENT DDMMYY10.                                   
+         @119 'PAGE :' @126 PAGE 3./;                                           
+     PUT @35  'REPORT ON PAYMENT/ADJUSTMENT (PV/JV) TO PRS-EWPC '               
+         @84  'FOR ' WS_PREV_DATE/;                                             
+     PUT @1   'TRANSACTION TYPE : ' PAYTYPE                                     
+         @24  WS_PAY_ACCT //;                                                   
+     PUT @10  'S/N'                                                             
+         @17  'REGN-NO    '                                                     
+         @30  'DUE DATE'                                                        
+         @42  'SHD'                                                             
+         @49  'SCH A/C NO'                                                      
+         @74  'VOUCHER NO'                                                      
+         @89  'TRANS DATE'                                                      
+         @110 'AMOUNT';                                                         
+                                                                                
+     PUT @10  '---'                                                             
+         @17  '-------'                                                         
+         @30  '--------'                                                        
+         @42  '---'                                                             
+         @49  '----------'                                                      
+         @74  '----------'                                                      
+         @89  '----------'                                                      
+         @110 '------';                                                         
+     RETURN;                                                                    
+

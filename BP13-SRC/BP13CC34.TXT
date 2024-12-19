@@ -1,0 +1,835 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CC34.                                                 
+      *AUTHOR.        ABH.                                                      
+      *DATE-WRITTEN.  12/10/06.                                                 
+      *REMARKS.                                                                 
+      *========================================================*                
+      *                                                        *                
+      *   PROGRAM TO PRINT OUT MONTHLY REPORT ON CLEARED CASES *                
+      *              AND OUTSTANDING CASES FOR PROGRESS PAYMENT*                
+      *              LUMPSUM.                                  *                
+      *                                                        *                
+      *     INPUT FILE :                                       *                
+      *           1. BP13F130                                  *                
+      *           2. SY02F001                                  *                
+      *                                                        *                
+      *     LISTING :                                          *                
+      *           1. P13LC34A - CLEARED CASES                  *                
+      *           2. P13LC34B - OUTSTANDING CASES AS AT DATE   *                
+      *                                                        *                
+      *                                                        *                
+      *  CHG-NO   BY    NO          DESCRIPTION                *                
+      *  -------  ---   --------    -------------------------  *                
+      *  BP132914 BA3   12/10/06    NEW PROGRAM.               *                
+      *                 08/02/07    MOVE SPACES TO AGE MONTH   *                
+      *                             WHEN DUE-DATE > LAST DAY   *                
+      *                             OF PREVIOUS MONTH.         *                
+      *                 09/02/07    CHANGE '-' TO 'DR' AND     *                
+      *                             '+' TO 'CR' IN BAL COLUMN  *                
+      *                 14/02/07    INCLUDE COLUMN TYPE IN THE *                
+      *                             REPORT                     *                
+      *                 26/02/07    REMOVE CONDITION TO PRINT  *                
+      *                             SPACES ON MONTH AGE        *                
+      *  BP133052 BA3   07/06/07    REMOVE PRINTING OF P13LC34C*                
+      *  BP133314 ED1   10/06/08    CATER FOR JVP CASES        *                
+      *  BP133360 ED1   12/08/08    CATER FOR JVP. ADD AMT TO  *                
+      *                             RECPT WHEN 'C', ELSE DEVP  *                
+      *  BP133545 JB8   23/02/09    TO GET THE RIGHT AGE       *                
+      *  BP133572 JB8   06/04/09    TO SEPARATE BY PP          *                
+      *  BP134245 JB8   14/06/11    TO CATER FOR JVP           *                
+      *========================================================*                
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT SY02F001 ASSIGN       TO SY02F001.                            
+           SELECT BP13F130 ASSIGN       TO BP13F130.                            
+                                                                                
+           SELECT P13LC34A ASSIGN       TO P13LC34A.                            
+           SELECT P13LC34B ASSIGN       TO P13LC34B.                            
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+                                                                                
+       COPY SY02F001.                                                           
+                                                                                
+       FD  BP13F130                                                             
+           RECORD CONTAINS 150 CHARACTERS.                                      
+       COPY BP13F130.                                                           
+                                                                                
+       FD  P13LC34A                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           RECORDING MODE  IS  F                                                
+           DATA RECORD     IS  PRINT-REC-1.                                     
+       01  PRINT-REC-1                 PIC X(132).                              
+                                                                                
+       FD  P13LC34B                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           RECORDING MODE  IS  F                                                
+           DATA RECORD     IS  PRINT-REC-2.                                     
+       01  PRINT-REC-2                 PIC X(132).                              
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-AMT-DEVP             PIC S9(7)V99 VALUE ZEROS.                
+           05  WS-AMT-RECPT            PIC S9(7)V99 VALUE ZEROS.                
+           05  WS-OUTS-BAL             PIC S9(7)V99 VALUE ZEROS.                
+           05  WS-SUB-DEVP             PIC S9(7)V99 VALUE ZEROS.                
+           05  WS-SUB-RECPT            PIC S9(7)V99 VALUE ZEROS.                
+           05  WS-SUB-OUTS-BAL         PIC S9(9)V99 VALUE ZEROS.                
+           05  WS-GRD-DEVP             PIC S9(9)V99 VALUE ZEROS.                
+           05  WS-GRD-RECPT            PIC S9(9)V99 VALUE ZEROS.                
+           05  WS-GRD-OUTS-BAL         PIC S9(9)V99 VALUE ZEROS.                
+           05  WS-SUM-DEVP             PIC S9(9)V99 VALUE ZEROS.                
+           05  WS-SUM-RECPT            PIC S9(9)V99 VALUE ZEROS.                
+           05  NO-F130-READ            PIC 9(5) VALUE ZEROS.                    
+           05  NO-C34A-WRITE           PIC 9(5) VALUE ZEROS.                    
+           05  NO-C34B-WRITE           PIC 9(5) VALUE ZEROS.                    
+           05  WS-REPORT               PIC X    VALUE SPACE.                    
+           05  WS-MORE-REC-PRINTED     PIC X    VALUE SPACE.                    
+           05  WS-REPORT-A-PRINTED     PIC X    VALUE 'N'.                      
+           05  WS-REPORT-B-PRINTED     PIC X    VALUE 'N'.                      
+           05  WS-PREV-NUM-REGN        PIC X(8) VALUE SPACE.                    
+           05  WS-PREV-NUM-PP          PIC X(2) VALUE SPACE.                    
+           05  WS-AGE-MTH-ALPHA        PIC X(3) VALUE SPACE.                    
+           05  REDEFINES WS-AGE-MTH-ALPHA.                                      
+               10 WS-AGE-MTH-NUM       PIC ZZ9.                                 
+           05  WS-FIRST-PASS           PIC X    VALUE SPACE.                    
+           05  WS-AGE-MTH-ALPHA-TMP    PIC X(3) VALUE SPACE.                    
+           05  REDEFINES WS-AGE-MTH-ALPHA-TMP.                                  
+               10 WS-AGE-MTH-NUM-TMP   PIC ZZ9.                                 
+           05  WS-SUM-CR-NUM           PIC 9(5) VALUE ZEROES.                   
+           05  WS-SUM-DR-NUM           PIC 9(5) VALUE ZEROES.                   
+           05  WS-SUM-CR-AMT           PIC 9(7).99    VALUE ZEROES.             
+           05  WS-SUM-DR-AMT           PIC 9(7).99    VALUE ZEROES.             
+                                                                                
+       01  WS-EOF.                                                              
+           05  WS-EOF-F130             PIC X   VALUE 'N'.                       
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-LINE-NO-LC34A        PIC 9(2)     VALUE 60.                   
+           05  WS-LINE-NO-LC34B        PIC 9(2)     VALUE 60.                   
+           05  WS-PAGE-NO-LC34A        PIC 9(4)     VALUE ZEROS.                
+           05  WS-PAGE-NO-LC34B        PIC 9(4)     VALUE ZEROS.                
+           05  WS-SSN-C34A             PIC 9(5)     VALUE ZEROS.                
+           05  WS-SSN-C34B             PIC 9(5)     VALUE ZEROS.                
+                                                                                
+       01  LC34-HEAD-1.                                                         
+           03  LC34-RPT-NAME           PIC X(08)    VALUE SPACES.               
+           03  FILLER                  PIC X(38)    VALUE                       
+               '      HDBCAT3'.                                                 
+           03  FILLER                  PIC X(51)    VALUE                       
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           03  FILLER                  PIC X(7)     VALUE 'DATE : '.            
+           03  LC34-SYS-DATE           PIC X(10)    VALUE SPACES.               
+           03  FILLER                  PIC X(11)    VALUE                       
+               '    PAGE : '.                                                   
+           03  LC34-PAGE-NO            PIC ZZZ9     VALUE ZEROES.               
+                                                                                
+       01  LC34-HEAD-2.                                                         
+           03  FILLER                  PIC X(32)     VALUE                      
+               'DBSS CLEARING A/C: 0000000404159'.                              
+                                                                                
+       01  LC34A-HEAD-2.                                                        
+           03  FILLER                  PIC X(43)     VALUE SPACES.              
+           03  FILLER                  PIC X(36)     VALUE                      
+               'MONTHLY REPORT ON CLEARED CASES FOR '.                          
+           03  PR-DATE1                PIC X(10)     VALUE SPACES.              
+                                                                                
+       01  LC34B-HEAD-2.                                                        
+           03  FILLER                  PIC X(41)     VALUE SPACES.              
+           03  FILLER                  PIC X(42)     VALUE                      
+               'MONTHLY REPORT ON OUTSTANDING CASES AS AT '.                    
+           03  PR-DATE2                PIC X(10)     VALUE SPACES.              
+                                                                                
+       01  LC34A-HEAD-3.                                                        
+           03  FILLER                  PIC X(05)     VALUE 'S/N  '.             
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(08)     VALUE 'REGN NO '.          
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(14)     VALUE                      
+                                                    'SCH-A/C-NO.'.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(10)     VALUE                      
+                                                    ' DUE-DATE '.               
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(14)     VALUE                      
+                                                    'RECPT-JRNO    '.           
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(04)     VALUE 'TYPE'.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(10)     VALUE 'TRANS-DATE'.        
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(13)     VALUE                      
+                                                    'AMT-RECPT(CR)'.            
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  FILLER                  PIC X(18)     VALUE                      
+                                                  'AMT-PD-DEP-APP(DR)'.         
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(14)     VALUE                      
+                                                    '   BALANCE  '.             
+                                                                                
+       01  LC34B-HEAD-3.                                                        
+           03  FILLER                  PIC X(05)     VALUE 'S/N  '.             
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(08)     VALUE 'REGN NO '.          
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(14)     VALUE                      
+                                                    'SCH-A/C-NO.'.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(10)     VALUE                      
+                                                    ' DUE-DATE '.               
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(14)     VALUE                      
+                                                    'RECPT-JRNO    '.           
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(04)     VALUE 'TYPE'.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(10)     VALUE 'TRANS-DATE'.        
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(13)     VALUE                      
+                                                    'AMT-RECPT(CR)'.            
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(18)     VALUE                      
+                                          'AMT-PD-TO-DEVP(DR)'.                 
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(14)     VALUE                      
+                                                    '     BALANCE  '.           
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  FILLER                  PIC X(09)     VALUE                      
+                                                    ' AGE(MTH)'.                
+                                                                                
+       01  LC34-DETAIL.                                                         
+           03  LC34-SSN                PIC ZZZZ9     VALUE ZEROES.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  LC34-REGN               PIC X(08)     VALUE SPACES.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  LC34-SCHEM              PIC X(14)     VALUE SPACES.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  LC34-DUE-DATE           PIC X(10)     VALUE SPACES.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  LC34-RECPT              PIC X(14)     VALUE SPACES.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  LC34-TYPE               PIC X(04)     VALUE SPACES.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  LC34-TRANS-DATE         PIC X(10)     VALUE SPACES.              
+           03  FILLER                  PIC X(02)     VALUE SPACES.              
+           03  LC34-AMT-RECPT          PIC Z,ZZZ,ZZ9.99    VALUE ZEROS.         
+           03  FILLER                  PIC X(05)     VALUE SPACES.              
+           03  LC34-AMT-PD-DEVP        PIC Z,ZZZ,ZZ9.99    VALUE ZEROS.         
+           03  FILLER                  PIC X(05)     VALUE SPACES.              
+           03  LC34-OUTS-BAL           PIC Z,ZZZ,ZZ9.99    VALUE ZEROS.         
+           03  LC34-OUTS-BAL-CR        PIC X(02)     VALUE SPACES.              
+                                                                                
+       01  LC34-SUB-TOTAL.                                                      
+           03  FILLER                  PIC X(07)     VALUE SPACES.              
+           03  FILLER                  PIC X(64)     VALUE                      
+                                                    'SUB-TOTAL :'.              
+           03  LC34-AMT-RECPT-TOT      PIC ZZZ,ZZZ,ZZ9.99  VALUE ZEROS.         
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  LC34-AMT-PD-DEVP-TOT    PIC ZZZ,ZZZ,ZZ9.99  VALUE ZEROS.         
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  LC34-OUTS-BAL-TOT       PIC ZZZ,ZZZ,ZZ9.99  VALUE ZEROS.         
+           03  LC34-OUTS-BAL-TOT-CR    PIC X(02)     VALUE SPACES.              
+           03  FILLER                  PIC X(05)     VALUE SPACES.              
+           03  LC34-AGE-MTH-ALPHA      PIC X(03)     VALUE SPACES.              
+           03  REDEFINES LC34-AGE-MTH-ALPHA.                                    
+               05  LC34-AGE-MTH-NUM    PIC ZZ9.                                 
+                                                                                
+       01  LC34-GRD-TOTAL.                                                      
+           03  FILLER                  PIC X(07)     VALUE SPACES.              
+           03  FILLER                  PIC X(64)     VALUE                      
+                                                    'GRAND TOTAL'.              
+           03  LC34-AMT-RECPT-GRD      PIC ZZZ,ZZZ,ZZ9.99  VALUE ZEROS.         
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  LC34-AMT-PD-DEVP-GRD    PIC ZZZ,ZZZ,ZZ9.99  VALUE ZEROS.         
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  LC34-OUTS-BAL-GRD       PIC ZZZ,ZZZ,ZZ9.99  VALUE ZEROS.         
+           03  LC34-OUTS-BAL-GRD-CR    PIC X(02)     VALUE SPACES.              
+                                                                                
+       01  LC34-SUB-TOTAL-LINE.                                                 
+           03  FILLER                  PIC X(73)     VALUE SPACES.              
+           03  FILLER                  PIC X(12)     VALUE ALL '-'.             
+           03  FILLER                  PIC X(05)     VALUE SPACES.              
+           03  FILLER                  PIC X(12)     VALUE ALL '-'.             
+           03  FILLER                  PIC X(05)     VALUE SPACES.              
+           03  FILLER                  PIC X(12)     VALUE ALL '-'.             
+           03  FILLER                  PIC X(07)     VALUE SPACES.              
+           03  FILLER                  PIC X(03)     VALUE ALL '-'.             
+                                                                                
+       01  LC34-GRD-TOTAL-LINE.                                                 
+           03  FILLER                  PIC X(71)     VALUE SPACES.              
+           03  FILLER                  PIC X(14)     VALUE ALL '-'.             
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  FILLER                  PIC X(14)     VALUE ALL '-'.             
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  FILLER                  PIC X(14)     VALUE ALL '-'.             
+                                                                                
+       01  LC34-BLANK-LINE.                                                     
+           03  FILLER                  PIC X(132)    VALUE SPACES.              
+                                                                                
+       01  LC34-SUMMARY-HEAD1.                                                  
+           03  FILLER                  PIC X(08)     VALUE                      
+                                                    'SUMMARY:'.                 
+       01  LC34-SUMMARY-HEAD2.                                                  
+           03  FILLER                  PIC X(28)     VALUE SPACES.              
+           03  FILLER                  PIC X(11)     VALUE                      
+                                                    'NO OF CASES'.              
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  FILLER                  PIC X(10)     VALUE                      
+                                                    'AMOUNT ($)'.               
+       01  LC34-SUMMARY-HEAD2-DUSH.                                             
+           03  FILLER                  PIC X(28)     VALUE SPACES.              
+           03  FILLER                  PIC X(11)     VALUE ALL '-'.             
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  FILLER                  PIC X(10)     VALUE ALL '-'.             
+                                                                                
+       01  LC34-SUMMARY-CREDIT.                                                 
+           03  FILLER                  PIC X(28)     VALUE                      
+                                      'CASES WITH CREDIT SUBTOTALS:'.           
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  LC34-SUM-CR-NUM         PIC ZZZZ9     VALUE SPACES.              
+           03  FILLER                  PIC X(04)     VALUE SPACES.              
+           03  LC34-SUM-CR-AMT         PIC ZZZ,ZZZ,ZZ9.99   VALUE               
+                                                           ZEROES.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(02)     VALUE 'CR'.                
+                                                                                
+       01  LC34-SUMMARY-DEBIT.                                                  
+           03  FILLER                  PIC X(28)     VALUE                      
+                                      'CASES WITH DEBIT  SUBTOTALS:'.           
+           03  FILLER                  PIC X(03)     VALUE SPACES.              
+           03  LC34-SUM-DR-NUM         PIC ZZZZ9     VALUE SPACES.              
+           03  FILLER                  PIC X(04)     VALUE SPACES.              
+           03  LC34-SUM-DR-AMT         PIC ZZZ,ZZZ,ZZ9.99  VALUE                
+                                                           ZEROES.              
+           03  FILLER                  PIC X(01)     VALUE SPACES.              
+           03  FILLER                  PIC X(02)     VALUE 'DR'.                
+                                                                                
+       01  LC34-NO-RECORD.                                                      
+           03  FILLER                  PIC X(14)     VALUE                      
+                                                    '*** NO RECORDS'.           
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0010-MAIN.                                                               
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM 0030-INITIALIZE-ROUTINE THRU 0030-EXIT.                      
+           PERFORM 0050-READ-SY02F001      THRU 0050-EXIT.                      
+           PERFORM 0150-READ-F130          THRU 0150-EXIT.                      
+           PERFORM 0200-PROCESS-F130       THRU 0200-EXIT                       
+                                           UNTIL WS-EOF-F130 = 'Y'.             
+           PERFORM 0100-PRINT-EMPTY-REP    THRU 0100-EXIT.                      
+                                                                                
+           PERFORM 0900-CLOSE-ROUTINE      THRU 0900-EXIT.                      
+                                                                                
+       0010-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0030-INITIALIZE-ROUTINE.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+           OPEN INPUT  SY02F001                                                 
+                       BP13F130                                                 
+                OUTPUT P13LC34A                                                 
+                       P13LC34B.                                                
+                                                                                
+       0030-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0050-READ-SY02F001.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ SY02F001.                                                       
+                                                                                
+           STRING F001-DTE-CURRENT(7:2) '/'                                     
+                  F001-DTE-CURRENT(5:2) '/'                                     
+                  F001-DTE-CURRENT(1:4)                                         
+                  DELIMITED BY SIZE INTO LC34-SYS-DATE.                         
+                                                                                
+           STRING F001-TXT-PREV-MTH(1:3) ' '                                    
+                  F001-DTE-LAST-DAY-PREV(1:4)                                   
+                  DELIMITED BY SIZE INTO PR-DATE1.                              
+                                                                                
+           STRING F001-DTE-LAST-DAY-PREV(7:2) '/'                               
+                  F001-DTE-LAST-DAY-PREV(5:2) '/'                               
+                  F001-DTE-LAST-DAY-PREV(1:4)                                   
+                  DELIMITED BY SIZE INTO PR-DATE2.                              
+                                                                                
+       0050-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0100-PRINT-EMPTY-REP.                                                    
+      *-------------------------------------------------------------            
+           IF WS-REPORT-A-PRINTED = 'N'                                         
+              PERFORM 0450-PRINT-HEADING-C34A THRU 0450-EXIT                    
+              WRITE PRINT-REC-1 FROM LC34-NO-RECORD AFTER 2                     
+           END-IF.                                                              
+           IF WS-REPORT-B-PRINTED = 'N'                                         
+              PERFORM 0550-PRINT-HEADING-C34B THRU 0550-EXIT                    
+              WRITE PRINT-REC-2 FROM LC34-NO-RECORD AFTER 2                     
+              ADD 2               TO WS-LINE-NO-LC34B                           
+              COMPUTE WS-LINE-NO-LC34B = 50 - WS-LINE-NO-LC34B                  
+              MOVE ZEROES         TO LC34-SUM-CR-NUM                            
+                                     LC34-SUM-CR-AMT                            
+                                     LC34-SUM-DR-NUM                            
+                                     LC34-SUM-DR-AMT                            
+              PERFORM 0820-PRINT-SUMMARY      THRU 0820-EXIT                    
+           END-IF.                                                              
+       0100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0150-READ-F130.                                                          
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13F130 AT END MOVE 'Y' TO WS-EOF-F130                         
+                         GO TO 0150-EXIT.                                       
+                                                                                
+           ADD 1 TO NO-F130-READ.                                               
+                                                                                
+       0150-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0200-PROCESS-F130.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE 'Y'                   TO WS-FIRST-PASS.                         
+           MOVE 'N'                   TO WS-MORE-REC-PRINTED.                   
+           MOVE BP13F130-REC (149:1)  TO WS-REPORT.                             
+                                                                                
+           IF WS-REPORT = BP13F130-REC (149:1)                                  
+                                                                                
+              MOVE F130-NUM-REGN      TO WS-PREV-NUM-REGN                       
+              MOVE F130-NUM-PP-SCHEDULE TO WS-PREV-NUM-PP                       
+                                                                                
+              PERFORM 0250-PROCESS-CASES    THRU 0250-EXIT UNTIL                
+                 WS-REPORT NOT = BP13F130-REC (149:1) OR                        
+                 WS-EOF-F130 = 'Y'                                              
+                                                                                
+      *_____  PRINT GRAND-TOTAL                                                 
+              PERFORM 0600-PRINT-GRD-TOT THRU 0600-EXIT                         
+                                                                                
+           END-IF.                                                              
+                                                                                
+       0200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0250-PROCESS-CASES.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE ZEROES             TO WS-AMT-DEVP                               
+                                      WS-AMT-RECPT                              
+                                      WS-OUTS-BAL.                              
+                                                                                
+           IF F130-AMT-RECEIPT IS NOT NUMERIC                                   
+              MOVE ZEROS TO F130-AMT-RECEIPT                                    
+           END-IF                                                               
+                                                                                
+           IF F130-CDE-PAYMENT-TYPE = 'PP ' OR 'OPT'                            
+              IF F130-TRANS-TYPE = '63' OR '13'                                 
+                 COMPUTE WS-AMT-DEVP = WS-AMT-DEVP + F130-AMT-RECEIPT           
+                 COMPUTE WS-AMT-DEVP = WS-AMT-DEVP * -1                         
+                 PERFORM 0400-PRINT-REPORT THRU 0400-EXIT                       
+              ELSE                                                              
+                 MOVE F130-AMT-RECEIPT TO WS-AMT-RECPT                          
+                 PERFORM 0400-PRINT-REPORT THRU 0400-EXIT                       
+             END-IF                                                             
+           ELSE                                                                 
+              IF F130-CDE-PAYMENT-TYPE = 'JVP'                                  
+                 IF F130-TRANS-TYPE = '69' AND                                  
+                    F130-CDE-AMT-TYPE NOT = 'C'                                 
+                    COMPUTE WS-AMT-DEVP = F130-AMT-RECEIPT                      
+                    PERFORM 0400-PRINT-REPORT THRU 0400-EXIT                    
+                 ELSE                                                           
+                    COMPUTE WS-AMT-RECPT = F130-AMT-RECEIPT                     
+                    PERFORM 0400-PRINT-REPORT THRU 0400-EXIT                    
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 0150-READ-F130        THRU 0150-EXIT.                        
+                                                                                
+       0250-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0400-PRINT-REPORT.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES            TO LC34-DETAIL.                               
+                                                                                
+           EVALUATE WS-REPORT                                                   
+              WHEN 'A'                                                          
+                 PERFORM 0450-PRINT-HEADING-C34A THRU 0450-EXIT                 
+                 IF WS-FIRST-PASS = 'Y'                                         
+                    ADD  1           TO WS-SSN-C34A                             
+                    MOVE WS-SSN-C34A TO LC34-SSN                                
+                 END-IF                                                         
+                                                                                
+      *_____     PRINT SUB-TOTAL BY REGISTRATION                                
+                 IF F130-NUM-REGN NOT = WS-PREV-NUM-REGN OR                     
+                    F130-NUM-PP-SCHEDULE NOT = WS-PREV-NUM-PP                   
+                    PERFORM 0460-MOVE-SUB-TOT-DET THRU 0460-EXIT                
+                    WRITE PRINT-REC-1 FROM LC34-BLANK-LINE     AFTER 1          
+                    WRITE PRINT-REC-1 FROM LC34-GRD-TOTAL-LINE AFTER 1          
+                    WRITE PRINT-REC-1 FROM LC34-SUB-TOTAL      AFTER 1          
+                    WRITE PRINT-REC-1 FROM LC34-GRD-TOTAL-LINE AFTER 1          
+                    MOVE SPACES          TO PRINT-REC-1                         
+                    WRITE PRINT-REC-1       AFTER 1                             
+                    ADD 5                TO WS-LINE-NO-LC34A                    
+                    ADD 1                TO WS-SSN-C34A                         
+                    MOVE WS-SSN-C34A     TO LC34-SSN                            
+                    MOVE 'Y'             TO WS-FIRST-PASS                       
+                    MOVE F130-NUM-REGN   TO WS-PREV-NUM-REGN                    
+                    MOVE F130-NUM-PP-SCHEDULE TO WS-PREV-NUM-PP                 
+                 END-IF                                                         
+                                                                                
+                 PERFORM 0420-MOVE-DETAILS  THRU 0420-EXIT                      
+                 WRITE PRINT-REC-1 FROM LC34-DETAIL AFTER 1                     
+                 ADD 1                    TO WS-LINE-NO-LC34A                   
+                                             NO-C34A-WRITE                      
+              WHEN OTHER                                                        
+                 PERFORM 0550-PRINT-HEADING-C34B THRU 0550-EXIT                 
+      *_____ TO CATER FOR THE FIRST CASE                                        
+                 IF WS-FIRST-PASS = 'Y' AND                                     
+                    F130-NUM-REGN = WS-PREV-NUM-REGN AND                        
+                    F130-NUM-PP-SCHEDULE = WS-PREV-NUM-PP                       
+                    ADD  1           TO WS-SSN-C34B                             
+                    MOVE WS-SSN-C34B TO LC34-SSN                                
+                    MOVE BP13F130-REC (132:3) TO WS-AGE-MTH-ALPHA               
+                 END-IF                                                         
+                                                                                
+      *_____     PRINT SUB-TOTAL BY REGISTRATION                                
+                 IF F130-NUM-REGN NOT = WS-PREV-NUM-REGN OR                     
+                    F130-NUM-PP-SCHEDULE NOT = WS-PREV-NUM-PP                   
+                    PERFORM 0460-MOVE-SUB-TOT-DET THRU 0460-EXIT                
+                    WRITE PRINT-REC-2 FROM LC34-BLANK-LINE     AFTER 1          
+                    WRITE PRINT-REC-2 FROM LC34-SUB-TOTAL-LINE AFTER 1          
+                    WRITE PRINT-REC-2 FROM LC34-SUB-TOTAL      AFTER 1          
+                    WRITE PRINT-REC-2 FROM LC34-SUB-TOTAL-LINE AFTER 1          
+                    MOVE SPACES          TO PRINT-REC-2                         
+                    WRITE PRINT-REC-2       AFTER 1                             
+                    ADD 5                TO WS-LINE-NO-LC34B                    
+                    ADD 1                TO WS-SSN-C34B                         
+                    MOVE WS-SSN-C34B     TO LC34-SSN                            
+                    MOVE 'Y'             TO WS-FIRST-PASS                       
+                    MOVE F130-NUM-REGN   TO WS-PREV-NUM-REGN                    
+                    MOVE F130-NUM-PP-SCHEDULE TO WS-PREV-NUM-PP                 
+                    MOVE BP13F130-REC (132:3) TO WS-AGE-MTH-ALPHA               
+                 END-IF                                                         
+                                                                                
+                 PERFORM 0420-MOVE-DETAILS  THRU 0420-EXIT                      
+                                                                                
+      *          MOVE BP13F130-REC (132:3) TO WS-AGE-MTH-ALPHA-TMP              
+      *          MOVE BP13F130-REC (132:3) TO WS-AGE-MTH-ALPHA                  
+                                                                                
+                 WRITE PRINT-REC-2 FROM LC34-DETAIL AFTER 1                     
+                 ADD 1                    TO WS-LINE-NO-LC34B                   
+                                             NO-C34B-WRITE                      
+           END-EVALUATE.                                                        
+                                                                                
+           MOVE 'Y'               TO WS-MORE-REC-PRINTED.                       
+                                                                                
+                                                                                
+       0400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0420-MOVE-DETAILS.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           IF WS-FIRST-PASS = 'Y'                                               
+              MOVE F130-NUM-REGN TO  LC34-REGN                                  
+              STRING F130-NUM-SCH-ACCT (1:4) '-'                                
+                     F130-NUM-SCH-ACCT (5:4) '-'                                
+                     F130-NUM-SCH-ACCT (9:3)                                    
+                     DELIMITED BY SIZE INTO LC34-SCHEM                          
+              END-STRING                                                        
+              MOVE 'N'            TO WS-FIRST-PASS                              
+           END-IF.                                                              
+                                                                                
+           STRING F130-DTE-PP-DUE(7:2) '/'                                      
+                  F130-DTE-PP-DUE(5:2) '/'                                      
+                  F130-DTE-PP-DUE(1:4)                                          
+                  DELIMITED BY SIZE INTO LC34-DUE-DATE.                         
+           MOVE F130-NUM-RECPT-JRNO TO LC34-RECPT.                              
+           MOVE F130-CDE-PAYMENT-TYPE  TO LC34-TYPE.                            
+           STRING F130-DTE-TRANS(7:2) '/'                                       
+                  F130-DTE-TRANS(5:2) '/'                                       
+                  F130-DTE-TRANS(1:4)                                           
+                  DELIMITED BY SIZE INTO LC34-TRANS-DATE                        
+           END-STRING.                                                          
+                                                                                
+           MOVE WS-AMT-RECPT        TO LC34-AMT-RECPT.                          
+           MOVE WS-AMT-DEVP         TO LC34-AMT-PD-DEVP.                        
+           COMPUTE WS-OUTS-BAL  = WS-AMT-RECPT - (WS-AMT-DEVP * -1).            
+           MOVE WS-OUTS-BAL         TO LC34-OUTS-BAL.                           
+           IF WS-OUTS-BAL < 0                                                   
+              MOVE 'DR'             TO LC34-OUTS-BAL-CR                         
+           ELSE                                                                 
+              MOVE 'CR'             TO LC34-OUTS-BAL-CR                         
+           END-IF.                                                              
+           COMPUTE WS-SUB-DEVP  = WS-SUB-DEVP  + WS-AMT-DEVP.                   
+           COMPUTE WS-SUB-RECPT = WS-SUB-RECPT + WS-AMT-RECPT.                  
+           COMPUTE WS-SUB-OUTS-BAL = WS-SUB-OUTS-BAL + WS-OUTS-BAL.             
+                                                                                
+       0420-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0450-PRINT-HEADING-C34A.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+           IF WS-LINE-NO-LC34A > 50                                             
+              CONTINUE                                                          
+           ELSE                                                                 
+              GO TO 0450-EXIT                                                   
+           END-IF                                                               
+                                                                                
+           ADD  1                TO WS-PAGE-NO-LC34A.                           
+           MOVE WS-PAGE-NO-LC34A TO LC34-PAGE-NO.                               
+           MOVE 'P13LC34A'       TO LC34-RPT-NAME.                              
+                                                                                
+           WRITE PRINT-REC-1 FROM LC34-BLANK-LINE AFTER PAGE.                   
+           WRITE PRINT-REC-1 FROM LC34-BLANK-LINE AFTER 2.                      
+           WRITE PRINT-REC-1 FROM LC34-HEAD-1     AFTER 1.                      
+           WRITE PRINT-REC-1 FROM LC34A-HEAD-2    AFTER 2.                      
+           WRITE PRINT-REC-1 FROM LC34-HEAD-2     AFTER 2.                      
+           WRITE PRINT-REC-1 FROM LC34A-HEAD-3    AFTER 2.                      
+           MOVE 10               TO WS-LINE-NO-LC34A.                           
+                                                                                
+       0450-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0460-MOVE-SUB-TOT-DET.                                                   
+      *-------------------------------------------------------------            
+                                                                                
+           COMPUTE WS-SUB-DEVP = WS-SUB-DEVP * -1.                              
+           MOVE WS-SUB-DEVP     TO LC34-AMT-PD-DEVP-TOT.                        
+           MOVE WS-SUB-RECPT    TO LC34-AMT-RECPT-TOT.                          
+           MOVE WS-SUB-OUTS-BAL TO LC34-OUTS-BAL-TOT.                           
+           IF WS-REPORT NOT = 'A'                                               
+              IF WS-AGE-MTH-NUM IS NOT NUMERIC                                  
+                 MOVE WS-AGE-MTH-ALPHA TO LC34-AGE-MTH-ALPHA                    
+              ELSE                                                              
+                 MOVE WS-AGE-MTH-NUM   TO LC34-AGE-MTH-NUM                      
+              END-IF                                                            
+           ELSE                                                                 
+              MOVE SPACES       TO LC34-AGE-MTH-ALPHA                           
+           END-IF.                                                              
+           IF WS-SUB-RECPT > WS-SUB-DEVP                                        
+              MOVE 'CR'         TO LC34-OUTS-BAL-TOT-CR                         
+              ADD  1            TO WS-SUM-CR-NUM                                
+              COMPUTE WS-SUM-RECPT = WS-SUM-RECPT + WS-SUB-OUTS-BAL             
+           ELSE                                                                 
+              IF (WS-SUB-DEVP = ZEROES AND WS-SUB-RECPT = ZEROES) OR            
+                 (WS-SUB-OUTS-BAL = ZEROES)                                     
+                 MOVE SPACES    TO LC34-OUTS-BAL-TOT-CR                         
+              ELSE                                                              
+                 MOVE 'DR'      TO LC34-OUTS-BAL-TOT-CR                         
+                 ADD  1         TO WS-SUM-DR-NUM                                
+                 COMPUTE WS-SUM-DEVP = WS-SUM-DEVP + WS-SUB-OUTS-BAL            
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           COMPUTE WS-GRD-DEVP  = WS-GRD-DEVP  + WS-SUB-DEVP.                   
+           COMPUTE WS-GRD-RECPT = WS-GRD-RECPT + WS-SUB-RECPT.                  
+           COMPUTE WS-GRD-OUTS-BAL = WS-GRD-OUTS-BAL + WS-SUB-OUTS-BAL.         
+                                                                                
+           MOVE ZEROES          TO WS-SUB-DEVP                                  
+                                   WS-SUB-RECPT                                 
+                                   WS-SUB-OUTS-BAL.                             
+                                                                                
+       0460-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0550-PRINT-HEADING-C34B.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+           IF WS-LINE-NO-LC34B > 50                                             
+              CONTINUE                                                          
+           ELSE                                                                 
+              GO TO 0550-EXIT                                                   
+           END-IF                                                               
+                                                                                
+           ADD  1                TO WS-PAGE-NO-LC34B.                           
+           MOVE WS-PAGE-NO-LC34B TO LC34-PAGE-NO.                               
+           MOVE 'P13LC34B'       TO LC34-RPT-NAME.                              
+                                                                                
+           WRITE PRINT-REC-2 FROM LC34-BLANK-LINE AFTER PAGE.                   
+           WRITE PRINT-REC-2 FROM LC34-BLANK-LINE AFTER 2.                      
+           WRITE PRINT-REC-2 FROM LC34-HEAD-1     AFTER 1.                      
+           WRITE PRINT-REC-2 FROM LC34B-HEAD-2    AFTER 2.                      
+           WRITE PRINT-REC-2 FROM LC34-HEAD-2     AFTER 2.                      
+           WRITE PRINT-REC-2 FROM LC34B-HEAD-3    AFTER 2.                      
+           MOVE 10               TO WS-LINE-NO-LC34B.                           
+                                                                                
+       0550-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0600-PRINT-GRD-TOT.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           EVALUATE WS-REPORT                                                   
+              WHEN 'A'                                                          
+      *______    PRINT SUB-TOTAL ON THE LAST PAGE IF MORE RECORDS               
+      *______    ARE PRINTED                                                    
+                 MOVE 'Y'               TO WS-REPORT-A-PRINTED                  
+                 IF WS-MORE-REC-PRINTED = 'Y'                                   
+                    MOVE 'N'            TO WS-MORE-REC-PRINTED                  
+                    PERFORM 0460-MOVE-SUB-TOT-DET THRU 0460-EXIT                
+                    WRITE PRINT-REC-1 FROM LC34-BLANK-LINE     AFTER 1          
+                    WRITE PRINT-REC-1 FROM LC34-GRD-TOTAL-LINE AFTER 1          
+                    WRITE PRINT-REC-1 FROM LC34-SUB-TOTAL      AFTER 1          
+                    WRITE PRINT-REC-1 FROM LC34-GRD-TOTAL-LINE AFTER 1          
+                    ADD 4                TO WS-LINE-NO-LC34A                    
+                 END-IF                                                         
+                                                                                
+                 PERFORM 0450-PRINT-HEADING-C34A THRU 0450-EXIT                 
+                 PERFORM 0700-MOVE-GRD-TOT-DET   THRU 0700-EXIT                 
+                 WRITE PRINT-REC-1 FROM LC34-BLANK-LINE     AFTER 1             
+                 WRITE PRINT-REC-1 FROM LC34-GRD-TOTAL      AFTER 1             
+                 WRITE PRINT-REC-1 FROM LC34-GRD-TOTAL-LINE AFTER 1             
+              WHEN OTHER                                                        
+      *______    PRINT SUB-TOTAL ON THE LAST PAGE IF MORE RECORDS               
+      *______    ARE PRINTED                                                    
+                 MOVE 'Y'               TO WS-REPORT-B-PRINTED                  
+                 IF WS-MORE-REC-PRINTED = 'Y'                                   
+                    MOVE 'N'            TO WS-MORE-REC-PRINTED                  
+      *             MOVE BP13F130-REC (132:3) TO WS-AGE-MTH-ALPHA               
+                    PERFORM 0460-MOVE-SUB-TOT-DET THRU 0460-EXIT                
+                    WRITE PRINT-REC-2 FROM LC34-BLANK-LINE     AFTER 1          
+                    WRITE PRINT-REC-2 FROM LC34-SUB-TOTAL-LINE AFTER 1          
+                    WRITE PRINT-REC-2 FROM LC34-SUB-TOTAL      AFTER 1          
+                    WRITE PRINT-REC-2 FROM LC34-SUB-TOTAL-LINE AFTER 1          
+                    ADD 4                TO WS-LINE-NO-LC34B                    
+                 END-IF                                                         
+                                                                                
+                 PERFORM 0550-PRINT-HEADING-C34B THRU 0550-EXIT                 
+                 PERFORM 0700-MOVE-GRD-TOT-DET   THRU 0700-EXIT                 
+                 WRITE PRINT-REC-2 FROM LC34-BLANK-LINE     AFTER 1             
+                 WRITE PRINT-REC-2 FROM LC34-GRD-TOTAL      AFTER 1             
+                 WRITE PRINT-REC-2 FROM LC34-GRD-TOTAL-LINE AFTER 1             
+                 ADD 3                           TO WS-LINE-NO-LC34B            
+                 PERFORM 0800-PRINT-SUMMARY      THRU 0800-EXIT                 
+           END-EVALUATE.                                                        
+                                                                                
+       0600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0700-MOVE-GRD-TOT-DET.                                                   
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE WS-GRD-DEVP     TO LC34-AMT-PD-DEVP-GRD.                        
+           MOVE WS-GRD-RECPT    TO LC34-AMT-RECPT-GRD.                          
+           MOVE WS-GRD-OUTS-BAL TO LC34-OUTS-BAL-GRD.                           
+                                                                                
+           IF WS-GRD-RECPT > WS-GRD-DEVP                                        
+              MOVE 'CR'         TO LC34-OUTS-BAL-GRD-CR                         
+           ELSE                                                                 
+              IF (WS-GRD-DEVP = ZEROES AND WS-GRD-RECPT = ZEROES) OR            
+                 (WS-GRD-OUTS-BAL = ZEROES)                                     
+                 MOVE SPACES    TO LC34-OUTS-BAL-GRD-CR                         
+              ELSE                                                              
+                 MOVE 'DR'      TO LC34-OUTS-BAL-GRD-CR                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-REPORT NOT = 'B'                                               
+              MOVE ZEROES          TO WS-GRD-DEVP                               
+                                      WS-GRD-RECPT                              
+                                      WS-GRD-OUTS-BAL                           
+                                      WS-SUM-CR-NUM                             
+                                      WS-SUM-DR-NUM                             
+           END-IF.                                                              
+                                                                                
+       0700-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0800-PRINT-SUMMARY.                                                      
+      *-------------------------------------------------------------            
+           ADD 6                 TO WS-LINE-NO-LC34B.                           
+           IF WS-LINE-NO-LC34B > 50                                             
+              PERFORM 0550-PRINT-HEADING-C34B THRU 0550-EXIT                    
+              COMPUTE WS-LINE-NO-LC34B = 50 - WS-LINE-NO-LC34B                  
+           ELSE                                                                 
+              COMPUTE WS-LINE-NO-LC34B = 56 - WS-LINE-NO-LC34B                  
+           END-IF.                                                              
+                                                                                
+           PERFORM 0810-MOVE-SUMMARY-DATA THRU 0810-EXIT.                       
+           PERFORM 0820-PRINT-SUMMARY     THRU 0820-EXIT.                       
+                                                                                
+       0800-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0810-MOVE-SUMMARY-DATA.                                                  
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE WS-SUM-CR-NUM   TO LC34-SUM-CR-NUM.                             
+           MOVE WS-SUM-RECPT    TO LC34-SUM-CR-AMT.                             
+           MOVE WS-SUM-DR-NUM   TO LC34-SUM-DR-NUM.                             
+           MOVE WS-SUM-DEVP     TO LC34-SUM-DR-AMT.                             
+                                                                                
+           MOVE ZEROES          TO WS-GRD-DEVP                                  
+                                   WS-GRD-RECPT                                 
+                                   WS-GRD-OUTS-BAL.                             
+                                                                                
+       0810-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0820-PRINT-SUMMARY.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           WRITE PRINT-REC-2 FROM LC34-SUMMARY-HEAD1      AFTER                 
+                                WS-LINE-NO-LC34B.                               
+           WRITE PRINT-REC-2 FROM LC34-SUMMARY-HEAD2      AFTER 1.              
+           WRITE PRINT-REC-2 FROM LC34-SUMMARY-HEAD2-DUSH AFTER 1.              
+           WRITE PRINT-REC-2 FROM LC34-SUMMARY-CREDIT     AFTER 2.              
+           WRITE PRINT-REC-2 FROM LC34-SUMMARY-DEBIT      AFTER 1.              
+                                                                                
+       0820-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       0900-CLOSE-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           DISPLAY ' ********** BP13CC34 ********** '.                          
+           DISPLAY ' *** CC34 LISTING :'.                                       
+           DISPLAY ' ***  BP13F130 READ   - ' NO-F130-READ.                     
+           DISPLAY ' ***  P13LC34A WRITE  - ' NO-C34A-WRITE.                    
+           DISPLAY ' ***  P13LC34B WRITE  - ' NO-C34B-WRITE.                    
+           DISPLAY ' ****************************** '.                          
+           CLOSE SY02F001                                                       
+                 BP13F130                                                       
+                 P13LC34A                                                       
+                 P13LC34B.                                                      
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       0900-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+

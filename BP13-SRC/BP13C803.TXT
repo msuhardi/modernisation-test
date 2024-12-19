@@ -1,0 +1,676 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C803.                                                 
+      *AUTHOR.        LSB.                                                      
+      *DATE-WRITTEN.  20/07/94.                                                 
+      * =========================================================== *           
+      * SYSTEM OF COMMITMENT (BP13)                                 *           
+      * =========================================================== *           
+      *                                                             *           
+      *  OBJECTIVE   : TO DETERMINE PANENT/CHILD RELATIONSHIP       *           
+      *                AND UPDATE THEM AS NEW HOUSEHOLD             *           
+      *                                                             *           
+      *                IF THE RELATIONSHIP IS INLAW OR SPOUSE       *           
+      *                OF THE SON,THEN CHECK THE MOVE-IN-DATE       *           
+      *                MUST BE > MOVE-IN-DATE OF LESSEE.            *           
+      *                                                             *           
+      *  INPUT FILE   : BP13F558                                    *           
+      *               : BP13F716                                    *           
+      *  OUTPUT FILE  : P13F558A                                    *           
+      *  LISTING      : BP13L804                                    *           
+      *                                                             *           
+      * ----------------------------------------------------------- *           
+      * CHG-NO   BY   DATE      DETAILS                             *           
+      * -------- ---  --------  -------                             *           
+      * N940014  YCH  19941011  CHANGE OF KEY FIELD                 *           
+      * BP130445 SSS  19980205  EXPAND F558 RECL FROM 150 TO 400    *           
+      * BP130630 NOR  19990114  CHGE F715 TO F716 EXPAND TO 350     *           
+      * BP130833 YCH2 20001006) ENHANCEMENT ON PARENT CHILD         *           
+      * BP130919 YCH2 20001006) (SEE NOTE IN 710 PARA)              *           
+      * BP130919 YCH2 20010104) ENHANCEMENT TO SIBLING CASES        *           
+      * BP133320 MSD1 20080513) ALSO WRITE IN FILE,IF WRTTN IN RPT  *           
+      *                                                             *           
+      * =========================================================== *           
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-4341.                                               
+       OBJECT-COMPUTER. IBM-4341.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F558 ASSIGN TO BP13F558.                                  
+           SELECT BP13F716 ASSIGN TO BP13F716.                                  
+           SELECT P13F716A ASSIGN TO P13F716A.                                  
+           SELECT P13F558A ASSIGN TO P13F558A.                                  
+           SELECT P13F558B ASSIGN TO P13F558B.                                  
+           SELECT BP13L803 ASSIGN TO BP13L803.                                  
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD  BP13F716                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 350 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+       COPY BP13F716.                                                           
+                                                                                
+       FD  P13F716A                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 350 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+       01  P13F716A-REC         PIC X(350).                                     
+                                                                                
+       FD  BP13F558                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 600 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+       COPY BP13F558.                                                           
+                                                                                
+       FD  P13F558A                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 600 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+       01  P13F558A-REC                   PIC X(600).                           
+                                                                                
+       FD  P13F558B                                                             
+           BLOCK CONTAINS 0 RECORDS                                             
+           RECORD CONTAINS 600 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+       01  P13F558B-REC                   PIC X(600).                           
+                                                                                
+       FD  BP13L803                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           LABEL RECORDS ARE OMITTED                                            
+           RECORDING MODE IS F.                                                 
+       01  BP13L803-REC                   PIC X(132).                           
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-COUNTERS.                                                         
+           05 WS-F716-READ                PIC 9(8)    VALUE ZEROS.              
+           05 WS-F558-READ                PIC 9(8)    VALUE ZEROS.              
+           05 WS-OUTPUT                   PIC 9(8)    VALUE ZEROS.              
+           05 WS-F716-OUTPUT              PIC 9(8)    VALUE ZEROS.              
+           05 WS-MR-REGN-CNT              PIC 9(8)    VALUE ZEROS.              
+           05 WS-MR-BYPASS                PIC 9(8)    VALUE ZEROS.              
+           05 WS-OCCUP-STORED             PIC 9(2)    VALUE 0.                  
+           05 WS-NRIC-FD                  PIC X(1)    VALUE SPACES.             
+           05 WS-CHILD-NRIC-FD            PIC X(1)    VALUE SPACES.             
+           05 WS-CHILD-REGN-FD            PIC X(1)    VALUE 'N'.                
+           05 WS-FIRST-CHILD              PIC X(1)    VALUE 'N'.                
+           05 WS-SECOND-CHILD             PIC X(1)    VALUE 'N'.                
+           05 WS-MORE-CHILD               PIC X(1)    VALUE 'N'.                
+           05 WS-NO-PARENT-CHILD-FD       PIC X(1)    VALUE 'N'.                
+           05 WS-INVALID-NRIC             PIC X(1)    VALUE 'N'.                
+           05 WS-EARLIEST-DTE-CHK         PIC X(1)    VALUE 'N'.                
+           05 WS-PAGE                     PIC 9(2)    VALUE 0.                  
+           05 WS-CNT                      PIC 9(2)    VALUE 99.                 
+           05 WS-SERIAL                   PIC 9(4)    VALUE 0.                  
+                                                                                
+       01  WS-CHILD1-NRIC                 PIC X(9)    VALUE SPACES.             
+       01  WS-CHILD2-NRIC                 PIC X(9)    VALUE SPACES.             
+       01  WS-CHILD3-NRIC                 PIC X(9)    VALUE SPACES.             
+       01  WS-DTE-PARENT-IN               PIC X(6)    VALUE SPACES.             
+       01  WS-DTE-CHILD-IN1               PIC X(6)    VALUE SPACES.             
+       01  WS-DTE-CHILD-IN2               PIC X(6)    VALUE SPACES.             
+       01  WS-DTE-CHILD-IN3               PIC X(6)    VALUE SPACES.             
+       01  WS-DTE-SPOUSE-IN               PIC X(6)    VALUE SPACES.             
+       01  WS-DTE-LAW-IN                  PIC X(6)    VALUE SPACES.             
+                                                                                
+       01  WS-PREV-F716-KEY-FLD           PIC X(19)   VALUE SPACES.             
+       01  WS-PREV-F558-KEY-FLD           PIC X(19)   VALUE SPACES.             
+                                                                                
+       01  WS-F716-KEY-FLD.                                                     
+           05  WS-F716-REGN               PIC X(8)    VALUE SPACES.             
+           05  WS-F716-HDBREF             PIC X(11)   VALUE SPACES.             
+                                                                                
+       01  WS-F558-KEY-FLD.                                                     
+           05  WS-F558-REGN               PIC X(8)    VALUE SPACES.             
+           05  WS-F558-HDBREF             PIC X(11)   VALUE SPACES.             
+                                                                                
+       01  WS-FILE-POINTER.                                                     
+           05 WS-F558-SUB                 PIC 9(1)    VALUE 0.                  
+           05 WS-F716-SUB                 PIC 9(2)    VALUE 0.                  
+                                                                                
+       01  WS-EOF-F558                    PIC X.                                
+           88 EOF-F558                    VALUE 'Y'.                            
+                                                                                
+       01  WS-EOF-F716                    PIC X.                                
+           88 EOF-F716                    VALUE 'Y'.                            
+                                                                                
+       01  WS-BP13F558-REC.                                                     
+           05  WS-PREV-REGN.                                                    
+               10  WS-PREV-REF                PIC X(6).                         
+               10  FILLER                     PIC X(2).                         
+           05  FILLER                         PIC X(84).                        
+           05  WS-CDE-HOUSEHOLD               PIC X(1).                         
+           05  FILLER                         PIC X(57).                        
+           05  FILLER                         PIC X(450).                       
+                                                                                
+       COPY WSF716.                                                             
+                                                                                
+       01  WS-CUR-DATE.                                                         
+           05  WS-YY               PIC X(4).                                    
+           05  WS-MM               PIC X(2).                                    
+           05  WS-DD               PIC X(2).                                    
+                                                                                
+       01  WS-EDITED-DATE.                                                      
+           05  WS-EDITED-DD        PIC X(2).                                    
+           05  FILLER              PIC X         VALUE '/'.                     
+           05  WS-EDITED-MM        PIC X(2)      VALUE SPACES.                  
+           05  FILLER              PIC X         VALUE '/'.                     
+           05  WS-EDITED-YY        PIC X(4)      VALUE SPACES.                  
+                                                                                
+       01  L803-HEAD01.                                                         
+           05  FILLER              PIC X(8)      VALUE 'BP13L803'.              
+           05  FILLER              PIC X(4)      VALUE SPACES.                  
+           05  FILLER              PIC X(8)      VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(24)     VALUE SPACES.                  
+           05  FILLER              PIC X(20)     VALUE                          
+                                    'S Y S T E M   O F   '.                     
+           05  FILLER              PIC X(19)     VALUE                          
+                                    'C O M M I T M E N T'.                      
+           05  FILLER              PIC X(17)     VALUE SPACES.                  
+           05  FILLER              PIC X(17)     VALUE SPACES.                  
+           05  FILLER              PIC X(5)      VALUE 'DATE'.                  
+           05  L803-DATE           PIC X(10).                                   
+           05  FILLER              PIC X(4)      VALUE SPACES.                  
+                                                                                
+       01  L803-HEAD02.                                                         
+           05  FILLER              PIC X(12)     VALUE SPACES.                  
+           05  FILLER              PIC X(30)     VALUE SPACES.                  
+           05  FILLER              PIC X(45)     VALUE                          
+               'REPORT ON PARENT CHILD RELATIONSHIP - NHH   '.                  
+           05  FILLER              PIC X(30)     VALUE SPACES.                  
+           05  FILLER              PIC X(5)      VALUE 'PAGE'.                  
+           05  L803-PAGENO         PIC ZZZZ9.                                   
+                                                                                
+       01  L803-HEAD03.                                                         
+           05  FILLER              PIC X(12)     VALUE SPACES.                  
+           05  FILLER              PIC X(30)     VALUE SPACES.                  
+           05  FILLER              PIC X(45)     VALUE                          
+               ' RELATIONSHIP IN RDB AS INLAW/SPOUSE CASES '.                   
+           05  FILLER              PIC X(30)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE SPACES.                  
+                                                                                
+       01  L803-HEAD04.                                                         
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(06)     VALUE 'SERIAL'.                
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(11)     VALUE 'REG/REF NUM'.           
+           05  FILLER              PIC X(3)      VALUE SPACES.                  
+           05  FILLER              PIC X(9)      VALUE 'NRIC NO'.               
+           05  FILLER              PIC X(7)      VALUE SPACES.                  
+           05  FILLER              PIC X(14)     VALUE 'SCH-ACC-NO'.            
+           05  FILLER              PIC X(7)      VALUE SPACES.                  
+           05  FILLER              PIC X(14)     VALUE 'RELATIONSHIP'.          
+           05  FILLER              PIC X(5)      VALUE SPACES.                  
+           05  FILLER              PIC X(11)     VALUE 'DTE ACCEPT'.            
+           05  FILLER              PIC X(5)      VALUE SPACES.                  
+           05  FILLER              PIC X(11)     VALUE 'DTE MOVE IN'.           
+           05  FILLER              PIC X(5)      VALUE SPACES.                  
+                                                                                
+       01  L803-DETAIL.                                                         
+           05  FILLER                PIC X(02)     VALUE SPACES.                
+           05  L803-SERIAL           PIC ZZZ9      VALUE SPACES.                
+           05  FILLER                PIC X(04)     VALUE SPACES.                
+           05  L803-NUM-REGN         PIC X(8)      VALUE SPACES.                
+           05  FILLER                PIC X(5)      VALUE SPACES.                
+           05  L803-NUM-NRIC         PIC X(9)      VALUE SPACES.                
+           05  FILLER                PIC X(08)     VALUE SPACES.                
+           05  L803-SCH-ACC-NO       PIC X(11)     VALUE SPACES.                
+           05  FILLER                PIC X(08)     VALUE SPACES.                
+           05  L803-PARENT-CHILD     PIC X(02)     VALUE SPACES.                
+           05  FILLER                PIC X(04)     VALUE SPACES.                
+           05  L803-RELATION         PIC X(02)     VALUE SPACES.                
+           05  FILLER                PIC X(13)     VALUE SPACES.                
+           05  L803-DATE-ACCEPT      PIC X(10)     VALUE SPACES.                
+           05  FILLER                PIC X(06)     VALUE SPACES.                
+           05  L803-DATE-MOVE-IN     PIC X(10)     VALUE SPACES.                
+           05  FILLER                PIC X(10)     VALUE SPACES.                
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       000-MAIN-ROUTINE.                                                        
+      *-------------------------------------------------------------            
+           PERFORM 100-INITIALIZATION THRU 100-EXIT.                            
+           PERFORM 200-READ-F558      THRU 200-EXIT.                            
+           PERFORM 300-READ-F716      THRU 300-EXIT.                            
+           PERFORM 400-PROCESS-RTN    THRU 400-EXIT                             
+             UNTIL WS-F558-KEY-FLD = HIGH-VALUE                                 
+             AND   WS-F716-KEY-FLD = HIGH-VALUE.                                
+           PERFORM 999-CLOSE-FILES    THRU 999-EXIT.                            
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       100-INITIALIZATION.                                                      
+      *-------------------------------------------------------------            
+           OPEN INPUT  BP13F558                                                 
+                       BP13F716                                                 
+                OUTPUT P13F558A                                                 
+                       P13F558B                                                 
+                       P13F716A                                                 
+                       BP13L803.                                                
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       200-READ-F558.                                                           
+      *-------------------------------------------------------------            
+           READ BP13F558 AT END                                                 
+                MOVE HIGH-VALUE TO WS-F558-KEY-FLD                              
+                MOVE 'Y'        TO WS-EOF-F558                                  
+                GO TO 200-EXIT.                                                 
+                                                                                
+           ADD  1 TO WS-F558-READ.                                              
+           MOVE F558-NUM-REGN        TO WS-F558-REGN.                           
+           MOVE F558-NUM-HDB-REF-SMS TO WS-F558-HDBREF.                         
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       300-READ-F716.                                                           
+      *-------------------------------------------------------------            
+           READ BP13F716 AT END                                                 
+                MOVE HIGH-VALUE TO WS-F716-KEY-FLD                              
+                MOVE 'Y'        TO WS-EOF-F716                                  
+                GO TO 300-EXIT.                                                 
+                                                                                
+           ADD  1 TO WS-F716-READ.                                              
+           MOVE F716-NUM-REGN      TO WS-F716-REGN.                             
+           MOVE F716-NUM-HDB-REF   TO WS-F716-HDBREF.                           
+                                                                                
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       400-PROCESS-RTN.                                                         
+      *-------------------------------------------------------------            
+           PERFORM 500-INITIALIZE THRU 500-EXIT.                                
+                                                                                
+           IF WS-F558-KEY-FLD = WS-F716-KEY-FLD                                 
+                                                                                
+              ADD 1 TO WS-MR-REGN-CNT                                           
+              MOVE  BP13F558-REC TO WS-BP13F558-REC                             
+              MOVE WS-F558-KEY-FLD TO WS-PREV-F558-KEY-FLD                      
+              MOVE WS-F716-KEY-FLD TO WS-PREV-F716-KEY-FLD                      
+                                                                                
+              PERFORM 600-STORE-F716 THRU 600-EXIT                              
+                UNTIL WS-F716-KEY-FLD NOT = WS-PREV-F716-KEY-FLD                
+                OR    EOF-F716                                                  
+                                                                                
+              PERFORM 700-READ-REQ-BY-REGN THRU 700-EXIT                        
+                UNTIL WS-F558-KEY-FLD NOT = WS-PREV-F558-KEY-FLD                
+                OR    EOF-F558                                                  
+                                                                                
+              PERFORM 800-WRITE-OUTPUT THRU 800-EXIT                            
+           ELSE                                                                 
+              IF WS-F558-KEY-FLD < WS-F716-KEY-FLD                              
+                 MOVE WS-F558-KEY-FLD TO WS-PREV-F558-KEY-FLD                   
+                 PERFORM 410-WRITE-F558 THRU 410-EXIT                           
+                   UNTIL WS-F558-KEY-FLD NOT = WS-PREV-F558-KEY-FLD             
+                     OR  WS-F558-KEY-FLD = HIGH-VALUE                           
+              ELSE                                                              
+                 MOVE WS-F716-KEY-FLD TO WS-PREV-F716-KEY-FLD                   
+                 PERFORM 300-READ-F716 THRU 300-EXIT                            
+                   UNTIL WS-F716-KEY-FLD NOT = WS-PREV-F716-KEY-FLD             
+                    OR   WS-F716-KEY-FLD = HIGH-VALUE.                          
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       410-WRITE-F558.                                                          
+           WRITE P13F558A-REC FROM BP13F558-REC                                 
+           ADD 1 TO WS-OUTPUT                                                   
+           PERFORM 200-READ-F558 THRU 200-EXIT.                                 
+                                                                                
+       410-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       500-INITIALIZE.                                                          
+      *-------------------------------------------------------------            
+           MOVE 1      TO WS-F716-SUB.                                          
+           MOVE ZEROES TO WS-OCCUP-STORED.                                      
+           INITIALIZE WS-F716-HSEHOLD.                                          
+           MOVE 'N'    TO WS-INVALID-NRIC                                       
+                          WS-CHILD-REGN-FD                                      
+                          WS-FIRST-CHILD                                        
+                          WS-SECOND-CHILD                                       
+                          WS-MORE-CHILD                                         
+                          WS-EARLIEST-DTE-CHK                                   
+           MOVE SPACES TO WS-CHILD1-NRIC                                        
+                          WS-CHILD2-NRIC                                        
+                          WS-CHILD3-NRIC                                        
+           MOVE SPACES TO WS-DTE-PARENT-IN                                      
+                          WS-DTE-CHILD-IN1                                      
+                          WS-DTE-CHILD-IN2                                      
+                          WS-DTE-CHILD-IN3                                      
+                          WS-DTE-SPOUSE-IN                                      
+                          WS-DTE-LAW-IN.                                        
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       600-STORE-F716.                                                          
+      *-------------------------------------------------------------            
+           IF F716-DTE-MOVING-IN = SPACES OR ZEROS OR LOW-VALUES                
+               MOVE F716-DTE-ACCEPTED TO F716-DTE-MOVING-IN.                    
+                                                                                
+           IF F716-CDE-PARENT-CHILD = 'P'                                       
+              MOVE F716-DTE-MOVING-IN (1:6) TO WS-DTE-PARENT-IN                 
+           END-IF.                                                              
+                                                                                
+           IF F716-CDE-PARENT-CHILD = 'C' OR 'B'                                
+              IF WS-FIRST-CHILD = 'N'                                           
+                 MOVE F716-DTE-MOVING-IN (1:6) TO WS-DTE-CHILD-IN1              
+                 MOVE F716-NUM-NRIC      TO WS-CHILD1-NRIC                      
+                 MOVE 'Y' TO WS-FIRST-CHILD                                     
+              ELSE                                                              
+                 IF WS-SECOND-CHILD = 'N'                                       
+                    MOVE F716-DTE-MOVING-IN (1:6) TO WS-DTE-CHILD-IN2           
+                    MOVE F716-NUM-NRIC      TO WS-CHILD2-NRIC                   
+                    MOVE 'Y' TO WS-SECOND-CHILD                                 
+                 ELSE                                                           
+                    MOVE F716-DTE-MOVING-IN (1:6) TO WS-DTE-CHILD-IN3           
+                    MOVE F716-NUM-NRIC      TO WS-CHILD3-NRIC                   
+                    MOVE 'Y' TO WS-MORE-CHILD                                   
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF F716-CDE-PARENT-CHILD = 'L'                                       
+              MOVE F716-DTE-MOVING-IN (1:6) TO WS-DTE-LAW-IN                    
+           END-IF.                                                              
+                                                                                
+           IF F716-CDE-PARENT-CHILD = 'S'                                       
+              MOVE F716-DTE-MOVING-IN (1:6) TO WS-DTE-SPOUSE-IN                 
+           END-IF.                                                              
+                                                                                
+           MOVE BP13F716-REC TO WS-F716-REC (WS-F716-SUB).                      
+                                                                                
+           ADD 1 TO WS-F716-SUB.                                                
+           ADD 1 TO WS-OCCUP-STORED.                                            
+                                                                                
+           PERFORM 300-READ-F716 THRU 300-EXIT.                                 
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       700-READ-REQ-BY-REGN.                                                    
+      *-------------------------------------------------------------            
+           MOVE 'N'    TO WS-NRIC-FD.                                           
+           MOVE SPACES TO WS-CHILD-NRIC-FD.                                     
+           MOVE 'N'    TO WS-NO-PARENT-CHILD-FD.                                
+                                                                                
+           IF WS-INVALID-NRIC = 'Y'                                             
+              PERFORM 200-READ-F558 THRU 200-EXIT                               
+              GO TO 700-EXIT.                                                   
+                                                                                
+           PERFORM 710-REQUEST-HA-MATCH-RDB THRU 710-EXIT                       
+                   VARYING WS-F716-SUB FROM 1 BY 1                              
+                   UNTIL WS-F716-SUB > WS-OCCUP-STORED                          
+                   OR (WS-NRIC-FD = 'Y' AND  WS-CHILD-NRIC-FD = 'Y')            
+                   OR (WS-NRIC-FD = 'Y' AND  WS-CHILD-NRIC-FD = 'N')            
+                   OR WS-NO-PARENT-CHILD-FD = 'Y'.                              
+                                                                                
+           IF WS-NRIC-FD = 'Y'                                                  
+              IF (WS-CHILD-NRIC-FD = 'N' OR SPACES) OR                          
+                   WS-NO-PARENT-CHILD-FD = 'Y'                                  
+                   MOVE 'Y' TO WS-INVALID-NRIC                                  
+              ELSE                                                              
+                  IF WS-CHILD-NRIC-FD = 'Y'                                     
+                     MOVE 'Y' TO WS-CHILD-REGN-FD                               
+                  END-IF                                                        
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 200-READ-F558 THRU 200-EXIT.                                 
+                                                                                
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      **************************************************************            
+      * TAG AS FIRST TIMER TAG AS FIRST TIME                                    
+      * IF (P-C-L) & (P<=C & C<L) OR (C<S & C>=P)                               
+      * IF (P-C-C) OR (C-C-P) & (W/O L OR S) & HA-IC=RDB-IC                     
+      *       CHECK DTE-IN OF P & C                                             
+      * IF (P<=C) & C IS SINGLE                                                 
+      * IF (C-C-P-L) CHK SPOUSE & CHILD WHEN CHILD IS CO-LESSEE                 
+      * IF C>=P & C<L                                                           
+      *--------------------------------------------------------------           
+      * WS-NRIC-FD       = RDB-NRIC FOUND IN RFS-NRIC                           
+      * WS-CHILD-NRIC-FD TAG AS 'Y' = RDB-NRIC FOUND IN RFS-NRIC AND            
+      *                                FND AS A CHILD/IN-LAW IN RDB             
+      **************************************************************            
+       710-REQUEST-HA-MATCH-RDB.                                                
+                                                                                
+           IF F558-NUM-NRIC = WS-F716-NUM-NRIC (WS-F716-SUB)                    
+                                                                                
+              MOVE 'Y' TO WS-NRIC-FD                                            
+              IF WS-F716-CDE-PARENT-CHILD(WS-F716-SUB) = 'P'                    
+                 MOVE 'N' TO WS-CHILD-NRIC-FD                                   
+              ELSE                                                              
+              IF WS-F716-CDE-PARENT-CHILD(WS-F716-SUB) = 'C' OR 'B'             
+                 PERFORM 711-CHECK-CHILD-DATE THRU 711-EXIT                     
+              ELSE                                                              
+              IF WS-F716-CDE-PARENT-CHILD(WS-F716-SUB) = 'L' OR 'S'             
+                 PERFORM 850-PRINT-REPORT THRU 850-EXIT                         
+                 WRITE P13F558B-REC FROM BP13F558-REC                           
+                 IF  WS-F716-DTE-MOVING-IN (WS-F716-SUB) (1:6) >                
+                     WS-F716-DTE-MOVING-IN (1) (1:6)                            
+                     MOVE 'Y' TO WS-CHILD-NRIC-FD                               
+                     MOVE 'Y' TO WS-EARLIEST-DTE-CHK                            
+                 ELSE                                                           
+                     MOVE 'N' TO WS-CHILD-NRIC-FD                               
+              ELSE                                                              
+              IF WS-F716-CDE-PARENT-CHILD(WS-F716-SUB) = 'Z'                    
+                     MOVE 'Y' TO WS-NO-PARENT-CHILD-FD                          
+              ELSE                                                              
+                 MOVE SPACES TO WS-CHILD-NRIC-FD                                
+           ELSE                                                                 
+               MOVE SPACES TO WS-CHILD-NRIC-FD.                                 
+                                                                                
+                                                                                
+       710-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *  PROCESS BELOW ONLY WHEN CHILD FND IN RDB AND APPLICATION               
+      *                                                                         
+       711-CHECK-CHILD-DATE.                                                    
+           IF WS-DTE-PARENT-IN = SPACES OR LOW-VALUES                           
+              GO TO 711-EXIT                                                    
+           END-IF.                                                              
+                                                                                
+      *============================================================             
+      * TAG AS FIRST TIMER                                                      
+      * IF HA IS THE LSE AND DTE < SPOUSE AND => PARENT OR                      
+      * IF HA IS THE LSE AND IS SINGLE IN RDB AND DTE => PARENT                 
+      *============================================================             
+      * IF CHILD IS MARRIED W/O SPOUSE, SAME TREATMENT AS SINGLE CHILD          
+      *  LKH NOTE DATED 10/11/2000                                              
+      *                                                                         
+           IF WS-F716-CDE-OCCUPIER (WS-F716-SUB) = '0'                          
+              IF WS-DTE-SPOUSE-IN = SPACES OR LOW-VALUES                        
+                 IF WS-F716-NUM-RDB-MARITAL-STATUS (WS-F716-SUB)                
+                    = '1' OR '2'                                                
+                           AND                                                  
+                    WS-DTE-PARENT-IN NOT >                                      
+                          WS-F716-DTE-MOVING-IN (WS-F716-SUB) (1:6)             
+                    MOVE 'Y' TO WS-CHILD-NRIC-FD                                
+                 END-IF                                                         
+              ELSE                                                              
+                 IF WS-F716-DTE-MOVING-IN (WS-F716-SUB) (1:6) <                 
+                              WS-DTE-SPOUSE-IN                                  
+                                    AND                                         
+                    WS-F716-DTE-MOVING-IN (WS-F716-SUB) (1:6) NOT <             
+                              WS-DTE-PARENT-IN                                  
+                    MOVE 'Y' TO WS-CHILD-NRIC-FD                                
+                 END-IF                                                         
+              END-IF                                                            
+           ELSE                                                                 
+                                                                                
+             IF WS-F716-NUM-NRIC (WS-F716-SUB) = WS-CHILD1-NRIC                 
+                IF WS-DTE-LAW-IN = SPACES OR LOW-VALUES                         
+                   IF WS-F716-NUM-RDB-MARITAL-STATUS(WS-F716-SUB)               
+                      = '1' OR '2'                                              
+                           AND                                                  
+                      WS-DTE-PARENT-IN NOT >                                    
+                      WS-F716-DTE-MOVING-IN (WS-F716-SUB) (1:6)                 
+                      MOVE 'Y' TO WS-CHILD-NRIC-FD                              
+                   END-IF                                                       
+                ELSE                                                            
+                   IF WS-DTE-PARENT-IN NOT > WS-DTE-CHILD-IN1 AND               
+                      WS-DTE-CHILD-IN1 < WS-DTE-LAW-IN                          
+                      MOVE 'Y' TO WS-CHILD-NRIC-FD                              
+                   END-IF                                                       
+                END-IF                                                          
+             ELSE                                                               
+                                                                                
+             IF WS-F716-NUM-NRIC (WS-F716-SUB) = WS-CHILD2-NRIC                 
+                IF WS-DTE-LAW-IN = SPACES OR LOW-VALUES                         
+                   IF WS-F716-NUM-RDB-MARITAL-STATUS(WS-F716-SUB)               
+                      = '1' OR '2'                                              
+                                  AND                                           
+                      WS-DTE-PARENT-IN NOT >                                    
+                         WS-F716-DTE-MOVING-IN (WS-F716-SUB) (1:6)              
+                      MOVE 'Y' TO WS-CHILD-NRIC-FD                              
+                   END-IF                                                       
+                ELSE                                                            
+                   IF  WS-DTE-PARENT-IN NOT > WS-DTE-CHILD-IN2 AND              
+                       WS-DTE-CHILD-IN2 < WS-DTE-LAW-IN                         
+                       MOVE 'Y' TO WS-CHILD-NRIC-FD                             
+                   END-IF                                                       
+                END-IF                                                          
+             ELSE                                                               
+                IF WS-F716-NUM-NRIC (WS-F716-SUB) = WS-CHILD3-NRIC              
+                   IF WS-DTE-LAW-IN = SPACES OR LOW-VALUES                      
+                      IF WS-F716-NUM-RDB-MARITAL-STATUS(WS-F716-SUB)            
+                          = '1' OR '2'                                          
+                                  AND                                           
+                         WS-DTE-PARENT-IN NOT >                                 
+                            WS-F716-DTE-MOVING-IN (WS-F716-SUB) (1:6)           
+                         MOVE 'Y' TO WS-CHILD-NRIC-FD                           
+                      END-IF                                                    
+                   ELSE                                                         
+                      IF  WS-DTE-PARENT-IN NOT > WS-DTE-CHILD-IN3 AND           
+                          WS-DTE-CHILD-IN3 < WS-DTE-LAW-IN                      
+                          MOVE 'Y' TO WS-CHILD-NRIC-FD                          
+                      END-IF                                                    
+                   END-IF                                                       
+                END-IF                                                          
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+                                                                                
+       711-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       800-WRITE-OUTPUT.                                                        
+      *-------------------------------------------------------------            
+      *  CHILD AS APPLICANT AND FND IN RDB WITH PARENT CHILD                    
+      *-------------------------------------------------------------            
+                                                                                
+           IF WS-INVALID-NRIC = 'N' AND WS-CHILD-REGN-FD = 'Y'                  
+               MOVE 'H' TO WS-CDE-HOUSEHOLD                                     
+               WRITE P13F558A-REC FROM WS-BP13F558-REC                          
+               ADD 1 TO WS-OUTPUT                                               
+               IF  WS-EARLIEST-DTE-CHK = 'Y'                                    
+                   PERFORM 810-WRITE-F716 THRU 810-EXIT                         
+                    VARYING WS-F716-SUB FROM 1 BY 1                             
+                      UNTIL WS-F716-SUB > WS-OCCUP-STORED                       
+               END-IF                                                           
+           ELSE                                                                 
+               WRITE P13F558A-REC FROM WS-BP13F558-REC                          
+               ADD 1 TO WS-OUTPUT                                               
+               ADD 1 TO WS-MR-BYPASS                                            
+           END-IF.                                                              
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       810-WRITE-F716.                                                          
+                                                                                
+           WRITE P13F716A-REC FROM WS-F716-REC(WS-F716-SUB).                    
+           ADD 1 TO WS-F716-OUTPUT.                                             
+                                                                                
+       810-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       850-PRINT-REPORT.                                                        
+      *-------------------------------------------------------------            
+           IF WS-CNT > 52                                                       
+              MOVE 0 TO WS-CNT                                                  
+              ADD 1 TO WS-PAGE                                                  
+              MOVE WS-PAGE TO L803-PAGENO                                       
+              MOVE FUNCTION CURRENT-DATE(1:8)   TO WS-CUR-DATE                  
+              MOVE WS-DD          TO  WS-EDITED-DD                              
+              MOVE WS-MM          TO  WS-EDITED-MM                              
+              MOVE WS-YY          TO  WS-EDITED-YY                              
+              MOVE WS-EDITED-DATE TO  L803-DATE                                 
+              WRITE BP13L803-REC FROM L803-HEAD01 AFTER PAGE                    
+              WRITE BP13L803-REC FROM L803-HEAD02 AFTER 1                       
+              WRITE BP13L803-REC FROM L803-HEAD03 AFTER 1                       
+              WRITE BP13L803-REC FROM L803-HEAD04 AFTER 3                       
+              MOVE SPACES TO BP13L803-REC                                       
+              WRITE BP13L803-REC AFTER 1.                                       
+                                                                                
+           ADD 1                                  TO WS-SERIAL.                 
+           MOVE WS-SERIAL                         TO L803-SERIAL.               
+           MOVE WS-F716-NUM-REGN(WS-F716-SUB)     TO L803-NUM-REGN.             
+           MOVE WS-F716-NUM-NRIC(WS-F716-SUB)     TO L803-NUM-NRIC.             
+           MOVE WS-F716-NUM-SCH-ACCNT(WS-F716-SUB) TO L803-SCH-ACC-NO.          
+           MOVE WS-F716-DTE-ACCEPTED(WS-F716-SUB) TO WS-CUR-DATE.               
+           MOVE WS-DD                             TO WS-EDITED-DD.              
+           MOVE WS-MM                             TO WS-EDITED-MM.              
+           MOVE WS-YY                             TO WS-EDITED-YY.              
+           MOVE WS-EDITED-DATE                    TO L803-DATE-ACCEPT.          
+           MOVE WS-F716-DTE-MOVING-IN(WS-F716-SUB) TO WS-CUR-DATE.              
+           MOVE WS-DD                             TO WS-EDITED-DD.              
+           MOVE WS-MM                             TO WS-EDITED-MM.              
+           MOVE WS-YY                             TO WS-EDITED-YY.              
+           MOVE WS-EDITED-DATE                    TO L803-DATE-MOVE-IN.         
+           MOVE WS-F716-CDE-RELATIONSHIP(WS-F716-SUB)                           
+                                        TO L803-RELATION.                       
+           WRITE BP13L803-REC FROM L803-DETAIL AFTER 1.                         
+           ADD 1 TO WS-CNT.                                                     
+                                                                                
+       850-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       999-CLOSE-FILES.                                                         
+      *-------------------------------------------------------------            
+           CLOSE BP13F558                                                       
+                 BP13F716                                                       
+                 P13F558A                                                       
+                 P13F558B                                                       
+                 P13F716A                                                       
+                 BP13L803.                                                      
+                                                                                
+           DISPLAY SPACES.                                                      
+           DISPLAY '*================ BP13C803 ================*'.              
+           DISPLAY '1.  NO. OF F558 RECORDS READ     = ' WS-F558-READ.          
+           DISPLAY '2.  NO. OF F716 RECORDS READ     = ' WS-F716-READ.          
+           DISPLAY '3.  NO. OF F558 REGNO MATCH      = ' WS-MR-REGN-CNT.        
+           DISPLAY '4.  NO. OF F558 RECORDS OUTPUT   = ' WS-OUTPUT.             
+           DISPLAY '5.  NO. OF F716 RECORDS OUTPUT   = ' WS-F716-OUTPUT.        
+           DISPLAY '6.  NO. OF F558 AS UPGRADER      = ' WS-MR-BYPASS.          
+           DISPLAY ' '.                                                         
+           DISPLAY '*= NOTE  4 = 3 - 5                          '.              
+           DISPLAY ' '.                                                         
+           DISPLAY '*==========================================*'.              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+        999-EXIT.                                                               
+            EXIT.                                                               
+

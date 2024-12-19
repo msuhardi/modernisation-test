@@ -1,0 +1,415 @@
+**********************************************************************          
+*                                                                    *          
+*       PROGRAM ID: BP13S112                                         *          
+*       AUTHOR    : CKH                                              *          
+*                                                                    *          
+*   SAS PROGRAM TO PRINT MONTHLY REPORT FOR TRANSACTION ON           *          
+*   REGN FEE, BOOKING FEE, COMMITMENT DEPOSIT FOR THE MONTH.         *          
+* BP130103 16/03/96 LJL TO CATER FOR SUB-TRANSFER.                   *          
+* BP130320 21/06/96 SGK TO CATER FOR RDE.                            *          
+* BP130418 25/08/98 RHB TO CATER FOR Y2000.                          *          
+* BP130418 28/05/01 LSB TO CATER FOR SA, TRANS-CD=29, PAYMENT=CD     *          
+* BP132398 03/10/02 MCC TO CATER FOR RDE NOTFD IN F127               *          
+* BP133850 04/05/10 JB8 TO USE RIGHT FORMAT                          *          
+* BP136098 02/03/16 KSJ TO CATER FOR 2 ROOM FLEXI                    *          
+* BP136224 03/06/16 KSJ TO CATER FOR LBS (VALID 'L') AND TO CHECK    *          
+*                       LEASE TENURE FOR 2F CASES                    *          
+* BP136869 03/06/16 LSB BYPASS TMO LOAN                              *          
+* BP137181 02/07/18 LSB BYPASS MLF LOAN FOR FSH                      *          
+**********************************************************************          
+*                                                                    *          
+*       INPUT FILES:                                                 *          
+*           1) DDNAME :BP13F127                                      *          
+*              DSNAME :BP13T.F127.REPORT                             *          
+*              ORGANISATION :SEQ                                     *          
+*              RECORD LENGTH:150                                     *          
+*           2) DDNAME :BP13K160                                      *          
+*              DSNAME :BP13T.K160.BALANCE                            *          
+*              ORGANISATION :INDEXED                                 *          
+*              MODE         :RANDOM                                  *          
+*              RECORD LENGTH:50                                      *          
+*                                                                    *          
+*       OUTPUT FILES:                                                *          
+*           1) DDNAME :BP13L112                                      *          
+*              DSNAME :SYSOUT                                        *          
+*              ORGANISATION :SEQ                                     *          
+*              RECORD LENGTH:132                                     *          
+*                                                                    *          
+**********************************************************************          
+*                                                                    *          
+*   OBJECTIVE:                                                       *          
+*                                                                    *          
+*    SAS PROGRAM TO PRINT MONTHLY STATEMWNT OF REGISTRATION,         *          
+*    BOOKING AND SOC COMMITMENT DEPOSIT CHARGES.                     *          
+*                                                                    *          
+*  1 ) THE REPORT IS SEPARATED INTO                                  *          
+*       A) PAYMENT TYPE I.E. 'REG', 'BK ' & 'SOC'                    *          
+*       B) NEW TOWNS                                                 *          
+*                                                                    *          
+**********************************************************************;         
+                                                                                
+                                                                                
+  OPTIONS  NODATE NONUMBER;                                                     
+                                                                                
+**********************************************************************          
+*                                                                    *          
+*    FORMAT PROCEDURE TO CREATE THE DR & CR SUBFIX FOR FINANIAL      *          
+*    PURPOSE .                                                       *          
+*      PICTURE DR_P LOW--0 = '000,000,009.99DR' (PREFIX='$')         *          
+*                   0-HIGH = '000,000,009.99CR' (PREFIX='$');        *          
+*      PICTURE DR_N LOW--0 = '000,000,009.99CR' (PREFIX='$')         *          
+*                   0-HIGH = '000,000,009.99DR' (PREFIX='$');        *          
+*                                                                    *          
+*                                                                    *          
+**********************************************************************;         
+                                                                                
+  PROC FORMAT;                                                                  
+                                                                                
+       PICTURE DR_P LOW-<0 = '000,000,009.99DR'                                 
+                   (FILL=' ' PREFIX='$' MULT=100.000000001)                     
+                         0 = '000,000,009.99  '                                 
+                   (FILL=' ' PREFIX='$' MULT=100.000000001)                     
+                  0.5-HIGH = '000,000,009.99CR'                                 
+                   (FILL=' ' PREFIX='$' MULT=100.000000001);                    
+       PICTURE DR_N LOW-<0 = '000,000,009.99CR'                                 
+                   (FILL=' ' PREFIX='$' MULT=100.00000000001)                   
+                         0 = '000,000,009.99  '                                 
+                   (FILL=' ' PREFIX='$' MULT=100.00000000001)                   
+                  0.5-HIGH = '000,000,009.99DR'                                 
+                   (FILL=' ' PREFIX='$' MULT=100.00000000001);                  
+                                                                                
+       PICTURE DR_X LOW-<0 = '00,000,000,009.99DR'                              
+                   (FILL=' ' PREFIX='$' MULT=100.00000000001)                   
+                         0 = '00,000,000,009.99  '                              
+                   (FILL=' ' PREFIX='$' MULT=100.00000000001)                   
+                  0.5-HIGH = '00,000,000,009.99CR'                              
+                   (FILL=' ' PREFIX='$' MULT=100.00000000001);                  
+       PICTURE DR_Y LOW-<0 = '00,000,000,009.99CR'                              
+                   (FILL=' ' PREFIX='$' MULT=100.00000000001)                   
+                         0 = '00,000,000,009.99  '                              
+                   (FILL=' ' PREFIX='$' MULT=100.00000000001)                   
+                  0.5-HIGH = '00,000,000,009.99DR'                              
+                   (FILL=' ' PREFIX='$' MULT=100.00000000001);                  
+                                                                                
+                                                                                
+  DATA BP13F127;                                                                
+    INFILE BP13F127 ;                                                           
+                                                                                
+    INPUT @1   TCODE  $CHAR2. @13  POSTDTE YYMMDD8.                             
+          @81  AMT    ZD9.2   @99  PAYTYPE $CHAR3.                              
+          @114 VALID  $CHAR1. @118 FT      $CHAR2.                              
+          @130 TENURE $CHAR2.;                                                  
+                                                                                
+    IF PAYTYPE ^= 'CON' AND PAYTYPE ^= 'LSE' AND PAYTYPE ^= 'IDP' AND           
+       PAYTYPE ^= 'TMP' AND PAYTYPE ^= 'MLF' AND PAYTYPE ^= '   ';              
+                                                                                
+    PROC SORT; BY  PAYTYPE;                                                     
+                                                                                
+     DATA _NULLS_;                                                              
+                                                                                
+     SET BP13F127 END=FINAL;                                                    
+     BY PAYTYPE;                                                                
+     OPTIONS PAGESIZE=55 LS=132 NODATE;                                         
+     FILE BP13L112   HEADER=HEADING NOTITLE;                                    
+                                                                                
+     RETAIN RECSUB 0  REFSUB 0 ADJSUB 0 TRFSUB 0 SYSSUB  0                      
+           GRECTOT 0 GREFTOT 0 GADJTOT 0 GTSFTOT 0 GSYSTOT 0;                   
+     RETAIN RECSUB1 0  REFSUB1 0 ADJSUB1 0 TRFSUB1 0 SYSSUB1  0                 
+           GRECTOT1 0 GREFTOT1 0 GADJTOT1 0 GTSFTOT1 0 GSYSTOT1 0;              
+     RETAIN RDE_TAG 'N';                                                        
+     RETAIN SUS_TAG 'N';                                                        
+                                                                                
+     IF PAYTYPE = 'RDE' THEN                                                    
+        RDE_TAG = 'Y';                                                          
+                                                                                
+     IF PAYTYPE = 'SUS' THEN                                                    
+        SUS_TAG = 'Y';                                                          
+                                                                                
+     LINK READK160;                                                             
+                                                                                
+     LENGTH STITLE  $ 3;                                                        
+     LENGTH STITLE1 $ 3;                                                        
+     LENGTH STITLE2 $ 3;                                                        
+                                                                                
+     IF PAYTYPE = 'REG' THEN                                                    
+        STITLE  = 'REG';                                                        
+        STITLE1 = ' - ';                                                        
+        STITLE2 = 'SA ';                                                        
+                                                                                
+     IF PAYTYPE = 'BK ' THEN                                                    
+        STITLE  = 'BK';                                                         
+        STITLE1 = ' - ';                                                        
+        STITLE2 = 'SA ';                                                        
+                                                                                
+     IF PAYTYPE = 'CD ' THEN                                                    
+        STITLE  = 'CD' ;                                                        
+        STITLE1 = ' - ';                                                        
+        STITLE2 = 'SA ';                                                        
+                                                                                
+     IF PAYTYPE = 'SOC' THEN                                                    
+        STITLE  = 'SOC';                                                        
+        STITLE1 = ' - ';                                                        
+        STITLE2 = 'SA ';                                                        
+                                                                                
+     IF PAYTYPE = 'SUS' THEN                                                    
+        STITLE  = 'SUS';                                                        
+        STITLE1 = ' - ';                                                        
+        STITLE2 = 'SA ';                                                        
+                                                                                
+                                                                                
+     IF PAYTYPE = 'RDE' THEN                                                    
+        STITLE  = 'RDE';                                                        
+        STITLE1 = ' - ';                                                        
+        STITLE2 = 'SA ';                                                        
+                                                                                
+       IF TCODE = '11' OR TCODE = '12' THEN                                     
+          DO;                                                                   
+            IF FT = '1A' |  FT = '2A' | VALID = 'L' |                           
+               (FT = '2F' AND TENURE > 00 AND TENURE <= 45) THEN                
+               RECSUB1+AMT;                                                     
+            ELSE                                                                
+               RECSUB+AMT;                                                      
+          END;                                                                  
+                                                                                
+       IF TCODE = '13' OR  TCODE = '15' THEN                                    
+          DO;                                                                   
+             IF FT = '1A' |  FT = '2A' | VALID = 'L' |                          
+               (FT = '2F' AND TENURE > 00 AND TENURE <= 45) THEN                
+                REFSUB1+AMT ;                                                   
+             ELSE                                                               
+                REFSUB+AMT;                                                     
+          END;                                                                  
+                                                                                
+       IF TCODE = '14' OR  TCODE = '16' THEN                                    
+          DO;                                                                   
+             IF FT = '1A' |  FT = '2A' | VALID = 'L' |                          
+               (FT = '2F' AND TENURE > 00 AND TENURE <= 45) THEN                
+                ADJSUB1+AMT ;                                                   
+             ELSE                                                               
+                ADJSUB+AMT;                                                     
+          END;                                                                  
+                                                                                
+       IF TCODE =  '29' AND PAYTYPE = 'CD ' THEN                                
+          DO;                                                                   
+             IF FT = '1A' |  FT = '2A' | VALID = 'L' |                          
+               (FT = '2F' AND TENURE > 00 AND TENURE <= 45) THEN                
+                TRFSUB1+AMT ;                                                   
+             ELSE                                                               
+                TRFSUB+AMT;                                                     
+          END;                                                                  
+                                                                                
+       IF TCODE = '17' OR  TCODE =  '19' OR                                     
+          TCODE = '25' OR  TCODE =  '26' THEN                                   
+          DO;                                                                   
+            IF FT = '1A' |  FT = '2A' | VALID = 'L' |                           
+              (FT = '2F' AND TENURE > 00 AND TENURE <= 45) THEN                 
+               TRFSUB1+AMT ;                                                    
+            ELSE                                                                
+               TRFSUB+AMT;                                                      
+          END;                                                                  
+                                                                                
+       IF TCODE = '21' OR  TCODE =  '22' THEN                                   
+          DO;                                                                   
+            IF FT = '1A' |  FT = '2A' | VALID = 'L' |                           
+              (FT = '2F' AND TENURE > 00 AND TENURE <= 45) THEN                 
+               SYSSUB1+AMT ;                                                    
+            ELSE                                                                
+               SYSSUB+AMT;                                                      
+         END;                                                                   
+                                                                                
+       IF LAST.PAYTYPE  THEN                                                    
+          DO;                                                                   
+             N+1;                                                               
+             IF PAYTYPE = 'BK ' THEN                                            
+                DO;                                                             
+                   PUT   @1 STITLE;                                             
+                   PUT   @3 STITLE1   @9  BALBF DR_P. @27 SYSSUB DR_P.          
+                         @45 RECSUB DR_P.                                       
+                         @62 REFSUB DR_P.   @78 ADJSUB DR_P.                    
+                         @96  TRFSUB DR_P.  @114 BALCF DR_X.;                   
+                   PUT   @3 STITLE2         @27 SYSSUB1 DR_P.                   
+                         @45 RECSUB1 DR_P.                                      
+                         @62 REFSUB1 DR_P. @78 ADJSUB1 DR_P.                    
+                         @96  TRFSUB1 DR_P.;                                    
+               END;                                                             
+                                                                                
+            IF PAYTYPE = 'CD ' THEN                                             
+               DO;                                                              
+                   PUT   @1 STITLE;                                             
+                   PUT   @3 STITLE1   @6  BALBF DR_X. @27 SYSSUB DR_P.          
+                         @45 RECSUB DR_P.                                       
+                         @62 REFSUB DR_P. @78 ADJSUB DR_P.                      
+                         @96  TRFSUB DR_P.                                      
+                         @114 BALCF DR_X.;                                      
+                   PUT   @3 STITLE2       @27 SYSSUB1 DR_P.                     
+                         @45 RECSUB1 DR_P.                                      
+                         @62 REFSUB1 DR_P. @78 ADJSUB1 DR_P.                    
+                         @96 TRFSUB1 DR_P.;                                     
+               END;                                                             
+            IF PAYTYPE = 'SOC' THEN                                             
+               DO;                                                              
+                  PUT   @1 STITLE;                                              
+                  PUT   @3 STITLE1   @9  BALBF DR_N. @27 SYSSUB DR_N.           
+                        @45 RECSUB DR_P.                                        
+                        @62 REFSUB DR_P. @78 ADJSUB DR_P.                       
+                        @96  TRFSUB DR_P.                                       
+                        @114 BALCF DR_Y.;                                       
+                  PUT   @3 STITLE2         @27 SYSSUB1 DR_N.                    
+                        @45 RECSUB1 DR_P.                                       
+                        @62 REFSUB1 DR_P. @78 ADJSUB1 DR_P.                     
+                        @96  TRFSUB1 DR_P.;                                     
+               END;                                                             
+            IF PAYTYPE = 'SUS' THEN                                             
+               DO;                                                              
+                  PUT   @1 STITLE;                                              
+                  PUT   @3 STITLE1    @6  BALBF DR_X. @27 SYSSUB DR_P.          
+                        @45 RECSUB DR_P.                                        
+                        @62 REFSUB DR_P. @78 ADJSUB DR_P.                       
+                        @96  TRFSUB DR_P.                                       
+                        @114 BALCF DR_X.;                                       
+                  PUT   @3 STITLE2       @27 SYSSUB1 DR_P.                      
+                        @45 RECSUB1 DR_P.                                       
+                        @62 REFSUB1 DR_P. @78 ADJSUB1 DR_P.                     
+                        @96  TRFSUB1 DR_P.;                                     
+               END;                                                             
+                                                                                
+            IF PAYTYPE = 'RDE' THEN                                             
+               DO;                                                              
+                  PUT   @1 STITLE;                                              
+                  PUT   @3 STITLE1    @6  BALBF DR_X. @27 SYSSUB DR_P.          
+                        @45 RECSUB DR_P.                                        
+                        @62 REFSUB DR_P. @78 ADJSUB DR_P.                       
+                        @96  TRFSUB DR_P.                                       
+                        @114 BALCF DR_X.;                                       
+                  PUT   @3 STITLE2        @27 SYSSUB1 DR_P.                     
+                        @45 RECSUB1 DR_P.                                       
+                        @62 REFSUB1 DR_P. @78 ADJSUB1 DR_P.                     
+                        @96  TRFSUB1 DR_P.;                                     
+               END;                                                             
+                                                                                
+            IF PAYTYPE = 'SOC' THEN                                             
+               DO;                                                              
+                 GSYSTOT =  GSYSTOT - SYSSUB;                                   
+                 GBALBF  =  GBALBF - BALBF;                                     
+                 GBALCF  =  GBALCF - BALCF;                                     
+                 GSYSTOT =  GSYSTOT - SYSSUB1;                                  
+               END;                                                             
+            ELSE                                                                
+               DO;                                                              
+                 GBALBF  + BALBF;                                               
+                 GBALCF  + BALCF;                                               
+                 GSYSTOT + SYSSUB;                                              
+                 GSYSTOT + SYSSUB1;                                             
+               END;                                                             
+                                                                                
+           GRECTOT + RECSUB;                                                    
+           GREFTOT + REFSUB;                                                    
+           GADJTOT + ADJSUB;                                                    
+           GTRFTOT + TRFSUB;                                                    
+           GRECTOT + RECSUB1;                                                   
+           GREFTOT + REFSUB1;                                                   
+           GADJTOT + ADJSUB1;                                                   
+           GTRFTOT + TRFSUB1;                                                   
+                                                                                
+           RECSUB=0;                                                            
+           REFSUB=0;                                                            
+           ADJSUB=0;                                                            
+           TRFSUB=0;                                                            
+           SYSSUB=0;                                                            
+           RECSUB1=0;                                                           
+           REFSUB1=0;                                                           
+           ADJSUB1=0;                                                           
+           TRFSUB1=0;                                                           
+           SYSSUB1=0;                                                           
+         END ;                                                                  
+                                                                                
+       IF FINAL THEN DO;                                                        
+            IF RDE_TAG = 'N' THEN                                               
+               DO;                                                              
+                  PAYTYPE = 'RDE';                                              
+                  LINK READK160;                                                
+                  PUT   @1 'RDE';                                               
+                  PUT   @3 ' - '      @6  BALBF DR_X. @27 SYSSUB DR_P.          
+                        @45 RECSUB DR_P.                                        
+                        @62 REFSUB DR_P. @78 ADJSUB DR_P.                       
+                        @96  TRFSUB DR_P.                                       
+                        @114 BALCF DR_X.;                                       
+                  PUT   @3 'SA '          @27 SYSSUB1 DR_P.                     
+                        @45 RECSUB1 DR_P.                                       
+                        @62 REFSUB1 DR_P. @78 ADJSUB1 DR_P.                     
+                        @96  TRFSUB1 DR_P.;                                     
+                 GBALBF  + BALBF;                                               
+                 GBALCF  + BALCF;                                               
+               END;                                                             
+                                                                                
+            IF SUS_TAG = 'N' THEN                                               
+               DO;                                                              
+                  PAYTYPE = 'SUS';                                              
+                  LINK READK160;                                                
+                  PUT   @1 'SUS';                                               
+                  PUT   @3 ' - '      @6  BALBF DR_X. @27 SYSSUB DR_P.          
+                        @45 RECSUB DR_P.                                        
+                        @62 REFSUB DR_P. @78 ADJSUB DR_P.                       
+                        @96  TRFSUB DR_P.                                       
+                        @114 BALCF DR_X.;                                       
+                  PUT   @3 'SA '          @27 SYSSUB1 DR_P.                     
+                        @45 RECSUB1 DR_P.                                       
+                        @62 REFSUB1 DR_P. @78 ADJSUB1 DR_P.                     
+                        @96  TRFSUB1 DR_P.;                                     
+                 GBALBF  + BALBF;                                               
+                 GBALCF  + BALCF;                                               
+               END;                                                             
+                                                                                
+           PUT //@1  'TOT'      @6  GBALBF  DR_X. @27 GSYSTOT DR_P.             
+                 @45 GRECTOT DR_P.                                              
+                 @62  GREFTOT DR_P. @78 GADJTOT DR_P. @96 GTRFTOT DR_P.         
+                 @114 GBALCF  DR_X. ;                                           
+       END;                                                                     
+                                                                                
+       RETURN;                                                                  
+                                                                                
+  HEADING:                                                                      
+                                                                                
+     PAGE + 1;                                                                  
+                                                                                
+     CURRENT =DATE();                                                           
+     YR=YEAR(POSTDTE);                                                          
+     PUT @2 'BP13L112' @15 'HDBCAT 3'                                           
+         @46 'S Y S T E M   O F   C O M M I T M E N T'                          
+         @98 'DATE :' @105 CURRENT DDMMYY10.                                    
+         @119 'PAGE :' @126 PAGE 3./;                                           
+                                                                                
+     PUT @37 'BOOKING FEES, CD,SOC DEBTOR & SUB-TRANSFER STATEMENT FOR '        
+         POSTDTE MONYY7.//;                                                     
+                                                                                
+     PUT @1  'TRANS'                                                            
+         @29 'SYSTEM'                                                           
+         @81 'ADJUSTMENTS/';                                                    
+     PUT @1  'TYPE'                                                             
+         @12 'BALANCE B/F'                                                      
+         @29  'TRANSACTIONS'                                                    
+         @51  'RECEIPTS'                                                        
+         @69  'REFUNDS'                                                         
+         @82  'FORFEITURE'                                                      
+         @102 'TRANSFER'                                                        
+         @120 'BALANCE C/F';                                                    
+     RETURN;                                                                    
+                                                                                
+  READK160:                                                                     
+    LENGTH K160KEY $3;                                                          
+    K160KEY = PAYTYPE;                                                          
+                                                                                
+    INFILE BP13K160 VSAM KEY = K160KEY ;                                        
+    INPUT @;                                                                    
+    RC = _IORC_;                                                                
+    IF RC = 0 OR RC = 8 THEN                                                    
+       DO;                                                                      
+        _ERROR_=0;                                                              
+        INPUT @4 BALBF ZD12.2 @28 BALCF ZD12.2;                                 
+       END;                                                                     
+    ELSE                                                                        
+        _ERROR_ = 0;                                                            
+                                                                                
+    RETURN;                                                                     
+                                                                                
+

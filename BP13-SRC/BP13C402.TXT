@@ -1,0 +1,1113 @@
+      ***************************                                               
+       IDENTIFICATION DIVISION.                                                 
+      ***************************                                               
+       PROGRAM-ID.    BP13C402.                                                 
+       AUTHOR.        TMK.                                                      
+       DATE-WRITTEN.  26/10/89.                                                 
+                                                                                
+      *************************************************************             
+      *    SYSTEM NAME :   SYSTEM OF COMMENCEMENT                 *             
+      *    SYSTEM ID   :   BP13                                   *             
+      *                                                           *             
+      *    OBJECTIVE   :                                          *             
+      *        1.  THIS PROGRAM WILL VALIDATE DAILY SALES         *             
+      *            ORDER RAISED.                                  *             
+      *            TYPE 10      - SOC FLAT                        *             
+      *                 01      - ADV ALLOC FLA                   *             
+      *                 02      - ST FLAT                         *             
+      *                 03      - RP FLAT                         *             
+      *                 5B & 5C - HUDC FLAT                       *             
+      *            IF KEY NOT ISSUE OR ANY PAYEMNTS ARE           *             
+      *            OUTSTANDING, OUTPUT THE RECORD TO THE          *             
+      *            KIV FILE ELSE OUTPUT TO ACCUMULATED SO FILE.   *             
+      *                                                           *             
+      *    LISTING     :                                          *             
+      *       1. ERROR LIST - (BP13L402)                          *             
+      *                                                           *             
+      *    SUB-PROGRAM :                                          *             
+      *       1. BP13C913   - TO GET FLAT INFO FROM PIDB TABLE    *             
+      *                                                           *             
+      *  CHG-REQ   BY     DATE    DESCRIPTION                     *             
+      *  -------   ---   ------   ------------------------------  *             
+      *  SOCPH6    LJL   190392   TO CATER FOR SA-TP CASES WHERE  *             
+      *                           BOOKING FEES IS NOT = ZEROS.    *             
+      *  C930317   LMS   930423   TO CHANGE B01K003 TO AB03K030   *             
+      *                           DUE TO SMS PHASE 3B.            *             
+      *  I920718   LMS   930423   TO CONVERT TO COBOL II.         *             
+      *  SOC-PH8   JEP   930803   RENAME P10K020 TO BP13K800      *             
+      *                           CALL SUB-PROGRAM BP13C904       *             
+      *  C930993   LJL   940213   TO CATER FOR GST.               *             
+      *  BP130037  LJL   9510013  TO CATER FOR AA CASES AND TREAT *             
+      *                           THEM AS SA-TP CASES.            *             
+      *  BP130418  RHB   980608   Y2K                             *             
+      *  BP130883  RAS   000807   TO CHANGE BP13C904 TO BP13C913  *             
+      *  BP130998  CLT   010401   TO CATER FOR SALES TYPE 13 (SA) *             
+      *  BP132093 MALC   280102   TO CATER FOR INSTANT BOOKING,CR *             
+      *                           ASSESMENT AND TP ON SAME DAY    *             
+      *  BP132190  MCC   010802   TO KIV TRANSACTION WHEN BK-PD=0 *             
+      *                           OR(BK-PD>0 BUT BK-REQ NOT= BK-PD)             
+      *  BP132341  CLT   120503   ENHANCE FOR BANK LOAN CASE      *             
+      *  BP132341  MCC   200603   KIV IF SOL BILL PAID > ZEROES   *             
+      *  BP132457  MJ16  111203   REMOVE CHECKING FOR BKPD        *             
+      *  BP132485  MJ16  030304   TO INCLUDE CHECKING OF SERS TABLE             
+      *                           TO INCLUDE 3 NEW ALLOC SCHEMES IN             
+      *                           TABLE.('SFO','SRO','SJO')       *             
+      *  BP132717  JF4   080705   CATER FOR CD CASH REFUND        *             
+      *  BP133773  CCC5  09122009 SET DUXTON KEY CEREMONY CASES TO*             
+      *                           KIV BEFORE 14/09/2009.          *             
+      *  BP133773  CCC5  09122009 REVERT DUXTON CASES FROM        *             
+      *                           KIV BEFORE 14/09/2009.          *             
+      *  BP133926  ESA1  25062010 ADD READING OF BP13K421 TO DROP *             
+      *                           JASMINE CASES                   *             
+      *  BP133926  ESA1  20072010 TO CHECK FOR 20100721 KEY ISSUE *             
+      *                           DATE FOR GOLDEN JASMINE         *             
+      *  BP133923  ESA1  20100728 TO UPDATE CHECKING FOR CLOSING  *             
+      *                           CEREMONY                        *             
+      *  BP136098  LJL1  20160128 TO CATER FOR SALES TYPE 18      *             
+      *                           (2 ROOM FLEXI)                  *             
+      *  BP136402  KSJ3  20160825 TO CATER FOR K800-AMT-CD-SERCNTR*             
+      *                           -NEW                            *             
+      *  BP136757  KSJ3  20170822 TO CATER FOR AMT-TOT-SERCNTR    *             
+      *  BP137385  DN8   20180806 TO MATCH LOAN SCHEME TO A AND   *             
+      *                           LOAN POLICY CODE AND ELIG POLICY*             
+      *                           CODE TO "AT" FOR CONTRA TYPE =TM*             
+      *                           AND FLAG OUT THE UNMATCHED CASES*             
+      *                           TO THE REPORT BP13L402 TO FOLLOW*             
+      *  BP137866  ZS13  20190730 CATER FOR PT ELIG LOAN POLICY   *             
+      *  BP138642  ZDD1  20210319 CATER FOR REGN 3258530B         *             
+      *  BP139499  ZDD1  20230224 CATER FOR REGN 4631534J         *             
+      *************************************************************             
+                                                                                
+      ************************                                                  
+       ENVIRONMENT DIVISION.                                                    
+      ************************                                                  
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+      ************************                                                  
+       INPUT-OUTPUT SECTION.                                                    
+      ************************                                                  
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F400   ASSIGN        TO  BP13F400.                        
+                                                                                
+           SELECT BP13K800   ASSIGN        TO  BP13K800                         
+                             ACCESS MODE   IS  DYNAMIC                          
+                             ORGANIZATION  IS  INDEXED                          
+                             RECORD KEY    IS  K800-NUM-REGN                    
+                             FILE STATUS   IS  BP13K800-STATUS.                 
+                                                                                
+           SELECT AB03K030   ASSIGN        TO  AB03K030                         
+                             ACCESS MODE   IS  DYNAMIC                          
+                             ORGANIZATION  IS  INDEXED                          
+                             RECORD KEY    IS  K030-NUM-HDB-REF                 
+                             FILE STATUS   IS  AB03K030-STATUS.                 
+                                                                                
+           SELECT BM06K110   ASSIGN        TO BM06K110                          
+                             ACCESS MODE   IS RANDOM                            
+                             ORGANIZATION  IS INDEXED                           
+                             RECORD KEY    IS K110-KEY-FLD                      
+                             FILE STATUS   IS BM06K110-STATUS.                  
+                                                                                
+           SELECT BP13K421   ASSIGN        TO BP13K420                          
+                             ACCESS MODE   IS RANDOM                            
+                             ORGANIZATION  IS INDEXED                           
+                             RECORD KEY    IS K421-KEY-FLD                      
+                             ALTERNATE KEY IS K421-NUM-REGN                     
+                             FILE STATUS   IS BP13K421-STATUS.                  
+                                                                                
+           SELECT BP13F405 ASSIGN TO BP13F405.                                  
+                                                                                
+           SELECT BP13F410 ASSIGN TO BP13F410.                                  
+                                                                                
+           SELECT BP13L402 ASSIGN TO BP13L402.                                  
+                                                                                
+                                                                                
+      *****************                                                         
+       DATA DIVISION.                                                           
+      *****************                                                         
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F400                                                            
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            RECORDING MODE  IS   F.                                             
+       COPY BP13F400.                                                           
+                                                                                
+       FD   BP13K800                                                            
+            RECORD CONTAINS 2000 CHARACTERS.                                    
+       COPY BP13K800.                                                           
+                                                                                
+       FD   BM06K110                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BM06K110.                                                           
+                                                                                
+       FD   BP13K421                                                            
+            RECORD CONTAINS 450 CHARACTERS.                                     
+       COPY BP13K421.                                                           
+                                                                                
+       FD   AB03K030                                                            
+            RECORD CONTAINS 800  CHARACTERS.                                    
+       COPY AB03K030.                                                           
+                                                                                
+       FD   BP13F405                                                            
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            RECORDING MODE  IS   F.                                             
+       01   BP13F405-REC              PIC X(2000).                              
+                                                                                
+       FD   BP13F410                                                            
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            RECORDING MODE  IS   F.                                             
+       COPY BP13F410.                                                           
+                                                                                
+       FD   BP13L402                                                            
+            RECORD CONTAINS 132  CHARACTERS                                     
+            RECORDING MODE  IS   F.                                             
+       01   PRINT-REC                 PIC X(132).                               
+                                                                                
+                                                                                
+      **************************                                                
+       WORKING-STORAGE SECTION.                                                 
+      **************************                                                
+       COPY SERSCH.                                                             
+                                                                                
+       01 WS-SERS-VARIABLES.                                                    
+          05 WS-ALLOC-SCH                     PIC X(03).                        
+          05 WS-SCH-FND                       PIC X(01).                        
+                                                                                
+       01  FILE-STATUS.                                                         
+           03  BP13K800-STATUS        PIC 9(2)    VALUE 00.                     
+               88  BP13K800-REC-FOUND             VALUE 00.                     
+               88  BP13K800-REC-NOTFND            VALUE 23.                     
+           03  AB03K030-STATUS        PIC 9(2)    VALUE 00.                     
+               88  AB03K030-REC-FOUND             VALUE 00.                     
+               88  AB03K030-REC-NOTFND            VALUE 23.                     
+           03  BM06K110-STATUS        PIC 9(2)    VALUE 00.                     
+               88  BM06K110-REC-FOUND             VALUE 00.                     
+               88  BM06K110-REC-NOTFND            VALUE 23.                     
+           03  BP13K421-STATUS        PIC 9(2)    VALUE 00.                     
+               88  BP13K421-REC-FOUND             VALUE 00.                     
+               88  BP13K421-REC-NOTFND            VALUE 23.                     
+               88  BP13K421-ENDFILE               VALUE 10.                     
+                                                                                
+       01  WS-FLAGS.                                                            
+           03  EOF-F400-IND           PIC X       VALUE SPACE.                  
+               88  EOF-F400                       VALUE 'Y'.                    
+           03  EOF-K421-IND           PIC X       VALUE SPACE.                  
+               88  EOF-K421                       VALUE 'Y'.                    
+                                                                                
+       01  WS-ACCUMULATORS.                                                     
+           03  WS-NUM-F400-READ       PIC 9(4)     VALUE 0.                     
+           03  WS-NUM-F410-WRITE      PIC 9(4)     VALUE 0.                     
+           03  WS-NUM-F405-WRITE      PIC 9(4)     VALUE 0.                     
+           03  WS-TOT-LOAN-AMT        PIC S9(8)V99 COMP-3 VALUE +0.             
+           03  WS-AMT-CD-TOT          PIC S9(8)V99 VALUE 0.                     
+           03  WS-AMT-CD-TRF          PIC S9(8)V99 VALUE 0.                     
+           03  WS-UPD-CD-CASH         PIC S9(8)V99 VALUE 0.                     
+           03  WS-UPD-SOC-CASH        PIC S9(8)V99 VALUE 0.                     
+                                                                                
+       01  WS-COUNTERS.                                                         
+           03  WS-PAGE-CNT            PIC 9(4)    VALUE 0.                      
+           03  WS-SEQ-NO              PIC 9(4)    VALUE 0.                      
+           03  WS-LINE-CNT            PIC 9(2)    VALUE 60.                     
+                                                                                
+       01  WS-CURRENT-DATE.                                                     
+           05  WS-CURRENT-CC          PIC 99     VALUE 00.                      
+           05  WS-CURRENT-YY          PIC 99     VALUE 00.                      
+           05  WS-CURRENT-MM          PIC 99     VALUE 00.                      
+           05  WS-CURRENT-DD          PIC 99     VALUE 00.                      
+                                                                                
+       01  WS-EDITED-DATE.                                                      
+           05  WS-EDITED-DD           PIC 99     VALUE 00.                      
+           05  FILLER                 PIC X      VALUE '/'.                     
+           05  WS-EDITED-MM           PIC 99     VALUE 00.                      
+           05  FILLER                 PIC X      VALUE '/'.                     
+           05  WS-EDITED-CC           PIC 99     VALUE 00.                      
+           05  WS-EDITED-YY           PIC 99     VALUE 00.                      
+                                                                                
+       01  WS-X8-DATE.                                                          
+           05  WS-X8-YY1              PIC X(2)   VALUE SPACES.                  
+           05  WS-X8-YY2              PIC X(2)   VALUE SPACES.                  
+           05  WS-X8-MM               PIC X(2)   VALUE SPACES.                  
+           05  WS-X8-DD               PIC X(2)   VALUE SPACES.                  
+                                                                                
+       01  WS-MISC.                                                             
+           05  WS-ERROR-TAG           PIC X(4)   VALUE SPACES.                  
+           05  WS-PREV-SALES-TYPE     PIC X(2)   VALUE SPACES.                  
+           05  WS-HSE-SUB.                                                      
+               10  WS-HSE-SUB1        PIC X(1)   VALUE SPACE.                   
+               10  WS-HSE-SUB2        PIC X(2)   VALUE SPACES.                  
+           05  WS-SQL-CODE            PIC 9(4)   VALUE 0.                       
+           05  WS-K421-FOUND          PIC X(1)   VALUE 'N'.                     
+           05  WS-AMT-CD-SERCNTR      PIC S9(7)V99 VALUE ZEROES.                
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+      *        ERROR MESSAGE TABLE FOR ERROR TAG                       *        
+      *----------------------------------------------------------------*        
+       01  WS-ERROR-MESSAGE.                                                    
+           05  FILLER                 PIC X(34)  VALUE                          
+              'SOCE SOC TOTAL PAID NOT BALANCED'.                               
+           05  FILLER                 PIC X(34)  VALUE                          
+              'SOCC SOC DEBTOR CASH NOT BALANCED'.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'SOC1 SOC DEBTOR APPLT 1 NOT BAL. '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'SOC2 SOC DEBTOR APPLT 2 NOT BAL. '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'SOC3 SOC DEBTOR APPLT 3 NOT BAL. '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'SOC4 SOC DEBTOR APPLT 4 NOT BAL. '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'SOCS SOC DEBTOR SERCNTR NOT BAL. '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'NREC REC NOT FOUND IN SOC MASTER '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'KEYE KEY NOT ISSUED              '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'CPF1 APPLT 1 CPF NO NOT UPDATED  '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'CPF2 APPLT 2 CPF NO NOT UPDATED  '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'RFFS RFF STATUS IS CANCELLED     '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+               'SMSE RECORD NOT FOUND IN SMS FILE'.                             
+           05  FILLER                 PIC X(34)  VALUE                          
+              'TAGE ALLOCATION TAG NOT BLANK    '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'BKPD BKING FEE NOT USED OR REFUND'.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'IC-1 NRIC1 NOT EQUAL'.                                           
+           05  FILLER                 PIC X(34)  VALUE                          
+              'IC-2 NRIC2 NOT EQUAL'.                                           
+           05  FILLER                 PIC X(34)  VALUE                          
+              'BKZR BKING FEE NOT POSTED YET    '.                              
+           05  FILLER                 PIC X(34)  VALUE                          
+              'SOLE SOLBILL NOT USED OR REFUNDED '.                             
+           05  FILLER                 PIC X(34)  VALUE                          
+              'KEYD KEY ISSUE DATE NOT MATCHED   '.                             
+           05  FILLER                 PIC X(34)  VALUE                          
+              'CONE LN SHCM-A & LN PLCY-AT FOR TM'.                             
+       01  WS-ERR-MSG-TABLE REDEFINES WS-ERROR-MESSAGE.                         
+           05  WS-ERR-MSG      OCCURS 21 TIMES INDEXED BY ERR-IDX.              
+               10  WS-ERR-TAG         PIC X(4).                                 
+               10  WS-ERR-DESC        PIC X(30).                                
+                                                                                
+      *----------------------------------------------------------------*        
+      *        LINKAGE FOR SUB-PROGRAM    BP13C913                     *        
+      *----------------------------------------------------------------*        
+       01 WS-BP13C913              PIC X(08)  VALUE 'BP13C913'.                 
+                                                                                
+       01  WS-LINK-REC.                                                         
+           05  WS-LINK-NUM-SCH-ACC.                                             
+               10  WS-LINK-NUM-SCH    PIC X(4).                                 
+               10  WS-LINK-NUM-SCH    PIC X(5).                                 
+                                                                                
+       COPY P13COMM8.                                                           
+                                                                                
+      *----------------------------------------------------------------*        
+      *        PRINT HEADING LINES LAY-OUT FOR ERROR LIST              *        
+      *----------------------------------------------------------------*        
+       01  L402-HDG-1.                                                          
+           05  FILLER                 PIC X(8)   VALUE 'BP13L402'.              
+           05  FILLER                 PIC X(4)   VALUE SPACES.                  
+           05  FILLER                 PIC X(27)  VALUE 'HDB3'.                  
+           05  FILLER                 PIC X(61)  VALUE                          
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER                 PIC X(7)   VALUE 'DATE : '.               
+           05  L402-HD1-DATE          PIC X(10)  VALUE SPACES.                  
+           05  FILLER                 PIC X(3)   VALUE SPACES.                  
+           05  FILLER                 PIC X(7)   VALUE 'PAGE : '.               
+           05  L402-HD1-PAGE          PIC ZZZ9.                                 
+                                                                                
+       01  L402-HDG-2A.                                                         
+           05  FILLER                 PIC X(50)  VALUE SPACES.                  
+           05  FILLER                 PIC X(28)  VALUE                          
+               'AGREEMENT TEAM (SALES)'.                                        
+                                                                                
+       01  L402-HDG-2B.                                                         
+           05  FILLER                 PIC X(27)  VALUE SPACES.                  
+           05  FILLER                 PIC X(45)  VALUE                          
+              'ERROR LIST OF SALES ORDER RAISED FOR ADVANCE'.                   
+           05  FILLER                 PIC X(29)  VALUE                          
+              'ALLOCATION FLAT - SALES TYPE '.                                  
+           05  L402-HD2-SALES-TYPE    PIC X(3)   VALUE SPACES.                  
+                                                                                
+       01  L402-HDG-3.                                                          
+           05  FILLER                 PIC X(17)  VALUE                          
+               'S\N   SCH-ACC-NO'.                                              
+           05  FILLER                 PIC X(5)   VALUE SPACES.                  
+           05  FILLER                 PIC X(20)  VALUE 'APPLICANT (S)'.         
+           05  FILLER                 PIC X(5)   VALUE SPACES.                  
+           05  FILLER                 PIC X(23)  VALUE 'FLAT ADDRESS'.          
+           05  FILLER                 PIC X(34)  VALUE                          
+               'S.O. DATE   PREMIUM   LOAN AMOUNT'.                             
+           05  FILLER                 PIC X(30)  VALUE 'ERROR MESSAGE'.         
+                                                                                
+       01  L402-HDG-4.                                                          
+           05  FILLER                 PIC X(6)   VALUE SPACES.                  
+           05  FILLER                 PIC X(8)   VALUE 'REGN NO'.               
+           05  FILLER                 PIC X(11)  VALUE SPACES.                  
+           05  FILLER                 PIC X(22)  VALUE 'NAME'.                  
+           05  FILLER                 PIC X(19)  VALUE SPACES.                  
+           05  FILLER                 PIC X(38)  VALUE                          
+               'KEY ISSUE DATE   (%)        ($)'.                               
+                                                                                
+       01  L402-DTL-1.                                                          
+           05  L402-SEQ-NO            PIC ZZZ9.                                 
+           05  FILLER                 PIC X(2)   VALUE SPACES.                  
+           05  L402-SCH-ACC-NO        PIC X(14)  VALUE SPACES.                  
+           05  FILLER                 PIC X(2)   VALUE SPACES.                  
+           05  L402-NAME1             PIC X(22)  VALUE SPACES.                  
+           05  FILLER                 PIC X(2)   VALUE SPACES.                  
+           05  L402-BLK-DESC          PIC X(4)   VALUE SPACES.                  
+           05  L402-BLK-NO            PIC X(5)   VALUE SPACES.                  
+           05  FILLER                 PIC X(1)   VALUE SPACE.                   
+           05  L402-HEX               PIC X(1)   VALUE '#'.                     
+           05  L402-HOUSE-NO          PIC X(7)   VALUE SPACES.                  
+           05  FILLER                 PIC X(6)   VALUE SPACES.                  
+           05  L402-SO-DATE           PIC X(10)  VALUE SPACES.                  
+           05  FILLER                 PIC X(4)   VALUE SPACES.                  
+           05  L402-PREMIUM-RATE      PIC X(2)   VALUE SPACES.                  
+           05  FILLER                 PIC X(3)   VALUE SPACES.                  
+           05  L402-LOAN-AMT          PIC Z,ZZZ,ZZ9.99-.                        
+           05  FILLER                 PIC X(1)   VALUE SPACE.                   
+           05  L402-ERROR-DESC        PIC X(30)  VALUE SPACES.                  
+                                                                                
+       01  L402-DTL-2.                                                          
+           05  FILLER                 PIC X(6)   VALUE SPACES.                  
+           05  L402-REGN-NO           PIC X(8)   VALUE SPACES.                  
+           05  FILLER                 PIC X(8)   VALUE SPACES.                  
+           05  L402-NAME2             PIC X(22)  VALUE SPACES.                  
+           05  FILLER                 PIC X(2)   VALUE SPACES.                  
+           05  L402-STREET            PIC X(20)  VALUE SPACES.                  
+           05  FILLER                 PIC X(4)   VALUE SPACES.                  
+           05  L402-DTE-KEY-ISSUE     PIC X(10)  VALUE SPACES.                  
+                                                                                
+       01  L402-TOTAL-LINE-DASH.                                                
+           05  FILLER                 PIC X(132) VALUE ALL '-'.                 
+                                                                                
+       01  L402-TOTAL-LINE.                                                     
+           05  FILLER                 PIC X(88)  VALUE 'T O T A L : '.          
+           05  L402-TOTAL-AMT         PIC ZZ,ZZZ,ZZ9.99.                        
+                                                                                
+                                                                                
+      **********************                                                    
+       PROCEDURE DIVISION.                                                      
+      **********************                                                    
+                                                                                
+      ******************************************************************        
+      *    MAIN LOGIC PROCESS SECTION                                  *        
+      ******************************************************************        
+       000-MAIN-ROUTINE.                                                        
+                                                                                
+           PERFORM  100-OPEN-ROUTINE        THRU  100-EXIT.                     
+           PERFORM  200-READ-BP13F400       THRU  200-EXIT.                     
+           PERFORM  300-PROCESS-INPUT-DATA  THRU  300-EXIT                      
+                        UNTIL EOF-F400.                                         
+           PERFORM  800-PRINT-TOTAL         THRU  800-EXIT.                     
+           PERFORM  900-CLOSE-ROUTINE       THRU  900-EXIT.                     
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    OPEN FILES SECTION                                          *        
+      ******************************************************************        
+       100-OPEN-ROUTINE.                                                        
+           OPEN INPUT  BP13F400                                                 
+                       BP13K800                                                 
+                       AB03K030                                                 
+                       BM06K110                                                 
+                       BP13K421                                                 
+                OUTPUT BP13F405                                                 
+                       BP13F410                                                 
+                       BP13L402.                                                
+                                                                                
+           IF BP13K800-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'OPENING ERROR, BP13K800-STATUS ' BP13K800-STATUS         
+              MOVE BP13K800-STATUS TO RETURN-CODE                               
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+           IF BM06K110-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'OPENING ERROR, BM06K110-STATUS ' BM06K110-STATUS         
+              MOVE BM06K110-STATUS TO RETURN-CODE                               
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+           IF BP13K421-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'OPENING ERROR, BP13K421-STATUS ' BP13K421-STATUS         
+              MOVE BP13K421-STATUS TO RETURN-CODE                               
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+           IF AB03K030-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'OPENING ERROR, AB03K030-STATUS ' AB03K030-STATUS         
+              MOVE AB03K030-STATUS TO RETURN-CODE                               
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    CHECK SERS TABLE                                                     
+      ******************************************************************        
+       110-CHK-SERS.                                                            
+           IF WS-ALLOC-SCH  NOT =  LOW-VALUES AND SPACES                        
+               SET WS-SERS-PTR  TO 1                                            
+               SEARCH WS-SERS-SCH                                               
+                   AT END                                                       
+                   MOVE 'N' TO WS-SCH-FND                                       
+                   WHEN WS-SERS-SCHEME(WS-SERS-PTR) = WS-ALLOC-SCH              
+                   MOVE 'Y' TO WS-SCH-FND                                       
+               END-SEARCH                                                       
+           ELSE                                                                 
+               MOVE 'N' TO WS-SCH-FND                                           
+           END-IF.                                                              
+                                                                                
+       110-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    READ SEQUENTIAL FILE BP13F400 AT END SET EOF-IND TO 'Y'     *        
+      ******************************************************************        
+       200-READ-BP13F400.                                                       
+           READ BP13F400 AT END                                                 
+                         MOVE 'Y' TO EOF-F400-IND                               
+                         GO TO 200-EXIT.                                        
+                                                                                
+           ADD 1    TO WS-NUM-F400-READ.                                        
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    CHECK KEY ISSUE DATE FOR ALL SALES TYPE                     *        
+      *    IF ERROR ENCOUNTERED                                        *        
+      *             OUTPUT RECORD AND PRINT                            *        
+      ******************************************************************        
+       300-PROCESS-INPUT-DATA.                                                  
+                                                                                
+           IF  WS-NUM-F400-READ = 1                                             
+               MOVE F400-CDE-SALES-TYPE TO WS-PREV-SALES-TYPE.                  
+                                                                                
+           MOVE SPACES                  TO WS-ERROR-TAG.                        
+                                                                                
+           IF F400-AMT-SER-CONTRA-ICP NOT NUMERIC                               
+              MOVE ZEROES        TO   F400-AMT-SER-CONTRA-ICP                   
+           END-IF.                                                              
+                                                                                
+           IF F400-AMT-SER-CONTRA-STAMP-FEES NOT NUMERIC                        
+              MOVE ZEROES        TO   F400-AMT-SER-CONTRA-STAMP-FEES            
+           END-IF.                                                              
+                                                                                
+           IF F400-AMT-SER-CONTRA-CONVY-FEES NOT NUMERIC                        
+              MOVE ZEROES        TO   F400-AMT-SER-CONTRA-CONVY-FEES            
+           END-IF.                                                              
+                                                                                
+           COMPUTE F400-AMT-TOT-SERCNTR                                         
+                                    = F400-AMT-SER-CONTRA-ICP                   
+                                    + F400-AMT-SER-CONTRA-STAMP-FEES            
+                                    + F400-AMT-SER-CONTRA-CONVY-FEES.           
+                                                                                
+           IF  F400-NUM-CONTRA-TYPE           =  'TM'  AND                      
+              (F400-CDE-LOAN-ELIG             =  'P'   AND                      
+               F400-NUM-ELIG-LOAN-POLICY      =  'PT')                          
+               PERFORM 400-CHECK-SALES-ORDER  THRU  400-EXIT                    
+           ELSE                                                                 
+             IF  F400-NUM-CONTRA-TYPE           =  'TM'  AND                    
+                (F400-CDE-LOAN-ELIG        NOT  =  'A'   OR                     
+                 F400-NUM-ELIG-LOAN-POLICY NOT  =  'AT')                        
+                MOVE 'CONE'                   TO  WS-ERROR-TAG                  
+                PERFORM 700-OUTPUT-F405     THRU  700-EXIT                      
+                                                                                
+               ELSE                                                             
+                IF F400-DTE-KEY-ISSUE = SPACES OR LOW-VALUES                    
+                                            OR '00000000'                       
+                  MOVE    'KEYE'              TO    WS-ERROR-TAG                
+                  PERFORM 700-OUTPUT-F405     THRU  700-EXIT                    
+                ELSE                                                            
+                 PERFORM 350-CHECK-CC-FILE   THRU 350-EXIT                      
+                 IF WS-K421-FOUND = 'Y'                                         
+                   IF K421-DTE-COMPLETION-CEREMONY NOT =                        
+                      F400-DTE-KEY-ISSUE                                        
+                      MOVE    'KEYD'        TO    WS-ERROR-TAG                  
+                      PERFORM 700-OUTPUT-F405        THRU  700-EXIT             
+                   ELSE                                                         
+                      PERFORM 400-CHECK-SALES-ORDER  THRU  400-EXIT             
+                   END-IF                                                       
+                 ELSE                                                           
+                   PERFORM 400-CHECK-SALES-ORDER  THRU  400-EXIT                
+                END-IF                                                          
+              END-IF                                                            
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+           PERFORM 200-READ-BP13F400         THRU  200-EXIT.                    
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    READ VSAM FILE BP13K421 USING F400-NUM-REGN AS A KEY        *        
+      *    IF RECORD FOUND         -     WRITE TO KIV FILE (BP13F405)  *        
+      *    IF RECORD NOT FOUND     -     PROCESS RECORD FURTHER        *        
+      *    IF ERROR ENCOUNTERED    -     CLOSE FILES & STOP RUN        *        
+      ******************************************************************        
+       350-CHECK-CC-FILE.                                                       
+           MOVE 'N'           TO WS-K421-FOUND.                                 
+           MOVE SPACES            TO BP13K421-REC.                              
+           INITIALIZE                BP13K421-REC.                              
+           MOVE F400-NUM-REGN TO K421-NUM-REGN.                                 
+                                                                                
+           READ BP13K421 KEY IS K421-NUM-REGN.                                  
+                                                                                
+           IF BP13K421-REC-FOUND                                                
+              MOVE 'Y'        TO WS-K421-FOUND                                  
+           ELSE                                                                 
+           IF BP13K421-REC-NOTFND OR BP13K421-ENDFILE                           
+              MOVE 'N'                 TO   WS-K421-FOUND                       
+           ELSE                                                                 
+              DISPLAY 'ERROR  READING BP13K421 ' BP13K421-STATUS                
+              MOVE BP13K421-STATUS TO RETURN-CODE                               
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+       350-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+      *    READ VSAM FILE BP13K800 USING F400-NUM-REGN AS A KEY        *        
+      *    IF RECORD FOUND         -     PROCESS RECORD FURTHER        *        
+      *    IF RECORD NOT FOUND     -     WRITE TO KIV FILE (BP13F405)  *        
+      *    IF ERROR ENCOUNTERED    -     CLOSE FILES & STOP RUN        *        
+      ******************************************************************        
+       400-CHECK-SALES-ORDER.                                                   
+           MOVE F400-NUM-REGN TO K800-NUM-REGN.                                 
+                                                                                
+           READ BP13K800.                                                       
+                                                                                
+           IF BP13K800-REC-FOUND                                                
+              PERFORM  500-PROCESS-REC-FOUND THRU 500-EXIT                      
+           ELSE                                                                 
+           IF BP13K800-REC-NOTFND                                               
+              MOVE     'NREC'          TO   WS-ERROR-TAG                        
+              PERFORM  700-OUTPUT-F405 THRU 700-EXIT                            
+           ELSE                                                                 
+              DISPLAY 'ERROR READING, BP13K800-STATUS ' BP13K800-STATUS         
+              MOVE BP13K800-STATUS TO RETURN-CODE                               
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    TO CHECK FOR OUTSTANDING AMOUNT   AND                       *        
+      *             OUTPUT TO ACCUMULATED SO FILE (BP13F410) WITH      *        
+      *             APPROPRIATE ERROR TAG                              *        
+      ******************************************************************        
+       500-PROCESS-REC-FOUND.                                                   
+                                                                                
+           IF F400-CDE-SALES-TYPE = '10' OR '13' OR '18'                        
+              PERFORM 520-CHECK-SALES-TYPE-10      THRU  520-EXIT               
+           ELSE                                                                 
+              PERFORM 540-CHECK-SALES-TYPE-OTHERS  THRU  540-EXIT.              
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    CHECK SALES-TYPE   WHEN F400-CDE-SALES-TYPE = 10            *        
+      ******************************************************************        
+       520-CHECK-SALES-TYPE-10.                                                 
+           MOVE SPACES   TO WS-ERROR-TAG.                                       
+                                                                                
+           IF K800-NUM-STATUS = 'T' OR 'C'                                      
+              MOVE   'RFFS'           TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT                             
+              GO TO 520-EXIT.                                                   
+                                                                                
+           PERFORM 550-CHECK-BK-FEE THRU 550-EXIT.                              
+           PERFORM 560-CHECK-SOL    THRU 560-EXIT.                              
+           IF WS-ERROR-TAG NOT = SPACES                                         
+              GO TO 520-EXIT.                                                   
+                                                                                
+           IF K800-AMT-CONVEY-FEE-GST IS NOT NUMERIC                            
+              MOVE ZEROS TO  K800-AMT-CONVEY-FEE-GST.                           
+                                                                                
+           IF K800-AMT-CAVEAT-REGN    IS NOT NUMERIC                            
+              MOVE ZEROS TO  K800-AMT-CAVEAT-REGN.                              
+                                                                                
+           IF K800-AMT-MORT-CONVY     IS NOT NUMERIC                            
+              MOVE ZEROS TO  K800-AMT-MORT-CONVY.                               
+                                                                                
+           IF K800-AMT-MORT-CONVY-GST IS NOT NUMERIC                            
+              MOVE ZEROS TO  K800-AMT-MORT-CONVY-GST.                           
+                                                                                
+           IF K800-AMT-SOC-SERCNTR-PAID IS NOT NUMERIC                          
+              MOVE ZEROS TO  K800-AMT-SOC-SERCNTR-PAID.                         
+                                                                                
+           IF F400-AMT-CD-SERCNTR IS NOT NUMERIC                                
+              MOVE ZEROS TO  F400-AMT-CD-SERCNTR.                               
+                                                                                
+           IF K800-AMT-CD-SERCNTR IS NOT NUMERIC                                
+              MOVE ZEROS TO  K800-AMT-CD-SERCNTR.                               
+                                                                                
+           IF K800-AMT-CD-SERCNTR-NEW IS NOT NUMERIC                            
+              MOVE ZEROS TO  K800-AMT-CD-SERCNTR-NEW.                           
+                                                                                
+           IF K800-AMT-SOC-CASH   IS NOT NUMERIC                                
+              MOVE ZEROS TO  K800-AMT-SOC-CASH.                                 
+                                                                                
+           IF K800-AMT-CD-CASH    IS NOT NUMERIC                                
+              MOVE ZEROS TO  K800-AMT-CD-CASH.                                  
+                                                                                
+           IF K800-AMT-CD-REFUND  IS NOT NUMERIC                                
+              MOVE ZEROS TO  K800-AMT-CD-REFUND.                                
+                                                                                
+           MOVE ZEROS TO  WS-UPD-CD-CASH.                                       
+           MOVE ZEROS TO  WS-UPD-SOC-CASH.                                      
+                                                                                
+           COMPUTE WS-UPD-CD-CASH  = K800-AMT-CD-CASH -                         
+                                     K800-AMT-CD-REFUND.                        
+                                                                                
+           COMPUTE WS-UPD-SOC-CASH = K800-AMT-SOC-CASH -                        
+                                     K800-AMT-CD-REFUND.                        
+                                                                                
+           COMPUTE WS-AMT-CD-TOT = WS-UPD-SOC-CASH     +                        
+                                   K800-AMT-SOC-SERCNTR-PAID +                  
+                                   K800-AMT-CPF1-PAID  +                        
+                                   K800-AMT-CPF2-PAID  +                        
+                                   K800-AMT-CPF3-PAID  +                        
+                                   K800-AMT-CPF4-PAID  -                        
+                                   K800-AMT-CAVEAT-REGN -                       
+                                   K800-AMT-MORT-CONVY  -                       
+                                   K800-AMT-MORT-CONVY-GST -                    
+                                   K800-AMT-LEASE-FEE  -                        
+                                   K800-AMT-CONVEY-FEE-GST -                    
+                                   K800-AMT-CONVEY-FEE.                         
+                                                                                
+           COMPUTE WS-AMT-CD-TRF = F400-AMT-CD-CASH +                           
+                                   F400-AMT-CD-SERCNTR +                        
+                                   F400-AMT-CD-CPF1 +                           
+                                   F400-AMT-CD-CPF2 +                           
+                                   F400-AMT-CD-CPF3 +                           
+                                   F400-AMT-CD-CPF4.                            
+                                                                                
+           IF F400-NUM-REGN = '3258530B' OR '4631534J'                          
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+           IF WS-AMT-CD-TOT  =  WS-AMT-CD-TRF                                   
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              DISPLAY 'CD-TOT  =' WS-AMT-CD-TOT                                 
+              DISPLAY 'CD-TRF  =' WS-AMT-CD-TRF                                 
+              MOVE    'SOCE'          TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT                             
+              GO TO 520-EXIT                                                    
+           END-IF.                                                              
+                                                                                
+           IF WS-UPD-CD-CASH   NOT =  F400-AMT-CD-CASH                          
+              MOVE    'SOCC'          TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT                             
+           ELSE                                                                 
+           IF K800-AMT-CD-CPF1 NOT =  F400-AMT-CD-CPF1                          
+              MOVE    'SOC1'          TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT                             
+           ELSE                                                                 
+           IF K800-AMT-CD-CPF2 NOT =  F400-AMT-CD-CPF2                          
+              MOVE    'SOC2'          TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT                             
+           ELSE                                                                 
+           IF K800-AMT-CD-CPF3 NOT =  F400-AMT-CD-CPF3                          
+              MOVE    'SOC3'          TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT                             
+           ELSE                                                                 
+           IF K800-AMT-CD-CPF4 NOT =  F400-AMT-CD-CPF4                          
+              MOVE    'SOC4'          TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT                             
+           ELSE                                                                 
+           IF K800-AMT-CD-SERCNTR-NEW > 0                                       
+              MOVE K800-AMT-CD-SERCNTR-NEW                                      
+                                      TO   WS-AMT-CD-SERCNTR                    
+           ELSE                                                                 
+              MOVE K800-AMT-CD-SERCNTR                                          
+                                      TO   WS-AMT-CD-SERCNTR                    
+           END-IF                                                               
+           IF WS-AMT-CD-SERCNTR NOT = F400-AMT-CD-SERCNTR                       
+              MOVE    'SOCS'          TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT.                            
+                                                                                
+           IF WS-ERROR-TAG NOT = SPACES                                         
+              GO TO 520-EXIT                                                    
+           ELSE                                                                 
+KSJ           WRITE BP13F410-REC FROM BP13F400-REC                              
+              ADD   1            TO   WS-NUM-F410-WRITE.                        
+                                                                                
+       520-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    CHECK SALES-TYPE   WHEN F400-CDE-SALES-TYPE NOT = 10        *        
+      ******************************************************************        
+       540-CHECK-SALES-TYPE-OTHERS.                                             
+           MOVE SPACES   TO WS-ERROR-TAG.                                       
+                                                                                
+           IF K800-NUM-STATUS = 'T' OR 'C'                                      
+              MOVE    'RFFS'          TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT                             
+              GO TO 540-EXIT.                                                   
+                                                                                
+           IF K800-NUM-NRIC1 = SPACES OR LOW-VALUES                             
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              IF K800-NUM-NRIC1 = F400-NRIC1                                    
+                 NEXT SENTENCE                                                  
+              ELSE                                                              
+                 MOVE    'IC-1'          TO   WS-ERROR-TAG                      
+                 PERFORM 700-OUTPUT-F405 THRU 700-EXIT                          
+                 GO TO 540-EXIT.                                                
+                                                                                
+           IF K800-NUM-NRIC2 = SPACES OR LOW-VALUES                             
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              IF K800-NUM-NRIC2 = F400-NRIC2                                    
+                 NEXT SENTENCE                                                  
+              ELSE                                                              
+                 MOVE    'IC-2'          TO   WS-ERROR-TAG                      
+                 PERFORM 700-OUTPUT-F405 THRU 700-EXIT                          
+                 GO TO 540-EXIT.                                                
+                                                                                
+           PERFORM 550-CHECK-BK-FEE THRU 550-EXIT.                              
+           PERFORM 560-CHECK-SOL    THRU 560-EXIT.                              
+           IF WS-ERROR-TAG NOT = SPACES                                         
+              GO TO 540-EXIT.                                                   
+                                                                                
+           IF F400-CDE-SALES-TYPE = '03' OR  '5C' OR '3A'                       
+              PERFORM 600-READ-AB03K030  THRU 600-EXIT.                         
+                                                                                
+           IF WS-ERROR-TAG NOT = SPACES                                         
+              GO TO 540-EXIT                                                    
+           ELSE                                                                 
+KSJ           WRITE BP13F410-REC FROM BP13F400-REC                              
+              ADD   1            TO   WS-NUM-F410-WRITE.                        
+                                                                                
+       540-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+       550-CHECK-BK-FEE.                                                        
+      ******************************************************************        
+           IF F400-CDE-SA-TP = 'Y'                                              
+              MOVE F400-NUM-SCH-ACC  TO K110-SCH-ACC-NO                         
+                                                                                
+              READ BM06K110                                                     
+                                                                                
+              IF BM06K110-REC-FOUND                                             
+                 CONTINUE                                                       
+              ELSE                                                              
+                 IF BM06K110-REC-NOTFND                                         
+                    MOVE     'NREC'          TO   WS-ERROR-TAG                  
+                    PERFORM  700-OUTPUT-F405 THRU 700-EXIT                      
+                    GO TO 550-EXIT                                              
+                 ELSE                                                           
+                    DISPLAY 'ERROR READING, BM06K110-STATUS '                   
+                    BM06K110-STATUS                                             
+                    MOVE BM06K110-STATUS TO RETURN-CODE                         
+                    PERFORM 900-CLOSE-ROUTINE                                   
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              DISPLAY 'K800-NUM-REGN       = ' K800-NUM-REGN                    
+              DISPLAY 'K110-DTE-ACCEPTANCE = ' K110-DTE-ACCEPTANCE              
+              DISPLAY 'K800-AMT-BK-REQ     = ' K800-AMT-BK-REQ                  
+              DISPLAY 'K800-AMT-BK-PAID    = ' K800-AMT-BK-PAID                 
+              DISPLAY 'K800-NUM-ALLO-SCHEME= ' K800-NUM-ALLO-SCHEME             
+                                                                                
+              MOVE K800-NUM-ALLO-SCHEME        TO WS-ALLOC-SCH                  
+              PERFORM 110-CHK-SERS             THRU 110-EXIT                    
+                                                                                
+              IF (K110-DTE-ACCEPTANCE >= '20020110')         AND                
+                 (K800-AMT-BK-REQ  >  ZEROES       )         AND                
+                 (K800-AMT-BK-PAID =  ZEROES   OR                               
+                 (K800-AMT-BK-PAID >  ZEROES  AND                               
+                  K800-AMT-BK-REQ  NOT = K800-AMT-BK-PAID))   AND               
+                 ((K800-NUM-ALLO-SCHEME NOT = 'REN' AND 'RED') AND              
+                  (WS-SCH-FND NOT = 'Y'))                                       
+                 MOVE    'BKZR'          TO   WS-ERROR-TAG                      
+                 PERFORM 700-OUTPUT-F405 THRU 700-EXIT                          
+                 GO TO 550-EXIT                                                 
+              END-IF                                                            
+           ELSE                                                                 
+              CONTINUE                                                          
+           END-IF.                                                              
+                                                                                
+       550-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      * CHECK SOLICIT  > ZEROES                                                 
+      *    IF SOL-CASH         > ZEROES,  WRITE TO KIV.                         
+      *    IF SOL-CPF1 TO CPF4 > ZEROES,  WRITE TO KIV.                         
+      *    IF SOL-SERCNTRA     > ZEROES,  WRITE TO KIV.                         
+      ******************************************************************        
+       560-CHECK-SOL.                                                           
+                                                                                
+           IF K800-AMT-SOLICIT-CASH    NOT NUMERIC                              
+              MOVE ZEROES              TO  K800-AMT-SOLICIT-CASH.               
+           IF K800-AMT-SOLICIT-SERCNTR NOT NUMERIC                              
+              MOVE ZEROES              TO  K800-AMT-SOLICIT-SERCNTR.            
+           IF K800-AMT-SOLICIT-CPF1    NOT NUMERIC                              
+              MOVE ZEROES              TO  K800-AMT-SOLICIT-CPF1.               
+           IF K800-AMT-SOLICIT-CPF2    NOT NUMERIC                              
+              MOVE ZEROES              TO  K800-AMT-SOLICIT-CPF2.               
+           IF K800-AMT-SOLICIT-CPF3    NOT NUMERIC                              
+              MOVE ZEROES              TO  K800-AMT-SOLICIT-CPF3.               
+           IF K800-AMT-SOLICIT-CPF4    NOT NUMERIC                              
+              MOVE ZEROES              TO  K800-AMT-SOLICIT-CPF4.               
+                                                                                
+           IF (K800-AMT-SOLICIT-CASH    > ZEROES) OR                            
+              (K800-AMT-SOLICIT-SERCNTR > ZEROES) OR                            
+              (K800-AMT-SOLICIT-CPF1    > ZEROES) OR                            
+              (K800-AMT-SOLICIT-CPF2    > ZEROES) OR                            
+              (K800-AMT-SOLICIT-CPF3    > ZEROES) OR                            
+              (K800-AMT-SOLICIT-CPF4    > ZEROES)                               
+               MOVE    'SOLE'          TO   WS-ERROR-TAG                        
+               PERFORM 700-OUTPUT-F405 THRU 700-EXIT                            
+           END-IF.                                                              
+                                                                                
+       560-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    READ VSAM FILE AB03K030 USING F400-NUM-SCH-ACC AS A KEY     *        
+      *    FOR REPURCHASE FLAT                                         *        
+      *        CHECK WHETHER RECORD IS FOUND IN SMS MASTER (AB03K030)  *        
+      *        AND WHETHER THE ALLOCATION TAG IS BLANK                 *        
+      ******************************************************************        
+       600-READ-AB03K030.                                                       
+           MOVE F400-NUM-SCH-ACC TO K030-NUM-HDB-REF.                           
+                                                                                
+           READ AB03K030.                                                       
+                                                                                
+           IF AB03K030-REC-FOUND                                                
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+           IF AB03K030-REC-NOTFND                                               
+              MOVE    'SMSE'          TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT                             
+              GO TO 600-EXIT                                                    
+           ELSE                                                                 
+              DISPLAY SPACES                                                    
+              DISPLAY 'READING ERROR, AB03K030-STATUS ' AB03K030-STATUS         
+              DISPLAY 'F400-NUM-SCH-ACC ' F400-NUM-SCH-ACC                      
+              MOVE   'SMSE'           TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT                             
+              GO TO 600-EXIT.                                                   
+                                                                                
+           IF K030-CDE-ACCT-STAT = 'V'                                          
+              NEXT SENTENCE                                                     
+           ELSE                                                                 
+              MOVE    'TAGE'          TO   WS-ERROR-TAG                         
+              PERFORM 700-OUTPUT-F405 THRU 700-EXIT.                            
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    -   OUTPUT RECORDS TO KIV FILE (BP13F405)                   *        
+      *    -   OUTPUT ERROR DETAILS                                    *        
+      ******************************************************************        
+       700-OUTPUT-F405.                                                         
+           MOVE   WS-ERROR-TAG  TO F400-CDE-ERROR.                              
+           MOVE   BP13F400-REC  TO BP13F405-REC.                                
+           WRITE  BP13F405-REC.                                                 
+           ADD    1             TO WS-NUM-F405-WRITE.                           
+                                                                                
+           PERFORM 720-PRINT-ERROR-DETAIL-LINE THRU 720-EXIT.                   
+                                                                                
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    PRINT DETAIL ERROR DETAIL LINE SECTION                      *        
+      ******************************************************************        
+       720-PRINT-ERROR-DETAIL-LINE.                                             
+           IF (WS-LINE-CNT > 45)  OR                                            
+              (F400-CDE-SALES-TYPE NOT = WS-PREV-SALES-TYPE)                    
+               PERFORM 722-PRINT-HEADING    THRU 722-EXIT.                      
+                                                                                
+           IF F400-CDE-SALES-TYPE NOT = WS-PREV-SALES-TYPE                      
+              MOVE F400-CDE-SALES-TYPE  TO WS-PREV-SALES-TYPE.                  
+                                                                                
+           ADD  1           TO WS-SEQ-NO.                                       
+           MOVE WS-SEQ-NO   TO L402-SEQ-NO.                                     
+                                                                                
+           PERFORM 724-CALL-BP13C913    THRU  724-EXIT.                         
+           MOVE    'BLK '               TO    L402-BLK-DESC.                    
+           MOVE    COMM8-NUM-BLK        TO    L402-BLK-NO.                      
+           MOVE    '#'                  TO    L402-HEX.                         
+           MOVE    COMM8-NME-STREET     TO    L402-STREET.                      
+           STRING  COMM8-NUM-LEVEL  '-' COMM8-NUM-UNIT-MAIN WS-HSE-SUB1         
+                   DELIMITED BY SIZE    INTO  L402-HOUSE-NO.                    
+                                                                                
+           SET ERR-IDX TO 1.                                                    
+           SEARCH WS-ERR-MSG                                                    
+               AT END MOVE SPACES  TO  L402-ERROR-DESC                          
+                  WHEN  WS-ERR-TAG(ERR-IDX) = WS-ERROR-TAG                      
+                        MOVE WS-ERR-DESC(ERR-IDX)   TO L402-ERROR-DESC.         
+                                                                                
+           STRING F400-SCHEME '-' F400-ACC '-' F400-CHK '-'                     
+                  F400-LESSEE-CODE DELIMITED BY SIZE                            
+                  INTO L402-SCH-ACC-NO.                                         
+                                                                                
+           MOVE   F400-NAME1            TO  L402-NAME1.                         
+           MOVE   F400-NAME2            TO  L402-NAME2.                         
+           MOVE   F400-NUM-REGN         TO  L402-REGN-NO.                       
+                                                                                
+           MOVE   F400-DTE-KEY-ISSUE    TO  WS-X8-DATE.                         
+           STRING WS-X8-DD '/' WS-X8-MM '/' WS-X8-YY1 WS-X8-YY2                 
+                  DELIMITED BY SIZE INTO L402-DTE-KEY-ISSUE.                    
+                                                                                
+           MOVE   F400-NUM-PREMIUM-RATE TO  L402-PREMIUM-RATE.                  
+           MOVE   F400-AMT-LOAN         TO  L402-LOAN-AMT.                      
+           MOVE   F400-DTE-SO-EXECUTION TO  WS-X8-DATE.                         
+           STRING WS-X8-DD '/' WS-X8-MM '/' WS-X8-YY1 WS-X8-YY2                 
+                  DELIMITED BY SIZE INTO L402-SO-DATE.                          
+                                                                                
+           MOVE  SPACES       TO    PRINT-REC.                                  
+           WRITE PRINT-REC    FROM  L402-DTL-1 AFTER ADVANCING 2.               
+           MOVE  SPACES       TO    PRINT-REC.                                  
+           WRITE PRINT-REC    FROM  L402-DTL-2 AFTER ADVANCING 1.               
+           ADD   3            TO    WS-LINE-CNT.                                
+                                                                                
+           COMPUTE WS-TOT-LOAN-AMT = WS-TOT-LOAN-AMT + F400-AMT-LOAN.           
+                                                                                
+       720-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    PRINT HEADING LINES SECTION                                 *        
+      ******************************************************************        
+       722-PRINT-HEADING.                                                       
+           ADD    1                    TO    WS-PAGE-CNT.                       
+           MOVE   WS-PAGE-CNT          TO    L402-HD1-PAGE.                     
+           MOVE   FUNCTION CURRENT-DATE TO WS-CURRENT-DATE.                     
+                                                                                
+           MOVE   WS-CURRENT-DD        TO    WS-EDITED-DD.                      
+           MOVE   WS-CURRENT-MM        TO    WS-EDITED-MM.                      
+           MOVE   WS-CURRENT-CC        TO    WS-EDITED-CC.                      
+           MOVE   WS-CURRENT-YY        TO    WS-EDITED-YY.                      
+                                                                                
+           MOVE   WS-EDITED-DATE       TO    L402-HD1-DATE.                     
+           MOVE   F400-CDE-SALES-TYPE  TO    L402-HD2-SALES-TYPE.               
+           WRITE  PRINT-REC FROM L402-HDG-1  AFTER ADVANCING PAGE.              
+           WRITE  PRINT-REC FROM L402-HDG-2A AFTER ADVANCING 1.                 
+           WRITE  PRINT-REC FROM L402-HDG-2B AFTER ADVANCING 2.                 
+           WRITE  PRINT-REC FROM L402-HDG-3  AFTER ADVANCING 2.                 
+           WRITE  PRINT-REC FROM L402-HDG-4  AFTER ADVANCING 1.                 
+           MOVE   0                    TO    WS-LINE-CNT.                       
+                                                                                
+       722-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    CALL BP13C913 USING F410-NUM-SCH-ACC VALUES AS A KEY TO     *        
+      *                  GET FLAT INFO FROM PIDB TABLE                 *        
+      ******************************************************************        
+       724-CALL-BP13C913.                                                       
+           MOVE  SPACES                TO  BP13COMM8-REC.                       
+           INITIALIZE                      BP13COMM8-REC.                       
+                                                                                
+           MOVE  F400-NUM-SCH-ACC      TO  WS-LINK-REC                          
+                                                                                
+           CALL WS-BP13C913         USING  WS-LINK-REC,                         
+                                           BP13COMM8-REC.                       
+                                                                                
+           IF COMM8-CDE-SYSERR NOT = 0                                          
+              MOVE COMM8-CDE-SYSERR TO WS-SQL-CODE                              
+              DISPLAY 'F400-NUM-SCH-ACC = ' F400-NUM-SCH-ACC                    
+              IF COMM8-CDE-SYSERR = 100                                         
+                 DISPLAY 'SCH-ACC NOT FOUND IN PIDB TABLE ' WS-SQL-CODE         
+              ELSE                                                              
+                 DISPLAY 'ERROR READING PIDB TABLE   ' WS-SQL-CODE              
+           ELSE                                                                 
+              MOVE COMM8-NUM-UNIT-SUB TO WS-HSE-SUB.                            
+                                                                                
+       724-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    PRINT TOTAL LINES SECTION                                   *        
+      ******************************************************************        
+       800-PRINT-TOTAL.                                                         
+           IF WS-SEQ-NO > 0                                                     
+              MOVE  WS-TOT-LOAN-AMT TO   L402-TOTAL-AMT                         
+              WRITE PRINT-REC       FROM L402-TOTAL-LINE-DASH AFTER 2           
+              MOVE  SPACES          TO   PRINT-REC                              
+              WRITE PRINT-REC       FROM L402-TOTAL-LINE      AFTER 1           
+              WRITE PRINT-REC       FROM L402-TOTAL-LINE-DASH AFTER 1.          
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    -   DISPLAY NECESSARY STATISTICS                            *        
+      *    -   CLOSE ALL FILES   AND   STOP RUN                        *        
+      ******************************************************************        
+       900-CLOSE-ROUTINE.                                                       
+                                                                                
+           DISPLAY SPACES.                                                      
+           DISPLAY SPACES.                                                      
+           DISPLAY '*****   BP13C402 CONTROL TOTALS *****'                      
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO OF BP13F400 REC READ  : ' WS-NUM-F400-READ.              
+           DISPLAY 'NO OF BP13F405 REC WRITE : ' WS-NUM-F405-WRITE.             
+           DISPLAY 'NO OF BP13F410 REC WRITE : ' WS-NUM-F410-WRITE.             
+                                                                                
+           CLOSE BP13F400                                                       
+                 BP13K800                                                       
+                 AB03K030                                                       
+                 BM06K110                                                       
+                 BP13K421                                                       
+                 BP13F405                                                       
+                 BP13F410                                                       
+                 BP13L402.                                                      
+                                                                                
+           IF BP13K800-STATUS NOT = 00                                          
+              DISPLAY 'CLOSING ERROR, BP13K800-STATUS ' BP13K800-STATUS         
+              MOVE BP13K800-STATUS TO RETURN-CODE.                              
+                                                                                
+           IF BM06K110-STATUS NOT = 00                                          
+              DISPLAY 'CLOSING ERROR, BM06K110-STATUS ' BM06K110-STATUS         
+              MOVE BM06K110-STATUS TO RETURN-CODE.                              
+                                                                                
+           IF BP13K421-STATUS NOT = 00                                          
+              DISPLAY 'CLOSING ERROR, BP13K421-STATUS ' BP13K421-STATUS         
+              MOVE BP13K421-STATUS TO RETURN-CODE.                              
+                                                                                
+           IF AB03K030-STATUS NOT = 00                                          
+              DISPLAY 'CLOSING ERROR, AB03K030-STATUS ' AB03K030-STATUS         
+              MOVE AB03K030-STATUS TO RETURN-CODE.                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+*******************   END  OF  SOURCE  PROGRAM   ***********************        
+

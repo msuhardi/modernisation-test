@@ -1,0 +1,312 @@
+      *------------------------*                                                
+       IDENTIFICATION DIVISION.                                                 
+      *------------------------*                                                
+       PROGRAM-ID.    BP13C321.                                                 
+      *AUTHOR.        CHYEO.                                                    
+      *DATE-WRITTEN.  17/04/90.                                                 
+                                                                                
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (BP13)                                *            
+      * ========================================================== *            
+      *                                                            *            
+      *  OBJECTIVE :                                               *            
+      *    UPDATE SOC-AMT PAID FOR CANCELLATION/FORFEITURE         *            
+      *         CASES                                              *            
+      *                                                            *            
+      *  I-O FILES                                                 *            
+      *    1. BP13K800  -  RFF MASTER FILE.                        *            
+      *                                                            *            
+      *  OUTPUT FILES                                              *            
+      *    1. BP13F120  -  GL TRANSACTION FILE                     *            
+      *    2. BP13F130  -  HISTORICAL FINANCIAL TRANSACTION        *            
+      * ---------------------------------------------------------- *            
+      * SOC-PH8B NEIL 930726 CHG FILE FROM P10K020 TO BP13K800     *            
+      * C930963  LJL  970118 INCLUDE GST FOR CONVEYANCING FEES     *            
+      * BP130418 MPA  980403 YEAR 2000 CHANGES                     *            
+      * BP130418 SGK  980603 YEAR 2000 CHANGES                     *            
+      * BP132309 CLT  100403 CATER FOR CAVEAT REGN FEE             *            
+      * ========================================================== *            
+                                                                                
+      *------------------------*                                                
+       ENVIRONMENT DIVISION.                                                    
+      *------------------------*                                                
+       CONFIGURATION SECTION.                                                   
+      *------------------------*                                                
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT BP13K800 ASSIGN TO BP13K800                                   
+                  ACCESS MODE    IS SEQUENTIAL                                  
+                  ORGANIZATION   IS INDEXED                                     
+                  RECORD KEY     IS K800-NUM-REGN                               
+                  FILE STATUS    IS WS-BP13K800-STATUS.                         
+                                                                                
+           SELECT BP13F120 ASSIGN TO BP13F120.                                  
+           SELECT BP13F130 ASSIGN TO BP13F130.                                  
+                                                                                
+                                                                                
+      *------------------------*                                                
+       DATA DIVISION.                                                           
+      *------------------------*                                                
+       FILE SECTION.                                                            
+      *------------------------*                                                
+                                                                                
+       FD   BP13K800                                                            
+            BLOCK  CONTAINS  0  RECORDS                                         
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            LABEL  RECORD IS STANDARD.                                          
+       COPY BP13K800.                                                           
+                                                                                
+       FD   BP13F120                                                            
+            BLOCK  CONTAINS  0  RECORDS                                         
+            RECORD CONTAINS 150 CHARACTERS                                      
+            LABEL  RECORD IS STANDARD.                                          
+       COPY BP13F120.                                                           
+                                                                                
+       FD   BP13F130                                                            
+            BLOCK  CONTAINS  0  RECORDS                                         
+            RECORD CONTAINS 150 CHARACTERS                                      
+            LABEL  RECORD IS STANDARD.                                          
+       COPY BP13F130.                                                           
+                                                                                
+                                                                                
+      *------------------------*                                                
+       WORKING-STORAGE SECTION.                                                 
+      *------------------------*                                                
+                                                                                
+       01  WS-CONTROL-CNT.                                                      
+           05  WS-K800-READ            PIC 9(8)       VALUE 0.                  
+           05  WS-K800-CANCEL          PIC 9(8)       VALUE 0.                  
+           05  WS-K800-UNBAL           PIC 9(8)       VALUE 0.                  
+           05  WS-K800-BAL             PIC 9(8)       VALUE 0.                  
+           05  WS-K800-BYPASS          PIC 9(8)       VALUE 0.                  
+           05  WS-K800-REWRITE         PIC 9(8)       VALUE 0.                  
+           05  WS-F120-WRITE           PIC 9(8)       VALUE 0.                  
+           05  WS-F130-WRITE           PIC 9(8)       VALUE 0.                  
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-LSE-TRANSFER         PIC S9(7)V99   VALUE ZEROES.             
+                                                                                
+       01  WS-TOTAL-AMOUNTS.                                                    
+           05  WS-TOT-SOC-AMT          PIC S9(10)V99  VALUE ZEROES.             
+           05  WS-TOT-LSE-AMT          PIC S9(10)V99  VALUE ZEROES.             
+                                                                                
+       01  WS-FILE-ACCESS-STATUS.                                               
+           05  WS-BP13K800-STATUS      PIC 9(2)       VALUE ZEROS.              
+                                                                                
+       01  WS-CURRENT-DATE             PIC X(8).                                
+       01  WS-DATE                     PIC X(10).                               
+                                                                                
+                                                                                
+      *------------------------*                                                
+       PROCEDURE DIVISION.                                                      
+      *------------------------*                                                
+                                                                                
+      *-------------------------------------------------------------            
+       MAIN-ROUTINE.                                                            
+      *-------------------------------------------------------------            
+           PERFORM 100-OPEN-FILES    THRU 100-EXIT.                             
+           PERFORM 200-MAIN-PROCESS  THRU 200-EXIT                              
+             UNTIL K800-NUM-REGN = HIGH-VALUE.                                  
+           PERFORM 300-PRINT-TOTAL   THRU 300-EXIT.                             
+           PERFORM 400-CLOSE-ROUTINE THRU 400-EXIT.                             
+                                                                                
+       MAIN-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       100-OPEN-FILES.                                                          
+      *-------------------------------------------------------------            
+           OPEN I-O    BP13K800                                                 
+                OUTPUT BP13F120                                                 
+                       BP13F130.                                                
+                                                                                
+           IF WS-BP13K800-STATUS NOT = 00 AND 97                                
+              DISPLAY 'ERROR OPENING BP13K800 FILE ' WS-BP13K800-STATUS         
+              MOVE WS-BP13K800-STATUS TO  RETURN-CODE                           
+              PERFORM 400-CLOSE-ROUTINE THRU 400-EXIT.                          
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8) TO WS-CURRENT-DATE.                  
+           STRING FUNCTION CURRENT-DATE(7:2) '/'                                
+                  FUNCTION CURRENT-DATE(5:2) '/'                                
+                  FUNCTION CURRENT-DATE(1:4)                                    
+           DELIMITED BY SIZE INTO WS-DATE.                                      
+                                                                                
+           PERFORM 1000-READ-K800 THRU 1000-EXIT.                               
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       200-MAIN-PROCESS.                                                        
+      *-------------------------------------------------------------            
+           IF K800-AMT-SOC-SERCNTR-PAID IS NOT NUMERIC                          
+              MOVE ZEROS TO K800-AMT-SOC-SERCNTR-PAID.                          
+                                                                                
+           COMPUTE WS-TOT-SOC-AMT = K800-AMT-SOC-CASH +                         
+                                    K800-AMT-SOC-SERCNTR-PAID +                 
+                                    K800-AMT-CPF1-PAID +                        
+                                    K800-AMT-CPF2-PAID +                        
+                                    K800-AMT-CPF3-PAID +                        
+                                    K800-AMT-CPF4-PAID.                         
+                                                                                
+           IF K800-AMT-CONVEY-FEE-GST IS NOT NUMERIC                            
+              MOVE ZEROS TO K800-AMT-CONVEY-FEE-GST.                            
+                                                                                
+           IF K800-AMT-CAVEAT-REGN    IS NOT NUMERIC                            
+              MOVE ZEROS TO K800-AMT-CAVEAT-REGN.                               
+                                                                                
+           IF K800-AMT-MORT-CONVY     IS NOT NUMERIC                            
+              MOVE ZEROS TO K800-AMT-MORT-CONVY.                                
+                                                                                
+           IF K800-AMT-MORT-CONVY-GST IS NOT NUMERIC                            
+              MOVE ZEROS TO K800-AMT-MORT-CONVY-GST.                            
+                                                                                
+           COMPUTE WS-TOT-LSE-AMT = K800-AMT-LEASE-FEE      +                   
+                                    K800-AMT-CONVEY-FEE     +                   
+                                    K800-AMT-CONVEY-FEE-GST +                   
+                                    K800-AMT-CAVEAT-REGN    +                   
+                                    K800-AMT-MORT-CONVY     +                   
+                                    K800-AMT-MORT-CONVY-GST.                    
+                                                                                
+           IF WS-TOT-SOC-AMT NOT = WS-TOT-LSE-AMT                               
+              ADD 1 TO WS-K800-UNBAL                                            
+           ELSE                                                                 
+               IF WS-TOT-SOC-AMT = WS-TOT-LSE-AMT AND                           
+                  WS-TOT-SOC-AMT = ZERO                                         
+                  ADD 1 TO WS-K800-BYPASS                                       
+               ELSE                                                             
+                  ADD 1 TO WS-K800-BAL                                          
+                  PERFORM 2000-CREATE-F120 THRU 2000-EXIT                       
+                  PERFORM 2100-CREATE-F130 THRU 2100-EXIT                       
+                  PERFORM 2200-UPDATE-K800 THRU 2200-EXIT                       
+                  MOVE ZEROES TO WS-TOT-SOC-AMT                                 
+                  MOVE ZEROES TO WS-TOT-LSE-AMT.                                
+                                                                                
+           PERFORM 1000-READ-K800 THRU 1000-EXIT.                               
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       1000-READ-K800.                                                          
+      *-------------------------------------------------------------            
+           READ BP13K800 AT END MOVE HIGH-VALUE TO K800-NUM-REGN                
+                GO TO 1000-EXIT.                                                
+                                                                                
+           ADD 1 TO WS-K800-READ.                                               
+                                                                                
+           IF K800-NUM-STATUS = 'C'                                             
+              ADD 1 TO WS-K800-CANCEL                                           
+           ELSE                                                                 
+              ADD 1 TO WS-K800-BYPASS                                           
+              GO TO 1000-READ-K800.                                             
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2000-CREATE-F120.                                                        
+      *-------------------------------------------------------------            
+           COMPUTE  WS-LSE-TRANSFER   = WS-TOT-LSE-AMT * -1.                    
+           MOVE  SPACES               TO BP13F120-CASHTRAN.                     
+           INITIALIZE                    BP13F120-CASHTRAN.                     
+           MOVE  '24'                 TO F120-CDE-TRANS-TYPE.                   
+           MOVE  'SOC'                TO F120-CDE-PAYMENT-TYPE.                 
+           MOVE  WS-LSE-TRANSFER      TO F120-AMT-RECEIPT.                      
+           MOVE  'D'                  TO F120-CDE-CRDR.                         
+           MOVE  K800-NUM-REGN        TO F120-NUM-REGN.                         
+           MOVE  K800-NUM-SCH-ACC     TO F120-NUM-SCH-ACCT.                     
+           MOVE  WS-CURRENT-DATE      TO F120-DTE-TRANS.                        
+           MOVE  WS-CURRENT-DATE      TO F120-DTE-POST.                         
+           MOVE 1                     TO F120-COUNT-HISTORY.                    
+           WRITE BP13F120-CASHTRAN.                                             
+           ADD  1                     TO WS-F120-WRITE.                         
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2100-CREATE-F130.                                                        
+      *-------------------------------------------------------------            
+           MOVE  SPACES               TO BP13F130-REC.                          
+           MOVE  '24'                 TO F130-TRANS-TYPE.                       
+           MOVE  'SOC'                TO F130-CDE-PAYMENT-TYPE.                 
+           MOVE  'D'                  TO F130-CDE-AMT-TYPE.                     
+           MOVE  WS-LSE-TRANSFER      TO F130-AMT-RECEIPT.                      
+           MOVE  1                    TO F130-COUNT-HISTORY.                    
+           MOVE  WS-CURRENT-DATE      TO F130-DTE-POST.                         
+           MOVE  WS-CURRENT-DATE      TO F130-DTE-TRANS.                        
+           MOVE  K800-NUM-REGN        TO F130-NUM-REGN.                         
+           MOVE  K800-NUM-SCH-ACC     TO F130-NUM-SCH-ACCT.                     
+           WRITE BP13F130-REC.                                                  
+           ADD   1                    TO WS-F130-WRITE.                         
+                                                                                
+       2100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2200-UPDATE-K800.                                                        
+      *-------------------------------------------------------------            
+           MOVE WS-CURRENT-DATE      TO  K800-DTE-UPDATE.                       
+           MOVE ZEROES               TO  K800-AMT-SOC-CASH                      
+                                         K800-AMT-CPF1-PAID                     
+                                         K800-AMT-CPF2-PAID                     
+                                         K800-AMT-CPF3-PAID                     
+                                         K800-AMT-CPF4-PAID                     
+                                         K800-AMT-SOC-SERCNTR-PAID.             
+                                                                                
+           REWRITE BP13K800-MASTER.                                             
+           IF WS-BP13K800-STATUS = 0                                            
+              ADD 1 TO WS-K800-REWRITE                                          
+           ELSE                                                                 
+              DISPLAY 'STATUS                ' WS-BP13K800-STATUS               
+              DISPLAY 'REWRITE BP13K800 ERROR ' K800-NUM-REGN.                  
+                                                                                
+       2200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       300-PRINT-TOTAL.                                                         
+      *-------------------------------------------------------------            
+           DISPLAY ' *------ BP13C321 ----- DATE : ' WS-DATE '----*'.           
+           DISPLAY ' '.                                                         
+           DISPLAY ' NO OF RECS READ FROM BP13K800  ' WS-K800-READ.             
+           DISPLAY '   **  CANCELLATION CASES       ' WS-K800-CANCEL.           
+           DISPLAY '   **  AMOUNT NOT TALLY         ' WS-K800-UNBAL.            
+           DISPLAY '   **  AMOUNT TALLY             ' WS-K800-BAL.              
+           DISPLAY '   **  RECS BY PASS             ' WS-K800-BYPASS.           
+           DISPLAY ' '.                                                         
+           DISPLAY ' NO OF RECS UPDATED TO BP13K800 ' WS-K800-REWRITE.          
+           DISPLAY ' '.                                                         
+           DISPLAY ' NO OF RECS WRITE TO BP13F120   ' WS-F120-WRITE.            
+           DISPLAY ' '.                                                         
+           DISPLAY ' NO OF RECS WRITE TO BP13F130   ' WS-F130-WRITE.            
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       400-CLOSE-ROUTINE.                                                       
+      *-------------------------------------------------------------            
+           CLOSE BP13K800                                                       
+                 BP13F120                                                       
+                 BP13F130.                                                      
+                                                                                
+           IF WS-BP13K800-STATUS NOT = 0                                        
+              DISPLAY 'ERROR CLOSING BP13K800 FILE ' WS-BP13K800-STATUS         
+              MOVE WS-BP13K800-STATUS TO RETURN-CODE.                           
+           STOP RUN.                                                            
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+

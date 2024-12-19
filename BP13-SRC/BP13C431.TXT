@@ -1,0 +1,742 @@
+      *------------------------*                                                
+       IDENTIFICATION DIVISION.                                                 
+      *------------------------*                                                
+       PROGRAM-ID.    BP13C431.                                                 
+       AUTHOR.        S B LIAN.                                                 
+      *DATE-WRITTEN.  11/01/85.                                                 
+                                                                                
+      * ====================================================== *                
+      *              ALLOCATION OF FLATS  (BP13)               *                
+      * ====================================================== *                
+      *                                                        *                
+      *    OBJECTIVE  :                                        *                
+      *      1. THIS PROGRAM USES THE ERROR-FREE SALES ORDER   *                
+      *         FILE FROM THE SALES MORTGAGE SYSTEM TO TAG     *                
+      *         FLATS AS SOLD. PROGRAM IS ONLY INTERESTED IN   *                
+      *         SALES ORDER THAT IS RAISED AT THE BRANCH       *                
+      *         OFFICES FOR TYPE 2A.   SALES ORDER RAISED BY   *                
+      *         SOC (TYPE 01, 10, 2 , 3 , 5A, 5B ) ARE IGNORED *                
+      *         PROGRAM WILL ALSO OUTPUT INTO THE LOG-FILE     *                
+      *         TRANSACTION TYPE '9' FOR GL INTER-FACE.  FOR   *                
+      *         HUDC UDMC PROJECT SCHEME 7911,7913,7914,7916   *                
+      *         7917 AND JTC PROJECT 7912 TRANSACTIONS ARE     *                
+      *         OUTPUT AS PER NORMAL BUT THESE TRANSACTIONS    *                
+      *         WILL BE ELIMINATED BY GL PROGRAMS.             *                
+      *                                                        *                
+      *      2. PROG ALSO USE SCH-ACC-NO TO ACCESS BM06K010,   *                
+      *         IF FOUND AND SINCE KEY ALREADY ISSUED,         *                
+      *         SYSTEM HAS TO DELETE THE REC FROM BM06K010.    *                
+      *                                                        *                
+      *      3. MOVE F065-ALLOC-SCH TO K110-ALLOC-SCH.         *                
+      *                                                        *                
+      *      4. OUTPUT K901-LOG-FILE TO UPDATE REGISTRATION    *                
+      *         SYSTEM AS KEY ISSUED.                          *                
+      *                                                        *                
+      *      5. AGENCY FLATS THAT ARE REPURCHASED ARE ALSO     *                
+      *         STOCK                                          *                
+      *                                                        *                
+      *    INPUT-OUTPUT FILE :                                 *                
+      *         1. BM06K110 (FLAT INVENTORY FILE)              *                
+      *         2. BM06K010 (PREP LIST FILE)                   *                
+      *                                                        *                
+      *    INPUT FILE :                                        *                
+      *         1. B02F065 (ACCEPTED SALES ORDER)              *                
+      *         2. C14K050 (AREA-SCHEME TABLE)                 *                
+      *         3. C14K040 (AREA-SCH-AC TABLE)                 *                
+      *         4. BC14K060 (NTC TABLE)                        *                
+      *                                                        *                
+      *    OUTPUT FILE :                                       *                
+      *         1. BM06K190 (LOG FILE - FLAT INV)              *                
+      *                                                        *                
+      *    LISTING:                                            *                
+      *         1. CONTROL LISTS (BP13L431B)                   *                
+      *                                                        *                
+      * = = = = = = = = = = = = = = = = = = = = = = = = = = =  *                
+      * CHG-NO  BY   ON       DESCRIPTION                      *                
+      * ------  --   --       -----------                      *                
+      * CXXXXXX LSB 870713 - BF UPD FIS, CHK DATE OF ACCEPTANCE*                
+      *                      = ZEROS OR SPACES                 *                
+      * CXXXXXX LSB 880322 - READ AREA OFFICE CD FROM AC13     *                
+      * C8811XX LSB 881116 - CHG AC13 TO BC14 - PBF FILE       *                
+      * C89SOC  LSB 890926 - ACCESS BM06K010 BY CU-REGN-NO     *                
+      *                      INSTEAD OF SCH-ACC-NO, SO DO NOT  *                
+      *                      DEFINE ALTX 3 FOR BM06K010.       *                
+      * C9010A6 LKH 901106 - TAKE OUT THE INFRA-STRUCTURAL-COST*                
+      *                      AND RESETTLEMENT COST.            *                
+      * C921286 RAZ 921120 - CHANGE OP-ID & TERM-ID TO USERID  *                
+      *                      IN BM06K190                       *                
+      * C921286 RAZ 930106 - INCLUDED P10K020 FOR UPDATION OF  *                
+      *                      DATE & ALLOC-TAG-R, REMOVE K901   *                
+      * C930317 LMS 930426 - TO CHANGE B02F065 TO AB03F806     *                
+      *                      DUE TO SMS PHASE 3B.              *                
+      * I920718 LMS 930426 - CONVERT TO COBOL II.              *                
+      * C930696 BSL 930621 - TO UPDATE CAT INFO FROM SMS.      *                
+      * SOC-PH8 RML 930811 - DELETE DETAIL LISTING             *                
+      *BP130042 SSS 951015 - GET PROPERTY DATA FROM PIDB       *                
+      *BP130042 LSB 951227 - GET BLK-NO FROM BM06K110          *                
+      *BP130418 SIA 980312 - CHGE THE FF. BM06 FILES:          *                
+      *                      K210-K100, K211-K110, K900-K190   *                
+      *BP130883 RAS 000808 - TO CHANGE BP13C904 TO BP13C913    *                
+      *BP132301 CLT 131203 - EXPAND BP13F430 TO 1000 BYTES.    *                
+      *BP133565 ESA1260309 - UPDATE SELLING PRICE              *                
+      *BP133783 PCL3251109 - ADD SY02F001 TO READ CURRENT DATE *                
+      *BP133771 PCL3010409 - TO OUTPUT THE BEFORE VALUES OF K110                
+      *                      TO BM06K190.                      *                
+      * ====================================================== *                
+                                                                                
+      *------------------------*                                                
+       ENVIRONMENT DIVISION.                                                    
+      *------------------------*                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-4341.                                               
+       OBJECT-COMPUTER. IBM-4341.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT AB03F806 ASSIGN TO AB03F806.                                  
+           SELECT SY02F001 ASSIGN TO SY02F001.                                  
+           SELECT BM06K110 ASSIGN TO BM06K110                                   
+                  ACCESS MODE IS RANDOM                                         
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY IS K110-KEY-FLD                                    
+                  FILE STATUS IS BM06K110-STATUS.                               
+           SELECT BM06K190 ASSIGN TO BM06K190                                   
+                  ACCESS MODE IS DYNAMIC                                        
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY IS K190-KEY                                        
+                  FILE STATUS IS BM06K190-STATUS.                               
+           SELECT BM06K100 ASSIGN TO BM06K100                                   
+                  ACCESS MODE IS DYNAMIC                                        
+                  ORGANIZATION IS INDEXED                                       
+                  RECORD KEY IS K100-KEY-FLD                                    
+                  FILE STATUS IS BM06K100-STATUS.                               
+           SELECT P13L431B ASSIGN TO P13L431B.                                  
+                                                                                
+                                                                                
+      *------------------------*                                                
+       DATA DIVISION.                                                           
+      *------------------------*                                                
+       FILE SECTION.                                                            
+                                                                                
+       COPY SY02F001.                                                           
+                                                                                
+       FD   AB03F806                                                            
+            RECORD CONTAINS 1000 CHARACTERS                                     
+            LABEL RECORDS ARE STANDARD.                                         
+       COPY AB03F806.                                                           
+                                                                                
+       FD   BM06K110                                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            LABEL RECORDS ARE STANDARD.                                         
+       COPY BM06K110.                                                           
+                                                                                
+       FD   BM06K190                                                            
+            RECORD CONTAINS 650 CHARACTERS                                      
+            LABEL RECORDS ARE STANDARD.                                         
+       COPY BM06K190.                                                           
+                                                                                
+       FD   BM06K100                                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            LABEL RECORDS ARE STANDARD.                                         
+       COPY BM06K100.                                                           
+                                                                                
+       FD  P13L431B                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           LABEL RECORDS ARE OMITTED                                            
+           RECORDING MODE IS F.                                                 
+       01  PRINT-REC-2                     PIC X(132).                          
+                                                                                
+                                                                                
+      *------------------------*                                                
+       WORKING-STORAGE SECTION.                                                 
+      *------------------------*                                                
+       01  WS-SWITCHES.                                                         
+           05  WS-EOF              PIC X     VALUE 'N'.                         
+           05  WS-F001-EOF         PIC X(1)  VALUE 'N'.                         
+               88 EOF-F001                   VALUE 'Y'.                         
+                                                                                
+       01  REC-K110-FOUND-FLAG     PIC X     VALUE 'N'.                         
+           88  REC-K110-FOUND                VALUE 'Y'.                         
+                                                                                
+       01  RM-PTR                  PIC 9     VALUE 0.                           
+       01  WS-TME-SYSTEM.                                                       
+           05  WS-TME-HHMMSS.                                                   
+               10  WS-HH           PIC X(2).                                    
+               10  WS-MM           PIC X(2).                                    
+               10  WS-SS           PIC X(2).                                    
+           05  FILLER              PIC X(2).                                    
+                                                                                
+       01  WS-EDITED-TIME.                                                      
+           05  WS-SYS-TIME         PIC X(6).                                    
+           05  WS-MICRO-SEC        PIC 9.                                       
+                                                                                
+       01  WS-EDITED-DATE.                                                      
+           05  WS-EDT-DD           PIC 99.                                      
+           05  FILLER              PIC X      VALUE '/'.                        
+           05  WS-EDT-MM           PIC 99.                                      
+           05  FILLER              PIC X      VALUE '/'.                        
+           05  WS-EDT-CC           PIC 99.                                      
+           05  WS-EDT-YY           PIC 99.                                      
+                                                                                
+       01  WS-DTE-CURRENT.                                                      
+           05  WS-CC               PIC 99.                                      
+           05  WS-CURR-YYMMDD.                                                  
+               10  WS-YY           PIC 99.                                      
+               10  WS-MM           PIC 99.                                      
+               10  WS-DD           PIC 99.                                      
+                                                                                
+       01  WS-TEMP-DATE            PIC X(8).                                    
+                                                                                
+       01  WS-SCH-ACC-NO.                                                       
+           05  WS-SCH              PIC X(4).                                    
+           05  WS-ACC              PIC X(4).                                    
+           05  WS-CDG              PIC X.                                       
+           05  WS-ACC-TYPE         PIC X(2).                                    
+                                                                                
+       01  WS-NUM-SCHEME.                                                       
+           05  WS-SCHEME           PIC X(4).                                    
+           05  WS-CHK              PIC X.                                       
+                                                                                
+       01  WS-USERID.                                                           
+           05  WS-OP-ID            PIC X(3).                                    
+           05  WS-TERM-ID          PIC X(4).                                    
+                                                                                
+       01  WS-ACCTCHK.                                                          
+           05  WS-ACCNT            PIC X(4).                                    
+           05  WS-CHECK            PIC X.                                       
+                                                                                
+       01  WS-CDE-TC               PIC X(2)     VALUE SPACES.                   
+       01  WS-CDE-CC               PIC X(2)     VALUE SPACES.                   
+       01  WS-CDE-BO               PIC X(2)     VALUE SPACES.                   
+                                                                                
+       01  BM06K110-STATUS.                                                     
+           05  BM06K110-STATUS1    PIC 9        VALUE ZEROS.                    
+           05  BM06K110-STATUS2    PIC 9        VALUE ZEROS.                    
+       01  BM06K190-STATUS         PIC 99       VALUE ZEROS.                    
+       01  BM06K100-STATUS         PIC 99       VALUE ZEROS.                    
+       01  WS-CURRPRICE-UPD        PIC X        VALUE 'N'.                      
+       01  WS-NUMBER               PIC 99       VALUE 99.                       
+       01  WS-NUMBER-1             PIC 99       VALUE 99.                       
+       01  WS-SEC-COUNT            PIC 9        VALUE 0.                        
+       01  NO-OF-PAGE              PIC 9(5)     VALUE ZEROS.                    
+       01  NO-OF-PAGE-1            PIC 9(5)     VALUE ZEROS.                    
+       01  NO-AREA-OFF             PIC 9(5)     VALUE ZEROS.                    
+       01  PRE-AREA                PIC X(2)     VALUE SPACES.                   
+       01  TOT-AREA-OFF            PIC 9(5)     VALUE ZEROS.                    
+       01  NO-HUDC-NON-HDB         PIC 9(5)     VALUE ZEROS.                    
+       01  NO-F806-READ            PIC 9(5)     VALUE ZEROS.                    
+       01  NO-VALID-F806           PIC 9(5)     VALUE ZEROS.                    
+       01  NO-HUDC-REP-ST-FLAT     PIC 9(5)     VALUE ZEROS.                    
+       01  WS-PREV-TAG             PIC 9(5)     VALUE ZEROS.                    
+       01  NO-FIS-UPDATED          PIC 9(5)     VALUE ZEROS.                    
+       01  SQL-CODE                PIC 9(4).                                    
+                                                                                
+      *-------------------------------------------------------------*           
+      *        LINKAGE FOR SUB-PROGRAM BP13C913                     *           
+      *-------------------------------------------------------------*           
+       01  WS-LINK-REC.                                                         
+           05  WS-LINK-NUM-SCH-ACC.                                             
+               10  WS-LINK-NUM-SCH     PIC X(4).                                
+               10  WS-LINK-NUM-ACC     PIC X(5).                                
+                                                                                
+       COPY P13COMM8.                                                           
+                                                                                
+      *-------------------------------------------------------------*           
+      *           LAYOUT FOR CONTROL LIST (P13L431B)                *           
+      *-------------------------------------------------------------*           
+       01  L431B-PR-HEAD-1.                                                     
+           05  FILLER              PIC X(9)      VALUE '  PAGE : '.             
+           05  431B-PAGE           PIC ZZZZ9.                                   
+           05  FILLER              PIC X(27)     VALUE SPACES.                  
+           05  FILLER              PIC X(29)     VALUE                          
+               'SYSTEM  OF  COMMITMENT    '.                                    
+           05  FILLER              PIC X(32)     VALUE SPACES.                  
+           05  FILLER              PIC X(12)     VALUE                          
+               'LISTING-ID :'.                                                  
+           05  431B-LIST           PIC X(11).                                   
+                                                                                
+       01  L431B-PR-HEAD-2.                                                     
+           05  FILLER              PIC X(30)     VALUE SPACES.                  
+           05  FILLER              PIC X(72)     VALUE                          
+           'CONTROL LIST OF REVESTED FLAT SOLD SALES TYPE 2A'.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE : '.               
+           05  431C-DATE           PIC X(10).                                   
+                                                                                
+       01  L431B-PR-HEAD-3.                                                     
+           05  FILLER              PIC X(30)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               '1)  NUMBER OF F806 READ             = '.                        
+           05  431C-F806-READ      PIC ZZZZ9.                                   
+                                                                                
+       01  L431B-PR-HEAD-4.                                                     
+           05  FILLER              PIC X(30)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               '2)  NUMBER OF F806 VALID SALES-TYPE = '.                        
+           05  431C-VALID-F806     PIC ZZZZ9.                                   
+                                                                                
+       01  L431B-PR-HEAD-4A.                                                    
+           05  FILLER              PIC X(30)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               '    A) NO. CASES PREVIOUSLY UPDATED = '.                        
+           05  431C-PREV-TAG       PIC ZZZZ9.                                   
+                                                                                
+       01  L431B-PR-HEAD-4B.                                                    
+           05  FILLER              PIC X(30)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               '    B) NO. CASES UPDATED AS SOLD    = '.                        
+           05  431C-FIS-UPDATED    PIC ZZZZ9.                                   
+                                                                                
+       01  L431B-PR-HEAD-5.                                                     
+           05  FILLER              PIC X(25)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               'PLEASE CHECK : '.                                               
+                                                                                
+       01  L431B-PR-HEAD-5D.                                                    
+           05  FILLER              PIC X(30)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               '2 = 2A) + 2B)'.                                                 
+                                                                                
+                                                                                
+      *-------------------*                                                     
+       PROCEDURE DIVISION.                                                      
+      *-------------------*                                                     
+                                                                                
+      *-------------------*                                                     
+       MAIN.                                                                    
+      *-------------------*                                                     
+           PERFORM 100-OPENING-ROUTINE THRU 100-EXIT.                           
+           PERFORM 150-READ-DATA THRU 150-EXIT.                                 
+           PERFORM 200-READ-AND-CHECK-SALE-TY THRU 200-EXIT                     
+                                          UNTIL WS-EOF = 'Y'.                   
+           PERFORM 800-PRINT-CONTROL-LIST THRU 800-EXIT.                        
+           PERFORM 900-CLOSING-ROUTINE THRU 900-EXIT.                           
+                                                                                
+                                                                                
+      *-------------------*                                                     
+       100-OPENING-ROUTINE.                                                     
+      *-------------------*                                                     
+           OPEN INPUT  AB03F806                                                 
+                       SY02F001                                                 
+                I-O    BM06K110                                                 
+                       BM06K100                                                 
+                       BM06K190                                                 
+                OUTPUT P13L431B.                                                
+                                                                                
+           IF BM06K100-STATUS NOT = ZEROS AND '97'                              
+              DISPLAY 'OPENING ERROR, K100-STATUS ' BM06K100-STATUS             
+              MOVE BM06K100-STATUS TO RETURN-CODE                               
+              PERFORM 900-CLOSING-ROUTINE THRU 900-EXIT.                        
+           IF BM06K110-STATUS NOT = ZEROS AND '97'                              
+              DISPLAY 'OPENING ERROR, K110-STATUS ' BM06K110-STATUS             
+              MOVE BM06K110-STATUS TO RETURN-CODE                               
+              PERFORM 900-CLOSING-ROUTINE THRU 900-EXIT.                        
+           IF BM06K190-STATUS NOT = ZEROS AND '97'                              
+              DISPLAY 'OPENING ERROR, K190-STATUS ' BM06K190-STATUS             
+              MOVE BM06K190-STATUS TO RETURN-CODE                               
+              PERFORM 900-CLOSING-ROUTINE THRU 900-EXIT.                        
+                                                                                
+           READ SY02F001 AT END MOVE 'Y'  TO WS-F001-EOF.                       
+                                                                                
+           IF EOF-F001                                                          
+              DISPLAY 'RECORD NOT FOUND IN SY01F001 '                           
+              DISPLAY 'PROCESSING TERMINATED '                                  
+              PERFORM 900-CLOSING-ROUTINE             THRU 900-EXIT             
+           ELSE                                                                 
+              MOVE F001-DTE-CURRENT                   TO WS-DTE-CURRENT         
+           END-IF.                                                              
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------*                                                     
+       150-READ-DATA.                                                           
+      *-------------------*                                                     
+            MOVE 'N'    TO   WS-CURRPRICE-UPD.                                  
+                                                                                
+            READ AB03F806 AT END MOVE 'Y' TO WS-EOF                             
+                        GO TO 150-EXIT.                                         
+            ADD 1 TO NO-F806-READ.                                              
+                                                                                
+       150-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+                                                                                
+      * ========================================================== *            
+      *   1. READ FILE AB03F806.                                   *            
+      *   2. UPDATE FLAT INVENTORY FOR SALES-TYPE = 2A             *            
+      *   4. THOSE REJECT-CODE = 2 MEANS REJECTED BY FIS IN PREV   *            
+      *      STEP. HOWEVER REJECT-CODES SUCH AS THOSE REJECTED BY  *            
+      *      DATA-ENTRY PROGRAMS ARE OK TO FIS.                    *            
+      * ========================================================== *            
+      *--------------------------*                                              
+       200-READ-AND-CHECK-SALE-TY.                                              
+      *--------------------------*                                              
+           IF (F806-CDE-SALES-TYP = '2A') AND                                   
+              (F806-CDE-ERR-REJECT NOT = '2')                                   
+               ADD 1 TO NO-VALID-F806                                           
+               PERFORM 250-PROCESS-F806 THRU 250-EXIT.                          
+           PERFORM 150-READ-DATA THRU 150-EXIT.                                 
+                                                                                
+       200-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+                                                                                
+      * ======================================================== *              
+      *                   TAG FLAT AS SOLD                       *              
+      *  AMONG THOSE NOT REJECTED BY FIS ARE THOSE THAT'VE BEEN  *              
+      *  PREV UPDATED IN FIS, THESE ARE TO BE IGNORED            *              
+      * ======================================================== *              
+      *----------------*                                                        
+       250-PROCESS-F806.                                                        
+      *----------------*                                                        
+            MOVE 'N'                     TO REC-K110-FOUND-FLAG.                
+            MOVE F806-DTE-EXE-SALE-AGRMT TO WS-TEMP-DATE.                       
+            PERFORM 300-ACCESS-FILE-BM06K110 THRU 300-EXIT.                     
+                                                                                
+            IF REC-K110-FOUND                                                   
+                IF K110-DTE-KEY-ISSUED = WS-TEMP-DATE                           
+                    ADD 1 TO WS-PREV-TAG                                        
+                ELSE                                                            
+                    PERFORM 700-CALL-BP13C913   THRU 700-EXIT                   
+                    PERFORM 320-OUTPUT-K190     THRU 320-EXIT                   
+                    PERFORM 350-UPDATE-K110     THRU 350-EXIT                   
+                    PERFORM 450-OUTPUT-K190     THRU 450-EXIT                   
+                    PERFORM 460-UPDATE-BM06K100 THRU 460-EXIT.                  
+                                                                                
+       250-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      * ======================================================== *              
+      *       USE F806-NUM-HDB-REF TO ACCESS FILE BM06K110.      *              
+      * ======================================================== *              
+      *------------------------*                                                
+       300-ACCESS-FILE-BM06K110.                                                
+      *------------------------*                                                
+           MOVE F806-NUM-HDB-REF TO WS-SCH-ACC-NO.                              
+           MOVE WS-SCH-ACC-NO    TO K110-KEY-FLD.                               
+                                                                                
+           READ BM06K110.                                                       
+           IF BM06K110-STATUS NOT = ZEROS                                       
+               IF BM06K110-STATUS = '23'                                        
+                  DISPLAY 'REC NOT FOUND IN K110 = ' BM06K110-STATUS            
+                  DISPLAY 'WS-SCH-ACC-NO ' WS-SCH-ACC-NO                        
+               ELSE                                                             
+                  DISPLAY 'ERROR READING BM06K110= ' BM06K110-STATUS            
+                  DISPLAY 'WS-SCH-ACC-NO ' WS-SCH-ACC-NO                        
+                  PERFORM 900-CLOSING-ROUTINE THRU 900-EXIT                     
+           ELSE                                                                 
+               MOVE 'Y' TO REC-K110-FOUND-FLAG.                                 
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      * ======================================================== *              
+      *    OUTPUT BM06K190 (LOG-FILE), THE FIRST 250 CHARACTERS  *              
+      *    OF THE LOG-FILE IS EXACTLY THE SAME AS FLAT INVENTORY *              
+      *    RECORD.                                               *              
+      *    MOVE WS-ACC TO TERM-ID TO MAKE KEY FLD UNIQUE         *              
+      * ======================================================== *              
+      *---------------*                                                         
+       320-OUTPUT-K190.                                                         
+      *---------------*                                                         
+                                                                                
+           IF WS-CURRPRICE-UPD = 'Y'                                            
+              MOVE SPACES                  TO K190-REC1                 00161000
+              MOVE K110-REC                TO K190-REC1                 00161000
+              MOVE WS-DTE-CURRENT          TO K190-SYS-DATE                     
+              MOVE F806-DTE-EXE-SALE-AGRMT TO K190-DTE-TRANS                    
+                                                                                
+              ACCEPT WS-TME-SYSTEM FROM TIME                                    
+              MOVE WS-TME-HHMMSS       TO WS-SYS-TIME                           
+              ADD 1                    TO WS-SEC-COUNT                          
+              MOVE WS-SEC-COUNT        TO WS-MICRO-SEC                          
+              MOVE WS-EDITED-TIME      TO K190-SYS-TIME                         
+              MOVE 'BP13C431'          TO K190-USER-ID                          
+              MOVE 'UPSP00'            TO K190-TRANS-TYPE                       
+                                                                                
+              WRITE K190-REC1                                                   
+           END-IF.                                                              
+                                                                                
+       320-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      * ======================================================== *              
+      *     UPDATE FLAT INVENTORY (BM06K110)                     *              
+      * ======================================================== *              
+      *---------------*                                                         
+       350-UPDATE-K110.                                                         
+      *---------------*                                                         
+            MOVE F806-DTE-EXE-SALE-AGRMT TO K110-DTE-SO-EXECUTING               
+                                            K110-DTE-KEY-ISSUED.                
+                                                                                
+      **  IF USER HAS NOT PREVIOUSLY KEY IN THE ACCEPTANCE DATE FOR             
+      **  THIS FLAT, THEN TAKE ACCEPTANCE DATE TO BE SOLD DATE OR               
+      **  EXECUTION DATE ELSE LEAVE IT AS IT IS.                                
+                                                                                
+            IF K110-DTE-ACCEPTANCE = '00000000' OR SPACES OR LOW-VALUES         
+               MOVE F806-DTE-EXE-SALE-AGRMT TO K110-DTE-ACCEPTANCE.             
+                                                                                
+            MOVE WS-DTE-CURRENT             TO K110-DTE-LAST-UPD.               
+            MOVE WS-CC OF WS-DTE-CURRENT    TO WS-EDT-CC.                       
+            MOVE WS-YY OF WS-DTE-CURRENT    TO WS-EDT-YY.                       
+            MOVE WS-MM OF WS-DTE-CURRENT    TO WS-EDT-MM.                       
+            MOVE WS-DD OF WS-DTE-CURRENT    TO WS-EDT-DD.                       
+                                                                                
+            MOVE F806-NUM-ORIG-REG TO K110-REGN-NO.                             
+                                                                                
+            IF F806-CDE-HSEHOLD-CAT = 'M'                                       
+               MOVE '1' TO K110-CATEGORY                                        
+            ELSE                                                                
+            IF F806-CDE-HSEHOLD-CAT = 'C'                                       
+               MOVE '2' TO K110-CATEGORY                                        
+            ELSE                                                                
+            IF F806-CDE-HSEHOLD-CAT = 'I'                                       
+               MOVE '3' TO K110-CATEGORY                                        
+            ELSE                                                                
+            IF F806-CDE-HSEHOLD-CAT = 'O'                                       
+               MOVE '4' TO K110-CATEGORY.                                       
+            IF F806-CDE-ALLOC-SCH NOT = SPACES                                  
+                MOVE F806-CDE-ALLOC-SCH TO K110-ALLOC-SCH.                      
+                                                                                
+           IF K110-CURR-SELLING-PRICE = 99999999 OR 99999990 OR 99999900        
+                                     OR 99999000 OR 99990000 OR  9999999        
+                                     OR   999999 OR 99999 OR 0                  
+              MOVE 'Y'  TO WS-CURRPRICE-UPD                                     
+              MOVE F806-AMT-SELL-PRICE TO  K110-CURR-SELLING-PRICE              
+                                           K110-1ST-OFFER-SELLING-PRICE.        
+                                                                                
+            ADD 1 TO NO-FIS-UPDATED.                                            
+            REWRITE K110-REC.                                                   
+            IF BM06K110-STATUS1 NOT = 0                                         
+                  DISPLAY 'REWRITE BM06K110-STATUS = ' BM06K110-STATUS          
+                  DISPLAY 'K110-KEY-FLD ' K110-KEY-FLD.                         
+                                                                                
+       350-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+                                                                                
+      * ======================================================== *              
+      *    OUTPUT BM06K190 (LOG-FILE), THE FIRST 250 CHARACTERS  *              
+      *    OF THE LOG-FILE IS EXACTLY THE SAME AS FLAT INVENTORY *              
+      *    RECORD.                                               *              
+      *    MOVE WS-ACC TO TERM-ID TO MAKE KEY FLD UNIQUE         *              
+      * ======================================================== *              
+      *---------------*                                                         
+       450-OUTPUT-K190.                                                         
+      *---------------*                                                         
+           MOVE SPACES                  TO K190-REC1.                   00161000
+           MOVE K110-REC                TO K190-REC1.                   00161000
+           MOVE WS-DTE-CURRENT          TO K190-SYS-DATE.                       
+           MOVE F806-DTE-EXE-SALE-AGRMT TO K190-DTE-TRANS.                      
+                                                                                
+           ACCEPT WS-TME-SYSTEM FROM TIME.                                      
+           MOVE WS-TME-HHMMSS       TO WS-SYS-TIME.                             
+           ADD 1                    TO WS-SEC-COUNT.                            
+           MOVE WS-SEC-COUNT        TO WS-MICRO-SEC.                            
+           MOVE WS-EDITED-TIME      TO K190-SYS-TIME.                           
+           MOVE 'MCG'               TO WS-OP-ID.                                
+           MOVE WS-ACC              TO WS-TERM-ID.                              
+           MOVE WS-USERID           TO K190-USER-ID.                            
+           ADD 1                    TO NO-HUDC-REP-ST-FLAT.                     
+           MOVE '030109'            TO K190-TRANS-TYPE.                         
+                                                                                
+            IF ((K110-STRUCTURAL-COST IS NUMERIC) AND                           
+               (K110-LAND-COST IS NUMERIC))                                     
+              IF K110-STRUCTURAL-COST NOT = ZEROS                               
+                     AND K110-FLAT-STATUS NOT = 'RP'                            
+                     AND K110-FLAT-STATUS NOT = 'RR'                            
+                MOVE K110-LAND-COST       TO K190-NEW-LAND-COST                 
+                MOVE K110-STRUCTURAL-COST TO K190-NEW-STRUCTURAL-COST           
+              ELSE                                                              
+                MOVE ZEROS TO K190-NEW-LAND-COST,                               
+                              K190-NEW-STRUCTURAL-COST                          
+              END-IF                                                            
+            ELSE                                                                
+                MOVE ZEROS TO K190-NEW-LAND-COST,                               
+                              K190-NEW-STRUCTURAL-COST.                         
+                                                                                
+           WRITE K190-REC1.                                                     
+                                                                                
+                                                                                
+       450-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------*                                                     
+       460-UPDATE-BM06K100.                                                     
+      *-------------------*                                                     
+           MOVE K110-ESTATE          TO K100-ESTATE.                            
+           MOVE K110-NEIGHBOURHOOD   TO K100-NEIGHBOURHOOD.                     
+           MOVE K110-CONTRACT-NO     TO K100-CONTRACT-NO.                       
+           MOVE COMM8-NUM-BLK        TO K100-BLK-NO.                            
+                                                                                
+           READ BM06K100.                                                       
+                                                                                
+           IF BM06K100-STATUS NOT = ZEROES                                      
+              DISPLAY 'ERROR IN READING BM06K100  RC = ' BM06K100-STATUS        
+              MOVE BM06K100-STATUS TO RETURN-CODE                               
+              GO TO 900-CLOSING-ROUTINE.                                        
+                                                                                
+           PERFORM 470-WRITE-BM06K190 THRU   470-EXIT.                          
+           PERFORM 465-SET-RM-POINTER THRU   465-EXIT.                          
+                                                                                
+           IF K100-BAL-ALLOCN(RM-PTR) = 0                                       
+              GO TO 460-EXIT                                                    
+           ELSE                                                                 
+              SUBTRACT 1 FROM K100-BAL-ALLOCN(RM-PTR).                          
+                                                                                
+           IF F806-CDE-HSEHOLD-CAT = 'M'                                        
+              ADD 1 TO K100-CAT1-ACCEPT(RM-PTR).                                
+           IF F806-CDE-HSEHOLD-CAT = 'C'                                        
+              ADD 1 TO K100-CAT2-ACCEPT(RM-PTR).                                
+           IF F806-CDE-HSEHOLD-CAT = 'I'                                        
+              ADD 1 TO K100-CAT3-ACCEPT(RM-PTR).                                
+                                                                                
+           REWRITE K100-REC.                                                    
+                                                                                
+           IF BM06K100-STATUS NOT = ZEROES                                      
+              DISPLAY 'ERROR IN UPDATING BM06K100 RC=' BM06K100-STATUS          
+              MOVE BM06K100-STATUS TO RETURN-CODE                               
+              GO TO 900-CLOSING-ROUTINE.                                        
+                                                                                
+       460-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *------------------*                                                      
+       465-SET-RM-POINTER.                                                      
+      *------------------*                                                      
+           IF COMM8-CDE-TYP-ACTLUSE = '01'                                      
+                MOVE 1 TO RM-PTR.                                               
+                                                                                
+           IF COMM8-CDE-TYP-ACTLUSE = '02'                                      
+                MOVE 2 TO RM-PTR.                                               
+                                                                                
+           IF COMM8-CDE-TYP-ACTLUSE = '03'                                      
+                MOVE 3 TO RM-PTR.                                               
+                                                                                
+           IF COMM8-CDE-TYP-ACTLUSE = '04'                                      
+                IF COMM8-CDE-MODL-DESG = '06'                                   
+                   MOVE 5 TO RM-PTR                                             
+                ELSE                                                            
+                   MOVE 4 TO RM-PTR.                                            
+                                                                                
+           IF COMM8-CDE-TYP-ACTLUSE = '05'                                      
+                MOVE 6 TO RM-PTR.                                               
+                                                                                
+           IF COMM8-CDE-TYP-ACTLUSE = '06'                                      
+                MOVE 7 TO RM-PTR.                                               
+                                                                                
+           IF COMM8-CDE-TYP-ACTLUSE = '07'                                      
+                MOVE 8 TO RM-PTR.                                               
+                                                                                
+           IF COMM8-CDE-TYP-ACTLUSE = '08'                                      
+                MOVE 9 TO RM-PTR.                                               
+                                                                                
+       465-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      * ======================================================== *              
+      *                  WRITE TO LOG FILES                      *              
+      * ======================================================== *              
+      *------------------*                                                      
+       470-WRITE-BM06K190.                                                      
+      *------------------*                                                      
+           MOVE SPACES                  TO K190-REC2.                           
+           MOVE K100-REC                TO K190-REC2.                           
+           MOVE WS-DTE-CURRENT          TO K190-SYS-DATE.                       
+           ACCEPT WS-TME-SYSTEM FROM TIME.                                      
+           MOVE WS-TME-HHMMSS           TO WS-SYS-TIME.                         
+           ADD 1                        TO WS-SEC-COUNT.                        
+           MOVE WS-SEC-COUNT            TO WS-MICRO-SEC.                        
+           MOVE WS-EDITED-TIME          TO K190-SYS-TIME.                       
+           MOVE '050000'                TO K190-TRANS-TYPE.                     
+           MOVE WS-USERID               TO K190-USER-ID.                        
+                                                                                
+           WRITE K190-REC2.                                                     
+           IF BM06K190-STATUS NOT = ZEROES                                      
+              DISPLAY 'ERROR IN WRITING BM06K190 RC=' BM06K190-STATUS           
+              MOVE BM06K190-STATUS TO RETURN-CODE                               
+              GO TO 900-CLOSING-ROUTINE.                                        
+                                                                                
+       470-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *------------------*                                                      
+       700-CALL-BP13C913.                                                       
+      *------------------*                                                      
+           IF K110-SCH-ACC-NO NOT = SPACES AND ZEROES AND LOW-VALUES            
+              MOVE SPACES               TO BP13COMM8-REC                        
+              INITIALIZE                   BP13COMM8-REC.                       
+                                                                                
+              MOVE K110-SCH-ACC-NO      TO WS-LINK-REC.                         
+              CALL 'BP13C913' USING WS-LINK-REC, BP13COMM8-REC.                 
+                                                                                
+              IF COMM8-CDE-SYSERR NOT = 0                                       
+                 MOVE COMM8-CDE-SYSERR TO SQL-CODE                              
+                 DISPLAY 'K110-SCH-ACC-NO = ' K110-SCH-ACC-NO                   
+                 IF COMM8-CDE-SYSERR = 100                                      
+                    DISPLAY 'SCH-ACC NOT FOUND IN PBF TABLE ' SQL-CODE          
+                 ELSE                                                           
+                    DISPLAY 'ERROR IN READING PBF TABLE ' SQL-CODE.             
+                                                                                
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      * ======================================================== *              
+      *       PRINT CONTROL LIST FOR TAGGING FLATS AS SOLD       *              
+      * ======================================================== *              
+      *----------------------*                                                  
+       800-PRINT-CONTROL-LIST.                                                  
+      *----------------------*                                                  
+            MOVE 1            TO 431B-PAGE.                                     
+            MOVE 'BP13-L431B' TO 431B-LIST.                                     
+            WRITE PRINT-REC-2 FROM L431B-PR-HEAD-1 AFTER PAGE.                  
+                                                                                
+            MOVE WS-CC OF WS-DTE-CURRENT    TO WS-EDT-CC.                       
+            MOVE WS-YY OF WS-DTE-CURRENT    TO WS-EDT-YY.                       
+            MOVE WS-MM OF WS-DTE-CURRENT    TO WS-EDT-MM.                       
+            MOVE WS-DD OF WS-DTE-CURRENT    TO WS-EDT-DD.                       
+            MOVE WS-EDITED-DATE             TO 431C-DATE.                       
+            WRITE PRINT-REC-2 FROM L431B-PR-HEAD-2  AFTER 2.                    
+            MOVE NO-F806-READ   TO 431C-F806-READ.                              
+            WRITE PRINT-REC-2 FROM L431B-PR-HEAD-3  AFTER 5.                    
+            MOVE NO-VALID-F806  TO 431C-VALID-F806.                             
+            WRITE PRINT-REC-2 FROM L431B-PR-HEAD-4  AFTER 5.                    
+            MOVE WS-PREV-TAG    TO 431C-PREV-TAG.                               
+            WRITE PRINT-REC-2 FROM L431B-PR-HEAD-4A AFTER 3.                    
+            MOVE NO-FIS-UPDATED TO 431C-FIS-UPDATED.                            
+            WRITE PRINT-REC-2 FROM L431B-PR-HEAD-4B AFTER 3.                    
+            WRITE PRINT-REC-2 FROM L431B-PR-HEAD-5  AFTER 5.                    
+            WRITE PRINT-REC-2 FROM L431B-PR-HEAD-5D AFTER 2.                    
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------*                                                     
+       900-CLOSING-ROUTINE.                                                     
+      *-------------------*                                                     
+           CLOSE AB03F806                                                       
+                 SY02F001                                                       
+                 BM06K110                                                       
+                 BM06K100                                                       
+                 BM06K190                                                       
+                 P13L431B.                                                      
+                                                                                
+           IF BM06K110-STATUS NOT = ZEROS AND '97'                              
+             DISPLAY 'CLOSING ERROR, K110-STATUS ' BM06K110-STATUS.             
+           IF BM06K100-STATUS NOT = ZEROS AND '97'                              
+             DISPLAY 'CLOSING ERROR, K100-STATUS ' BM06K100-STATUS.             
+           IF BM06K190-STATUS NOT = ZEROS AND '97'                              
+             DISPLAY 'CLOSING ERROR, K190-STATUS ' BM06K190-STATUS.             
+           STOP RUN.                                                            
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+

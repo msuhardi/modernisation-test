@@ -1,0 +1,1453 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C172.                                                 
+      *AUTHOR.        CKK7.                                                     
+      *DATE-WRITTEN.  24/08/04.                                                 
+      * ============================================================== *        
+      *  OBJECTIVES : TO SEND EMAIL BASED ON THE DIFFERNT INPUT        *        
+      *               'BO' - TO BO BORROWER OR OTHERS BORROWER         *        
+      *               'NB' - TO NON-BO BORROWER OR OTHERS BORROWER     *        
+      *               'SO' - TO CSM ON KEYS RETURNED BACK TO SOU       *        
+      *               'SO' - TO CSM ON KEYS RETURNED BACK TO SOU       *        
+      *             : AFTER SENDING THE EMAIL, UPDATE K022.            *        
+      * ************************************************************** *        
+      *  INPUT FILES  - BM06F120 (BM06.F120.EMAIL.BORROWER)            *        
+      *  I-O FILE     - BP13K022                                       *        
+      *  OUTPUT FILES - BP13MAIL (BP13.MAILOUT.C172.XXX)               *        
+      * ************************************************************** *        
+      * CHG REQ# DATE     BY   REMARKS                                 *        
+      * -------- ----     --   -------                                 *        
+      * BP132551 24/08/04 CKK7 NEW PROGRAM.                            *        
+      * BP133004 10/03/07 CKK7 INCLUDE LWK10 TO CC LIST                *        
+      * BP133509 15/01/09 DW5  Remove NCH6 from CC LIST                *        
+      * BP134162 21/03/11 ZDD1 CHANGE SIGNATORY                        *        
+      * BP134603 13/07/12 IMC1 CHANGE EMAIL CONTENTS                   *        
+      * BP134603 13/08/12 IMC1 ADD CHANGES TO NON-BO MAIL, FIX         *        
+      *                        MAIL SENDING ISSUE TO BO ADMIN          *        
+      *                        ADD NEW BP13K435 TO RETRIEVE BO CODE    *        
+      * BP135163 11/12/13 RJE1 CHANGE EMAIL CONTENTS                   *        
+      * BP135374 21/10/14 PCL4 TO CATER FOR ADDITIONAL STATEMENT IN    *        
+      *                        EMAIL TO CSM ON KEY RETURN              *        
+      * BP136082 27/01/16 KVL1 TO CHANGE LWK10 EMAIL TO LONG NAME,     *        
+      *                        ADDED CC RCPTS:                         *        
+      *                        SHAMSURIANOR_SIBENGAT@HDB.GOV.SG        *        
+      *                        OH_MENG_HUAT@HDB.GOV.SG                 *        
+      *                        KOGILA_RAMARAJAN@HDB.GOV.SG             *        
+      *                        CHANGED SENDER NAME FR SU1 TO HWM2      *        
+      *                        AND USED BP13CCNT TO GET LONG NAME EMAIL*        
+      *                        OF OTHER RECIPIENTS                     *        
+      * BP138257 19/03/20 KV5  REMOVED THE SANGEETHA FROM COMMENTS     *        
+      * ============================================================== *        
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3083.                                               
+       OBJECT-COMPUTER. IBM-3083.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BM06F120 ASSIGN       TO BM06F120.                            
+                                                                                
+           SELECT BP13K435 ASSIGN       TO BP13K435                             
+                  ACCESS MODE           IS DYNAMIC                              
+                  ORGANIZATION          IS INDEXED                              
+                  RECORD KEY            IS K435-KEY-FLD                         
+                  FILE STATUS           IS BP13K435-STATUS.                     
+                                                                                
+           SELECT BP13K022 ASSIGN       TO BP13K022                             
+                  ACCESS MODE           IS RANDOM                               
+                  ORGANIZATION          IS INDEXED                              
+                  RECORD KEY            IS K022-KEY-FLD                         
+                  ALTERNATE RECORD KEY  IS K022-NUM-REGN                        
+                  FILE STATUS           IS BP13K022-STATUS.                     
+                                                                                
+           SELECT BP13MAIL ASSIGN       TO BP13MAIL.                            
+                                                                                
+      ******************************************************************        
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      ******************************************************************        
+                                                                                
+       FD  BM06F120                                                             
+           RECORDING MODE  IS F                                                 
+           RECORD CONTAINS 700 CHARACTERS.                                      
+       COPY BM06F120.                                                           
+                                                                                
+       FD  BP13K022                                                             
+           RECORD CONTAINS 100 CHARACTERS.                                      
+       COPY BP13K022.                                                           
+                                                                                
+       FD   BP13K435.                                                           
+       COPY BP13K435.                                                           
+                                                                                
+       FD  BP13MAIL                                                             
+           RECORD CONTAINS 80 CHARACTERS                                        
+           RECORDING  MODE  IS F.                                               
+       01  MAIL-PRTREC                       PIC X(80).                         
+                                                                                
+      ******************************************************************        
+       WORKING-STORAGE SECTION.                                                 
+      ******************************************************************        
+                                                                                
+       01  WS-FILE-STATUS.                                                      
+           05  BP13K022-STATUS         PIC 9(2)    VALUE 0.                     
+           05  BP13K435-STATUS         PIC 9(2)    VALUE ZEROS.                 
+           05  WS-F120-EOF             PIC X       VALUE 'N'.                   
+           05  WS-OIC-FND              PIC X       VALUE 'N'.                   
+           05  WS-CSM-FND              PIC X       VALUE 'N'.                   
+           05  WS-BORROWER-FND         PIC X       VALUE 'N'.                   
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  BM06F120-READ           PIC 9(8)    VALUE 0.                     
+           05  WS-ROW-CNT              PIC 9(03)   VALUE 0.                     
+           05  WS-TXT-CNT              PIC 9(03)   VALUE 0.                     
+           05  WS-OIC-CNT              PIC 9(03)   VALUE 0.                     
+           05  WS-MAIL-WROTE           PIC 9(8)    VALUE 0.                     
+           05  WS-K022-NOTFND          PIC 9(03)   VALUE 0.                     
+           05  WS-K022-UPDATE          PIC 9(03)   VALUE 0.                     
+           05  WS-K435-EOF             PIC X(1)    VALUE SPACES.                
+           05  WS-K435-NOTFND          PIC X(1)    VALUE SPACES.                
+           05  WS-PREV-NUM-HDB-REF     PIC X(11)   VALUE SPACES.                
+           05  WS-BORROWER             PIC X(2)    VALUE SPACES.                
+           05  WS-PREV-BO-CODE         PIC X(02)   VALUE SPACES.                
+           05  WS-PREV-OIC             PIC X(10)   VALUE SPACES.                
+           05  WS-LETTER-TYPE          PIC X(1)    VALUE SPACES.                
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-SYS-DATE             PIC X(08)     VALUE SPACES.              
+           05  WS-SYSTEM-DATE          PIC X(08)     VALUE SPACES.              
+           05  WS-TO-DATA         OCCURS 99 TIMES.                              
+               10  WS-TO                   PIC X(50) VALUE SPACES.              
+           05  WS-OIC-DATA        OCCURS 99 TIMES.                              
+               10  WS-OIC                  PIC X(10) VALUE SPACES.              
+           05  WS-ROW1-DATA       OCCURS 99 TIMES.                              
+               10  WS-ROW1                 PIC X(80) VALUE SPACES.              
+           05  WS-ROW2-DATA       OCCURS 99 TIMES.                              
+               10  WS-ROW2                 PIC X(80) VALUE SPACES.              
+           05  WS-LINK-STAFF-NICK      PIC X(06)     VALUE SPACES.              
+           05  WS-REGN-NO-OUT          PIC X(08)     VALUE SPACES.              
+                                                                                
+      *----------------------------------------------------------------*        
+      *                 O U T P U T   L A Y O U T                      *        
+      *----------------------------------------------------------------*        
+       01  HEADER1.                                                             
+           05  FILLER          PIC X(12)  VALUE 'HELO SGPHDB1'.                 
+           05  FILLER          PIC X(68)  VALUE SPACES.                         
+                                                                                
+      *  for testing purpose                                                    
+      *    05  FILLER          PIC X(12)  VALUE 'HELO SGPHDB3'.                 
+      *    05  FILLER          PIC X(68)  VALUE SPACES.                         
+                                                                                
+       01  HEADER2.                                                             
+           05  FILLER          PIC X(11)  VALUE 'MAIL FROM:<'.                  
+           05  SEND-ID         PIC X(04)  VALUE 'OPCP'.                         
+           05  FILLER          PIC X(09)  VALUE '@SGPHDB1>'.                    
+           05  FILLER          PIC X(56)  VALUE SPACES.                         
+                                                                                
+      *  for testing purpose                                                    
+      *    05  SEND-ID         PIC X(07)  VALUE 'CSXXXXX'.                      
+      *    05  FILLER          PIC X(09)  VALUE '@SGPHDB3>'.                    
+      *    05  FILLER          PIC X(53)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL1-TO1.                                                     
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  TO-MAIL-ID-1    PIC X(31)  VALUE SPACES.                         
+           05  FILLER          PIC X(40)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL2-CC1.                                                     
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+      *    05  CC-MAIL-ID-1    PIC X(05)  VALUE 'LWK10'.                        
+           05  CC-MAIL-ID-1    PIC X(14)  VALUE 'DERRICK_WK_LOH'.               
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  HEADER-DTL2-CC1A.                                                    
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  CC-MAIL-ID-1A   PIC X(21)  VALUE 'SHAMSURIANOR_SIBENGAT'.        
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  HEADER-DTL2-CC1B.                                                    
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  CC-MAIL-ID-1B   PIC X(12)  VALUE 'OH_MENG_HUAT'.                 
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  HEADER-DTL2-CC1C.                                                    
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  CC-MAIL-ID-1C   PIC X(16)  VALUE 'KOGILA_RAMARAJAN'.             
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+                                                                                
+       01  HEADER-DTL3.                                                         
+           05  FILLER          PIC X(04)  VALUE 'DATA'.                         
+           05  FILLER          PIC X(76)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL4.                                                         
+           05  FILLER          PIC X(05)  VALUE 'FROM:'.                        
+           05  FROM-MAIL-ID    PIC X(26)  VALUE                                 
+               'SOC System - Email Alert'.                                      
+           05  FILLER          PIC X(49)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL5-TOA.                                                     
+           05  FILLER          PIC X(04)  VALUE 'TO:<'.                         
+           05  TO-MAIL-ID-A    PIC X(31)  VALUE SPACES.                         
+           05  FILLER          PIC X(45)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL6-CCA.                                                     
+           05  FILLER          PIC X(04)  VALUE 'CC:<'.                         
+      *    05  CC-MAIL-ID-A    PIC X(05)  VALUE 'LWK10'.                        
+           05  CC-MAIL-ID-A    PIC X(14)  VALUE 'DERRICK_WK_LOH'.               
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+           05  FILLER          PIC X(59)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL6-CCA1.                                                    
+           05  FILLER          PIC X(04)  VALUE 'CC:<'.                         
+           05  CC-MAIL-ID-A1   PIC X(21)  VALUE 'SHAMSURIANOR_SIBENGAT'.        
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+           05  FILLER          PIC X(59)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL6-CCA2.                                                    
+           05  FILLER          PIC X(04)  VALUE 'CC:<'.                         
+           05  CC-MAIL-ID-A2   PIC X(12)  VALUE 'OH_MENG_HUAT'.                 
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+           05  FILLER          PIC X(59)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL6-CCA3.                                                    
+           05  FILLER          PIC X(04)  VALUE 'CC:<'.                         
+           05  CC-MAIL-ID-A3   PIC X(16)  VALUE 'KOGILA_RAMARAJAN'.             
+           05  FILLER          PIC X(12)  VALUE '@HDB.GOV.SG>'.                 
+           05  FILLER          PIC X(59)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL6-CCB.                                                     
+           05  FILLER          PIC X(04)  VALUE 'CC:<'.                         
+           05  CC-MAIL-ID-B    PIC X(50)  VALUE SPACES.                         
+           05  FILLER          PIC X(26)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL7-SUBJECT-A.                                               
+           05  FILLER          PIC X(10)  VALUE 'SUBJECT : '.                   
+           05  SUBJECT-1       PIC X(50)  VALUE                                 
+               'Expedite on handover of keys for selected flats. '.             
+           05  BO-CODE-DATE-A  PIC X(15)  VALUE SPACES.                         
+           05  FILLER          PIC X(05)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL7-SUBJECT-B.                                               
+           05  FILLER          PIC X(10)  VALUE 'SUBJECT : '.                   
+           05  SUBJECT-1       PIC X(50)  VALUE                                 
+               'Expedite on handover of keys for selected flats. '.             
+           05  FILLER          PIC X(20)  VALUE SPACES.                         
+                                                                                
+       01  HEADER-DTL7-SUBJECT-C.                                               
+           05  FILLER          PIC X(10)  VALUE 'SUBJECT : '.                   
+           05  SUBJECT-1       PIC X(70)  VALUE                                 
+               'Keys for flat are ready. To follow up urgent TP cases.'.        
+                                                                                
+       01  HEADER-DTL7-SUBJECT-D.                                               
+           05  FILLER          PIC X(10)  VALUE 'SUBJECT : '.                   
+           05  SUBJECT-1       PIC X(70)  VALUE                                 
+               'Keys for flat are ready. To follow up urgent TP cases.'.        
+                                                                                
+      ******************************************************************        
+                                                                                
+       01  BODY-DTL1-HEADER1.                                                   
+           05 FILLER          PIC X(28)  VALUE                                  
+              'Dear CSM'.                                                       
+           05 FILLER          PIC X(52)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL1-HEADER2.                                                   
+           05 FILLER          PIC X(28)  VALUE                                  
+              'Dear Officer in-charge'.                                         
+           05 FILLER          PIC X(52)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL2-INTRO1-A.                                                  
+           05 FILLER          PIC X(50)  VALUE                                  
+              'The buyers who selected the following unit(s) have'.             
+           05 FILLER          PIC X(22)  VALUE                                  
+              ' requested for earlier'.                                         
+           05 FILLER          PIC X(08)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL2-INTRO2-A.                                                  
+      *    05 FILLER          PIC X(51)  VALUE                                  
+      *       'keys collection. Please send the keys to us as soon'.            
+      *    05 FILLER          PIC X(13)  VALUE                                  
+      *       ' as possible.'.                                                  
+      *    05 FILLER          PIC X(16)  VALUE SPACES.                          
+           05 FILLER          PIC X(16)  VALUE                                  
+              'keys collection.'.                                               
+           05 FILLER          PIC X(64)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL2-INTRO3-A.                                                  
+           05 FILLER          PIC X(23)  VALUE                                  
+              'Below are the details :'.                                        
+           05 FILLER          PIC X(57)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL2-INTRO1-D.                                                  
+           05 FILLER          PIC X(47)  VALUE                                  
+              'The keys are available for the following cases.'.                
+           05 FILLER          PIC X(33)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL2-INTRO2-D.                                                  
+           05 FILLER          PIC X(53)  VALUE                                  
+              'Please follow up with applicants for urgent TP cases.'.          
+           05 FILLER          PIC X(27)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL3-TBL-HEADER1.                                               
+           05 FILLER          PIC X(50)  VALUE                                  
+              'S/NO  CSM    REGN NO   SCH ACC NO   SELECTION DATE'.             
+           05 FILLER          PIC X(30)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL3-TBL-HEADER2.                                               
+           05 FILLER          PIC X(51)  VALUE                                  
+              '****  ****   ********  ***********  ***************'.            
+           05 FILLER          PIC X(29)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL4-TBL-ROW1.                                                  
+           05 BODY-SNO        PIC 9(3)   VALUE ZEROES.                          
+           05 FILLER          PIC X(3)   VALUE SPACES.                          
+           05 BODY-CSM        PIC X(5).                                         
+           05 FILLER          PIC X(2)   VALUE SPACES.                          
+           05 BODY-REGN       PIC X(8).                                         
+           05 FILLER          PIC X(2)   VALUE SPACES.                          
+           05 BODY-SCH-ACC    PIC X(11).                                        
+           05 FILLER          PIC X(2)   VALUE SPACES.                          
+           05 BODY-SOCADATE   PIC X(10).                                        
+           05 FILLER          PIC X(34)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL4-TBL-ROW2.                                                  
+           05 FILLER          PIC X(5)   VALUE SPACES.                          
+           05 BODY-ADDR       PIC X(75).                                        
+                                                                                
+       01  BODY-DTL2-BODY1-A.                                                   
+           05 FILLER          PIC X(50)  VALUE                                  
+              'Before returning the keys, please ensure that the '.             
+           05 FILLER          PIC X(30)  VALUE                                  
+              'flat is in move-in condition'.                                   
+           05 FILLER          PIC X(03)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL2-BODY1-B.                                                   
+           05 FILLER          PIC X(50)  VALUE                                  
+              'and the keys are in order. If the applicants are e'.             
+           05 FILLER          PIC X(30)  VALUE                                  
+              'ligible to view the flat'.                                       
+                                                                                
+       01  BODY-DTL2-BODY1-C.                                                   
+           05 FILLER          PIC X(50)  VALUE                                  
+              'upon booking, please return the keys only after vi'.             
+      *    05 FILLER          PIC X(36)  VALUE                                  
+      *       'ewing is complete.'.                                             
+           05 FILLER          PIC X(29)  VALUE                                  
+              'ewing is complete.  Pls send '.                                  
+           05 FILLER          PIC X(01)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL2-BODY1-D.                                                   
+           05 FILLER          PIC X(50)  VALUE                                  
+              'a representative to return the keys personally to '.             
+           05 FILLER          PIC X(17)  VALUE                                  
+              'Sales Operations.'.                                              
+           05 FILLER          PIC X(13)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL2-END1-A.                                                    
+           05 FILLER          PIC X(50)  VALUE                                  
+              'If your office requires longer time to rectify any'.             
+           05 FILLER          PIC X(27)  VALUE                                  
+              ' detected defects, do keep '.                                    
+           05 FILLER          PIC X(03)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL2-END2-A.                                                    
+      *    05 FILLER          PIC X(51)  VALUE                                  
+      *       'our Customer Service Manager (CSM) informed earlier'.            
+      *    05 FILLER          PIC X(28)  VALUE                                  
+      *       ' of the estimated completion'.                                   
+      *    05 FILLER          PIC X(01)  VALUE SPACES.                          
+           05 FILLER          PIC X(53)  VALUE                                  
+              'our Customer Relations Manager (CRM) informed earlier'.          
+           05 FILLER          PIC X(17)  VALUE                                  
+              ' of the estimated'.                                              
+           05 FILLER          PIC X(10)  VALUE SPACES.                          
+                                                                                
+       01  BODY-DTL2-END3-A.                                                    
+      *    05 FILLER          PIC X(49)  VALUE                                  
+      *       'date. When replying, please email to names in the'.              
+      *    05 FILLER          PIC X(09)  VALUE                                  
+      *       ' cc list.'.                                                      
+      *    05 FILLER          PIC X(23)  VALUE SPACES.                          
+           05 FILLER          PIC X(53)  VALUE                                  
+              'completion date. When replying, please email to all n'.          
+           05 FILLER          PIC X(20)  VALUE                                  
+              'ames in the cc list.'.                                           
+           05 FILLER          PIC X(11)  VALUE SPACES.                          
+                                                                                
+       01  BODY-BLANK-LINE.                                                     
+           05 FILLER          PIC X(80)  VALUE SPACES.                          
+                                                                                
+      ******************************************************************        
+                                                                                
+       01  FOOTER-DTL1-SIGN1.                                                   
+      *    05 FILLER          PIC X(26)  VALUE                                  
+      *       '(Signed Using Lotus Notes)'.                                     
+           05 FILLER          PIC X(24)  VALUE                                  
+              'HEE WAN MENG            '.                                       
+           05 FILLER          PIC X(68)  VALUE SPACES.                          
+                                                                                
+       01  FOOTER-DTL1-SIGN2.                                                   
+      *    05 FOOTER-NME-CSM  PIC X(24)  VALUE                                  
+      *       'Customer Service Manager'.                                       
+           05 FOOTER-NME-CSM  PIC X(21)  VALUE                                  
+              'SENIOR ESTATE MANAGER'.                                          
+           05 FILLER          PIC X(58)  VALUE SPACES.                          
+                                                                                
+       01  FOOTER-DTL1-SIGN3.                                                   
+           05 FILLER          PIC X(24)  VALUE                                  
+              'SALES OPERATIONS SECTION'.                                       
+           05 FILLER          PIC X(59)  VALUE SPACES.                          
+                                                                                
+       01  FOOTER-DTL1-SIGN4.                                                   
+           05 FILLER          PIC X(29)  VALUE                                  
+              'ESTATE ADMIN & PROPERTY GROUP'.                                  
+           05 FILLER          PIC X(52)  VALUE SPACES.                          
+                                                                                
+       01  FOOTER-DTL1-SIGN5.                                                   
+           05 FILLER          PIC X(45)  VALUE                                  
+              'SOC System - Email Alert for Key Availability'.                  
+           05 FILLER          PIC X(35)  VALUE SPACES.                          
+                                                                                
+       01  FOOTER-DTL1-SIGN6.                                                   
+           05 FILLER          PIC X(70)  VALUE                                  
+              'Please forward cases to AT to schedule appointment.'.            
+                                                                                
+       01  FOOTER-DTL2-END.                                                     
+           05 FILLER          PIC X      VALUE '.'.                             
+                                                                                
+      *-------------------------                                                
+      *        LINKAGE FOR SUB-PROGRAM BP13CCNT                                 
+      *-------------------------                                                
+       01  WS-BP13CCNT-LINK.                                                    
+           05  LINK-CNTCT-TYPE         PIC X(3)  VALUE SPACES.                  
+           05  LINK-STAFF-NICK         PIC X(6)  VALUE SPACES.                  
+           05  LINK-STAFF-NUM          PIC X(6)  VALUE SPACES.                  
+           05  LINK-STAFF-CNTCT        PIC X(50) VALUE SPACES.                  
+           05  LINK-SYSERR             PIC 9(4)  VALUE ZEROES.                  
+                                                                                
+      ******************************************************************        
+       PROCEDURE DIVISION.                                                      
+      ******************************************************************        
+                                                                                
+      *----------------------------------------------------------------*        
+       0000-CONTROL.                                                            
+      *----------------------------------------------------------------*        
+           PERFORM 1000-OPEN-FILES        THRU 1000-EXIT.                       
+           PERFORM 2000-READ-BM06F120     THRU 2000-EXIT.                       
+           PERFORM 3000-PROCESS           THRU 3000-EXIT                        
+                   UNTIL WS-F120-EOF = 'Y'.                                     
+           PERFORM 9000-CLOSE-FILES       THRU 9000-EXIT.                       
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       1000-OPEN-FILES.                                                         
+      *----------------------------------------------------------------*        
+           OPEN INPUT  BM06F120                                                 
+                       BP13K435                                                 
+                I-O    BP13K022                                                 
+                OUTPUT BP13MAIL.                                                
+                                                                                
+           IF BP13K435-STATUS NOT = ZEROES AND 97                               
+              MOVE BP13K435-STATUS TO RETURN-CODE                               
+              DISPLAY 'OPEN BP13K435 FILE ERROR ' BP13K435-STATUS               
+              PERFORM 9000-CLOSE-FILES THRU 9000-EXIT                           
+           END-IF.                                                              
+                                                                                
+           IF BP13K022-STATUS NOT = ZEROES AND 97                               
+              MOVE BP13K022-STATUS TO RETURN-CODE                               
+              DISPLAY 'OPEN BP13K022 FILE ERROR ' BP13K022-STATUS               
+              PERFORM 9000-CLOSE-FILES THRU 9000-EXIT                           
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8)  TO  WS-SYSTEM-DATE.                 
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       2000-READ-BM06F120.                                                      
+      *----------------------------------------------------------------*        
+           READ BM06F120 AT END                                                 
+           MOVE 'Y'                      TO WS-F120-EOF                         
+           IF BM06F120-READ = ZERO                                              
+              MOVE '99'                  TO RETURN-CODE                         
+           END-IF                                                               
+           GO TO 2000-EXIT.                                                     
+                                                                                
+           ADD 1                         TO BM06F120-READ.                      
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       2100-CALL-BP13CCNT.                                                      
+      *----------------------------------------------------------------*        
+           CALL 'BP13CCNT' USING WS-BP13CCNT-LINK.                              
+                                                                                
+           EVALUATE LINK-SYSERR                                                 
+           WHEN ZEROS                                                           
+              STRING LINK-STAFF-CNTCT DELIMITED BY SPACE                        
+                     '>' DELIMITED BY SIZE                                      
+                     INTO WS-TO(WS-TXT-CNT)                                     
+           WHEN 100                                                             
+              DISPLAY 'OIC NOT FOUND IN OFFICE_CNTCT TABLE - '                  
+                  WS-LINK-STAFF-NICK ' REGN : ' WS-REGN-NO-OUT                  
+           WHEN OTHER                                                           
+              MOVE '98'                  TO RETURN-CODE                         
+              DISPLAY 'ERROR READING OFFICE_CNTCT TABLE = '                     
+                       LINK-SYSERR                                              
+              PERFORM 9000-CLOSE-FILES THRU 9000-EXIT                           
+           END-EVALUATE.                                                        
+                                                                                
+       2100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3000-PROCESS.                                                            
+      *----------------------------------------------------------------*        
+           PERFORM 3500-READ-BP13K022 THRU 3500-EXIT.                           
+           MOVE F120-REGN-NO TO WS-REGN-NO-OUT.                                 
+                                                                                
+           IF F120-BO-CODE NOT = SPACES                                         
+              IF F120-REC(688:2) = 'BO'                                         
+                 MOVE 'A'                     TO WS-LETTER-TYPE                 
+                 PERFORM 4000-SEND-BO-EMAIL   THRU 4000-EXIT                    
+                 MOVE 'SO'                    TO K022-CDE-ALERT-TYPE            
+                 PERFORM 6000-UPDATE-BP13K022 THRU 6000-EXIT                    
+              ELSE                                                              
+                 IF F120-REC(688:2) = 'NB'                                      
+                    PERFORM 6100-READ-BP13K435     THRU 6100-EXIT               
+                    MOVE 'B'               TO WS-LETTER-TYPE                    
+                    PERFORM 4500-SEND-NON-BO-EMAIL THRU 4500-EXIT               
+                    MOVE 'SO'              TO K022-CDE-ALERT-TYPE               
+                    PERFORM 6000-UPDATE-BP13K022   THRU 6000-EXIT               
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF F120-BO-CODE = SPACES                                             
+              IF F120-REC(688:2) = 'SO'                                         
+                 MOVE 'C'                     TO WS-LETTER-TYPE                 
+                 PERFORM 5000-SEND-SO-EMAIL   THRU 5000-EXIT                    
+                 MOVE SPACES                  TO K022-CDE-ALERT                 
+                                                 K022-CDE-ALERT-TYPE            
+                 PERFORM 6000-UPDATE-BP13K022 THRU 6000-EXIT                    
+              ELSE                                                              
+                 IF F120-REC(688:2) = 'KA'                                      
+                    MOVE 'D'                   TO WS-LETTER-TYPE                
+                    PERFORM 5500-SEND-KA-EMAIL THRU 5500-EXIT                   
+                    MOVE SPACES             TO K022-CDE-ALERT                   
+                                               K022-CDE-ALERT-TYPE              
+                    PERFORM 6000-UPDATE-BP13K022 THRU 6000-EXIT                 
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-READ-BM06F120     THRU 2000-EXIT.                       
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3500-READ-BP13K022.                                                      
+      *----------------------------------------------------------------*        
+           MOVE SPACES       TO BP13K022-REC.                                   
+           MOVE F120-REGN-NO TO K022-NUM-REGN.                                  
+                                                                                
+           READ BP13K022 KEY IS K022-NUM-REGN.                                  
+                                                                                
+           EVALUATE BP13K022-STATUS                                             
+             WHEN 00                                                            
+                  CONTINUE                                                      
+             WHEN 23                                                            
+                  ADD 1                   TO WS-K022-NOTFND                     
+                  DISPLAY 'REC NOTFD BP13K022, KEY IS ' K022-NUM-REGN           
+             WHEN OTHER                                                         
+                 DISPLAY 'READ  BP13K022 ERROR ' BP13K022-STATUS                
+                 MOVE BP13K022-STATUS     TO RETURN-CODE                        
+                 PERFORM 9000-CLOSE-FILES THRU 9000-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       3500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4000-SEND-BO-EMAIL.                                                      
+      *-------------------------------------------------------------            
+           IF F120-BO-CODE NOT = WS-PREV-BO-CODE                                
+              PERFORM 4100-BO-EMAIL-HDR THRU 4100-EXIT.                         
+                                                                                
+      ***************************                                               
+      * START OF TO AND CC LIST *                                               
+      ***************************                                               
+                                                                                
+           IF WS-TXT-CNT = ZEROES                                               
+              ADD 1 TO WS-TXT-CNT                                               
+              STRING 'B' F120-BO-CODE DELIMITED BY ' '                          
+                     'Admin@hdb.gov.sg>' DELIMITED BY SIZE                      
+                      INTO WS-OIC(WS-TXT-CNT)                                   
+                                                                                
+              STRING 'B' F120-BO-CODE DELIMITED BY ' '                          
+                     'Admin@hdb.gov.sg>' DELIMITED BY SIZE                      
+                      INTO WS-TO(WS-TXT-CNT)                                    
+           END-IF                                                               
+                                                                                
+           PERFORM 8000-CHECK-OIC-SAVED THRU 8000-EXIT.                         
+                                                                                
+           IF WS-OIC-FND = 'Y'                                                  
+              CONTINUE                                                          
+           ELSE                                                                 
+              IF WS-BORROWER-FND = 'Y'                                          
+                 CONTINUE                                                       
+              ELSE                                                              
+                 ADD 1 TO WS-TXT-CNT                                            
+                                                                                
+                 MOVE F120-REC(690:10) TO WS-OIC(WS-TXT-CNT)                    
+                                                                                
+                 MOVE SPACES           TO WS-BP13CCNT-LINK                      
+                 INITIALIZE               WS-BP13CCNT-LINK                      
+                 MOVE 'EML'            TO LINK-CNTCT-TYPE                       
+                 MOVE F120-REC(690:6)  TO WS-LINK-STAFF-NICK                    
+                                          LINK-STAFF-NICK                       
+                 MOVE SPACES           TO LINK-STAFF-NUM                        
+                 PERFORM 2100-CALL-BP13CCNT THRU 2100-EXIT                      
+      *          STRING F120-REC(690:10) DELIMITED BY SPACES                    
+      *                 '@hdb.gov.sg>' DELIMITED BY SIZE                        
+      *                 INTO WS-TO(WS-TXT-CNT)                                  
+              END-IF                                                            
+                                                                                
+              IF WS-CSM-FND = 'Y'                                               
+                 CONTINUE                                                       
+              ELSE                                                              
+                 ADD 1 TO WS-TXT-CNT                                            
+                                                                                
+                 DISPLAY 'OIC ADDED : ' K022-NUM-OIC                            
+                 MOVE K022-NUM-OIC TO WS-OIC(WS-TXT-CNT)                        
+                                                                                
+                 MOVE SPACES           TO WS-BP13CCNT-LINK                      
+                 MOVE 'EML'            TO LINK-CNTCT-TYPE                       
+                 MOVE K022-NUM-OIC     TO WS-LINK-STAFF-NICK                    
+                                          LINK-STAFF-NICK                       
+                 MOVE SPACES           TO LINK-STAFF-NUM                        
+                 PERFORM 2100-CALL-BP13CCNT THRU 2100-EXIT                      
+      *          STRING K022-NUM-OIC DELIMITED BY SPACES                        
+      *                 '@hdb.gov.sg>' DELIMITED BY SIZE                        
+      *                 INTO WS-TO(WS-TXT-CNT)                                  
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           STRING '('                                                           
+                  F120-BO-CODE '-'                                              
+                  WS-SYSTEM-DATE(7:2) '/'                                       
+                  WS-SYSTEM-DATE(5:2) '/'                                       
+                  WS-SYSTEM-DATE(1:4) ')'                                       
+                  DELIMITED BY SIZE  INTO BO-CODE-DATE-A                        
+                                                                                
+      *************************                                                 
+      * START OF BODY CONTENT *                                                 
+      *************************                                                 
+                                                                                
+           ADD 1                     TO BODY-SNO.                               
+           MOVE K022-NUM-OIC         TO BODY-CSM.                               
+           MOVE F120-REGN-NO         TO BODY-REGN.                              
+           MOVE F120-SCH-ACC-NO      TO BODY-SCH-ACC.                           
+                                                                                
+           MOVE F120-DTE-ACCEPTANCE  TO WS-SYS-DATE.                            
+           STRING WS-SYS-DATE(7:2) '/'                                          
+                  WS-SYS-DATE(5:2) '/'                                          
+                  WS-SYS-DATE(1:4)                                              
+                  DELIMITED BY SIZE  INTO BODY-SOCADATE.                        
+                                                                                
+           STRING F120-BLK-NO ', '                                              
+                  F120-STREET-NAME ', #'                                        
+                  F120-LEVEL-NO '-'                                             
+                  F120-MAIN-UNIT '. S('                                         
+                  F120-POSTAL-CODE ')'                                          
+                  DELIMITED BY SIZE  INTO BODY-ADDR.                            
+                                                                                
+           ADD 1             TO WS-ROW-CNT.                                     
+           MOVE BODY-DTL4-TBL-ROW1 TO WS-ROW1(WS-ROW-CNT).                      
+           MOVE BODY-DTL4-TBL-ROW2 TO WS-ROW2(WS-ROW-CNT).                      
+           ADD 1             TO WS-MAIL-WROTE.                                  
+                                                                                
+       4000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       4100-BO-EMAIL-HDR.                                                       
+      *-------------------------------------------------------------            
+           MOVE F120-BO-CODE   TO WS-PREV-BO-CODE.                              
+                                                                                
+           IF WS-TXT-CNT NOT = ZEROES                                           
+              PERFORM 4200-BO-EMAIL-FOOTER THRU 4200-EXIT.                      
+                                                                                
+       4100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       4200-BO-EMAIL-FOOTER.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER1.                                      
+           WRITE MAIL-PRTREC FROM HEADER2.                                      
+                                                                                
+           MOVE SPACES       TO MAIL-PRTREC.                                    
+           PERFORM VARYING WS-TXT-CNT FROM 1 BY 1 UNTIL WS-TXT-CNT > 99         
+              IF WS-TO(WS-TXT-CNT) = SPACES                                     
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-TO(WS-TXT-CNT) TO TO-MAIL-ID-1                         
+                 WRITE MAIL-PRTREC FROM HEADER-DTL1-TO1                         
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1A.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1B.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1C.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL3.                                  
+           WRITE MAIL-PRTREC FROM HEADER-DTL4.                                  
+                                                                                
+           MOVE WS-TO(1) TO TO-MAIL-ID-A.                                       
+           WRITE MAIL-PRTREC FROM HEADER-DTL5-TOA.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA1.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA2.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA3.                             
+                                                                                
+           PERFORM VARYING WS-TXT-CNT FROM 2 BY 1 UNTIL WS-TXT-CNT > 99         
+              IF WS-TO(WS-TXT-CNT) = SPACES                                     
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-TO(WS-TXT-CNT) TO CC-MAIL-ID-B                         
+                 WRITE MAIL-PRTREC FROM HEADER-DTL6-CCB                         
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER-DTL7-SUBJECT-A.                        
+                                                                                
+           MOVE SPACES       TO MAIL-PRTREC.                                    
+           WRITE MAIL-PRTREC FROM BODY-DTL1-HEADER2                             
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL2-INTRO1-A.                           
+           WRITE MAIL-PRTREC FROM BODY-DTL2-INTRO2-A.                           
+           WRITE MAIL-PRTREC FROM BODY-DTL2-INTRO3-A.                           
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL3-TBL-HEADER1.                        
+           WRITE MAIL-PRTREC FROM BODY-DTL3-TBL-HEADER2.                        
+                                                                                
+           PERFORM VARYING WS-ROW-CNT FROM 1 BY 1 UNTIL WS-ROW-CNT > 99         
+              IF WS-ROW1(WS-ROW-CNT) = SPACES                                   
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-ROW1(WS-ROW-CNT) TO BODY-DTL4-TBL-ROW1                 
+                 WRITE MAIL-PRTREC FROM BODY-DTL4-TBL-ROW1                      
+                 MOVE WS-ROW2(WS-ROW-CNT) TO BODY-DTL4-TBL-ROW2                 
+                 WRITE MAIL-PRTREC FROM BODY-DTL4-TBL-ROW2                      
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL2-BODY1-A.                            
+           WRITE MAIL-PRTREC FROM BODY-DTL2-BODY1-B.                            
+           WRITE MAIL-PRTREC FROM BODY-DTL2-BODY1-C.                            
+           WRITE MAIL-PRTREC FROM BODY-DTL2-BODY1-D.                            
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL2-END1-A.                             
+           WRITE MAIL-PRTREC FROM BODY-DTL2-END2-A.                             
+           WRITE MAIL-PRTREC FROM BODY-DTL2-END3-A.                             
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN1.                            
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN2.                            
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN3.                            
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN4.                            
+           WRITE MAIL-PRTREC FROM FOOTER-DTL2-END.                              
+                                                                                
+           PERFORM VARYING WS-ROW-CNT FROM 1 BY 1 UNTIL WS-ROW-CNT > 99         
+              MOVE SPACES    TO   WS-ROW1(WS-ROW-CNT)                           
+                                  WS-ROW2(WS-ROW-CNT)                           
+                                  WS-TO(WS-ROW-CNT)                             
+                                  WS-OIC(WS-ROW-CNT)                            
+           END-PERFORM.                                                         
+                                                                                
+           MOVE ZEROES       TO   WS-TXT-CNT                                    
+                                  WS-OIC-CNT                                    
+                                  WS-ROW-CNT.                                   
+           MOVE ZEROES       TO   BODY-SNO.                                     
+                                                                                
+       4200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       4500-SEND-NON-BO-EMAIL.                                                  
+      *-------------------------------------------------------------            
+           IF F120-REC(690:10) NOT = WS-PREV-OIC                                
+              PERFORM 4600-NON-BO-EMAIL-HDR THRU 4600-EXIT.                     
+                                                                                
+      ***************************                                               
+      * START OF TO AND CC LIST *                                               
+      ***************************                                               
+                                                                                
+           IF WS-TXT-CNT = ZEROES                                               
+              ADD 1 TO WS-TXT-CNT                                               
+              STRING 'B' F120-BO-CODE DELIMITED BY ' '                          
+                     'Admin@hdb.gov.sg>' DELIMITED BY SIZE                      
+                      INTO WS-OIC(WS-TXT-CNT)                                   
+                                                                                
+              STRING 'B' F120-BO-CODE DELIMITED BY ' '                          
+                     'Admin@hdb.gov.sg>' DELIMITED BY SIZE                      
+                      INTO WS-TO(WS-TXT-CNT)                                    
+           END-IF                                                               
+                                                                                
+           PERFORM 8000-CHECK-OIC-SAVED THRU 8000-EXIT.                         
+                                                                                
+           IF WS-OIC-FND = 'Y'                                                  
+              CONTINUE                                                          
+           ELSE                                                                 
+              IF WS-BORROWER-FND = 'Y'                                          
+                 CONTINUE                                                       
+              ELSE                                                              
+                 ADD 1 TO WS-TXT-CNT                                            
+                                                                                
+                 MOVE SPACES           TO WS-BP13CCNT-LINK                      
+                 MOVE 'EML'            TO LINK-CNTCT-TYPE                       
+                 MOVE F120-REC(690:6)  TO WS-LINK-STAFF-NICK                    
+                                          LINK-STAFF-NICK                       
+                 MOVE SPACES           TO LINK-STAFF-NUM                        
+                 PERFORM 2100-CALL-BP13CCNT THRU 2100-EXIT                      
+      *          MOVE F120-REC(690:10) TO WS-OIC(WS-TXT-CNT)                    
+      *          STRING F120-REC(690:10) DELIMITED BY SPACES                    
+      *                 '@hdb.gov.sg>' DELIMITED BY SIZE                        
+      *                 INTO WS-TO(WS-TXT-CNT)                                  
+              END-IF                                                            
+                                                                                
+              IF WS-CSM-FND = 'Y'                                               
+                 CONTINUE                                                       
+              ELSE                                                              
+                 ADD 1 TO WS-TXT-CNT                                            
+                 DISPLAY 'OIC ADDED : ' K022-NUM-OIC                            
+                 MOVE K022-NUM-OIC TO WS-OIC(WS-TXT-CNT)                        
+                                                                                
+                 MOVE SPACES           TO WS-BP13CCNT-LINK                      
+                 MOVE 'EML'            TO LINK-CNTCT-TYPE                       
+                 MOVE K022-NUM-OIC     TO WS-LINK-STAFF-NICK                    
+                                          LINK-STAFF-NICK                       
+                 MOVE SPACES           TO LINK-STAFF-NUM                        
+                 PERFORM 2100-CALL-BP13CCNT THRU 2100-EXIT                      
+      *          STRING K022-NUM-OIC DELIMITED BY SPACES                        
+      *                 '@hdb.gov.sg>' DELIMITED BY SIZE                        
+      *                 INTO WS-TO(WS-TXT-CNT)                                  
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *************************                                                 
+      * START OF BODY CONTENT *                                                 
+      *************************                                                 
+                                                                                
+           ADD 1                     TO BODY-SNO.                               
+           MOVE K022-NUM-OIC         TO BODY-CSM.                               
+           MOVE F120-REGN-NO         TO BODY-REGN.                              
+           MOVE F120-SCH-ACC-NO      TO BODY-SCH-ACC.                           
+                                                                                
+           MOVE F120-DTE-ACCEPTANCE  TO WS-SYS-DATE.                            
+           STRING WS-SYS-DATE(7:2) '/'                                          
+                  WS-SYS-DATE(5:2) '/'                                          
+                  WS-SYS-DATE(1:4)                                              
+                  DELIMITED BY SIZE  INTO BODY-SOCADATE.                        
+                                                                                
+           STRING F120-BLK-NO ', '                                              
+                  F120-STREET-NAME ', #'                                        
+                  F120-LEVEL-NO '-'                                             
+                  F120-MAIN-UNIT '. S('                                         
+                  F120-POSTAL-CODE ')'                                          
+                  DELIMITED BY SIZE  INTO BODY-ADDR.                            
+                                                                                
+           ADD 1             TO WS-ROW-CNT.                                     
+           MOVE BODY-DTL4-TBL-ROW1 TO WS-ROW1(WS-ROW-CNT).                      
+           MOVE BODY-DTL4-TBL-ROW2 TO WS-ROW2(WS-ROW-CNT).                      
+           ADD 1             TO WS-MAIL-WROTE.                                  
+                                                                                
+       4500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       4600-NON-BO-EMAIL-HDR.                                                   
+      *-------------------------------------------------------------            
+           MOVE F120-REC(690:10) TO WS-PREV-OIC.                                
+                                                                                
+           IF WS-TXT-CNT NOT = ZEROES                                           
+              PERFORM 4700-NON-BO-EMAIL-FOOTER THRU 4700-EXIT.                  
+                                                                                
+       4600-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       4700-NON-BO-EMAIL-FOOTER.                                                
+      *-------------------------------------------------------------            
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER1.                                      
+           WRITE MAIL-PRTREC FROM HEADER2.                                      
+                                                                                
+           MOVE SPACES       TO MAIL-PRTREC.                                    
+           PERFORM VARYING WS-TXT-CNT FROM 1 BY 1 UNTIL WS-TXT-CNT > 99         
+              IF WS-TO(WS-TXT-CNT) = SPACES                                     
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-TO(WS-TXT-CNT) TO TO-MAIL-ID-1                         
+                 WRITE MAIL-PRTREC FROM HEADER-DTL1-TO1                         
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1A.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1B.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1C.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL3.                                  
+           WRITE MAIL-PRTREC FROM HEADER-DTL4.                                  
+                                                                                
+           MOVE WS-TO(1) TO TO-MAIL-ID-A.                                       
+           WRITE MAIL-PRTREC FROM HEADER-DTL5-TOA.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA1.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA2.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA3.                             
+                                                                                
+           PERFORM VARYING WS-TXT-CNT FROM 2 BY 1 UNTIL WS-TXT-CNT > 99         
+              IF WS-TO(WS-TXT-CNT) = SPACES                                     
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-TO(WS-TXT-CNT) TO CC-MAIL-ID-B                         
+                 WRITE MAIL-PRTREC FROM HEADER-DTL6-CCB                         
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER-DTL7-SUBJECT-B.                        
+                                                                                
+           MOVE SPACES       TO MAIL-PRTREC.                                    
+           WRITE MAIL-PRTREC FROM BODY-DTL1-HEADER2                             
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL2-INTRO1-A.                           
+           WRITE MAIL-PRTREC FROM BODY-DTL2-INTRO2-A.                           
+           WRITE MAIL-PRTREC FROM BODY-DTL2-INTRO3-A.                           
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL3-TBL-HEADER1.                        
+           WRITE MAIL-PRTREC FROM BODY-DTL3-TBL-HEADER2.                        
+                                                                                
+           PERFORM VARYING WS-ROW-CNT FROM 1 BY 1 UNTIL WS-ROW-CNT > 99         
+              IF WS-ROW1(WS-ROW-CNT) = SPACES                                   
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-ROW1(WS-ROW-CNT) TO BODY-DTL4-TBL-ROW1                 
+                 WRITE MAIL-PRTREC FROM BODY-DTL4-TBL-ROW1                      
+                 MOVE WS-ROW2(WS-ROW-CNT) TO BODY-DTL4-TBL-ROW2                 
+                 WRITE MAIL-PRTREC FROM BODY-DTL4-TBL-ROW2                      
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL2-BODY1-A.                            
+           WRITE MAIL-PRTREC FROM BODY-DTL2-BODY1-B.                            
+           WRITE MAIL-PRTREC FROM BODY-DTL2-BODY1-C.                            
+           WRITE MAIL-PRTREC FROM BODY-DTL2-BODY1-D.                            
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL2-END1-A.                             
+           WRITE MAIL-PRTREC FROM BODY-DTL2-END2-A.                             
+           WRITE MAIL-PRTREC FROM BODY-DTL2-END3-A.                             
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN1.                            
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN2.                            
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN3.                            
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN4.                            
+           WRITE MAIL-PRTREC FROM FOOTER-DTL2-END.                              
+                                                                                
+           PERFORM VARYING WS-ROW-CNT FROM 1 BY 1 UNTIL WS-ROW-CNT > 99         
+              MOVE SPACES    TO   WS-ROW1(WS-ROW-CNT)                           
+                                  WS-ROW2(WS-ROW-CNT)                           
+                                  WS-TO(WS-ROW-CNT)                             
+                                  WS-OIC(WS-ROW-CNT)                            
+           END-PERFORM.                                                         
+                                                                                
+           MOVE ZEROES       TO   WS-TXT-CNT                                    
+                                  WS-OIC-CNT                                    
+                                  WS-ROW-CNT.                                   
+           MOVE ZEROS        TO   BODY-SNO.                                     
+                                                                                
+       4700-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       5000-SEND-SO-EMAIL.                                                      
+      *-------------------------------------------------------------            
+           IF F120-REC(690:10) NOT = WS-PREV-OIC                                
+              PERFORM 5100-SO-EMAIL-HDR THRU 5100-EXIT.                         
+                                                                                
+      ***************************                                               
+      * START OF TO AND CC LIST *                                               
+      ***************************                                               
+                                                                                
+           PERFORM 8000-CHECK-OIC-SAVED THRU 8000-EXIT.                         
+                                                                                
+           IF WS-OIC-FND = 'Y'                                                  
+              CONTINUE                                                          
+           ELSE                                                                 
+              IF WS-CSM-FND = 'Y'                                               
+                 CONTINUE                                                       
+              ELSE                                                              
+                 ADD 1 TO WS-TXT-CNT                                            
+                                                                                
+                 DISPLAY 'OIC ADDED : ' K022-NUM-OIC                            
+                 MOVE K022-NUM-OIC TO WS-OIC(WS-TXT-CNT)                        
+                 MOVE SPACES           TO WS-BP13CCNT-LINK                      
+                 MOVE 'EML'            TO LINK-CNTCT-TYPE                       
+                 MOVE K022-NUM-OIC     TO WS-LINK-STAFF-NICK                    
+                                          LINK-STAFF-NICK                       
+                 MOVE SPACES           TO LINK-STAFF-NUM                        
+                 PERFORM 2100-CALL-BP13CCNT THRU 2100-EXIT                      
+      *          STRING K022-NUM-OIC DELIMITED BY SPACES                        
+      *                 '@hdb.gov.sg>' DELIMITED BY SIZE                        
+      *                 INTO WS-TO(WS-TXT-CNT)                                  
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *************************                                                 
+      * START OF BODY CONTENT *                                                 
+      *************************                                                 
+                                                                                
+           ADD 1                     TO BODY-SNO.                               
+           MOVE K022-NUM-OIC         TO BODY-CSM.                               
+           MOVE F120-REGN-NO         TO BODY-REGN.                              
+           MOVE F120-SCH-ACC-NO      TO BODY-SCH-ACC.                           
+                                                                                
+           MOVE F120-DTE-ACCEPTANCE  TO WS-SYS-DATE.                            
+           STRING WS-SYS-DATE(7:2) '/'                                          
+                  WS-SYS-DATE(5:2) '/'                                          
+                  WS-SYS-DATE(1:4)                                              
+                  DELIMITED BY SIZE  INTO BODY-SOCADATE.                        
+                                                                                
+           STRING F120-BLK-NO ', '                                              
+                  F120-STREET-NAME ', #'                                        
+                  F120-LEVEL-NO '-'                                             
+                  F120-MAIN-UNIT '. S('                                         
+                  F120-POSTAL-CODE ')'                                          
+                  DELIMITED BY SIZE  INTO BODY-ADDR.                            
+                                                                                
+           ADD 1             TO WS-ROW-CNT.                                     
+           MOVE BODY-DTL4-TBL-ROW1 TO WS-ROW1(WS-ROW-CNT).                      
+           MOVE BODY-DTL4-TBL-ROW2 TO WS-ROW2(WS-ROW-CNT).                      
+           ADD 1             TO WS-MAIL-WROTE.                                  
+                                                                                
+       5000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       5100-SO-EMAIL-HDR.                                                       
+      *-------------------------------------------------------------            
+           MOVE F120-REC(690:10) TO WS-PREV-OIC.                                
+                                                                                
+           IF WS-TXT-CNT NOT = ZEROES                                           
+              PERFORM 5200-SO-EMAIL-FOOTER THRU 5200-EXIT.                      
+                                                                                
+       5100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       5200-SO-EMAIL-FOOTER.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER1.                                      
+           WRITE MAIL-PRTREC FROM HEADER2.                                      
+                                                                                
+           MOVE SPACES       TO MAIL-PRTREC.                                    
+           PERFORM VARYING WS-TXT-CNT FROM 1 BY 1 UNTIL WS-TXT-CNT > 99         
+              IF WS-TO(WS-TXT-CNT) = SPACES                                     
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-TO(WS-TXT-CNT) TO TO-MAIL-ID-1                         
+                 WRITE MAIL-PRTREC FROM HEADER-DTL1-TO1                         
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1A.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1B.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1C.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL3.                                  
+           WRITE MAIL-PRTREC FROM HEADER-DTL4.                                  
+                                                                                
+           MOVE WS-TO(1) TO TO-MAIL-ID-A.                                       
+           WRITE MAIL-PRTREC FROM HEADER-DTL5-TOA.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA1.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA2.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA3.                             
+                                                                                
+           PERFORM VARYING WS-TXT-CNT FROM 2 BY 1 UNTIL WS-TXT-CNT > 99         
+              IF WS-TO(WS-TXT-CNT) = SPACES                                     
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-TO(WS-TXT-CNT) TO CC-MAIL-ID-B                         
+                 WRITE MAIL-PRTREC FROM HEADER-DTL6-CCB                         
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER-DTL7-SUBJECT-C.                        
+                                                                                
+           MOVE SPACES       TO MAIL-PRTREC.                                    
+           WRITE MAIL-PRTREC FROM BODY-DTL1-HEADER1                             
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL2-INTRO1-D.                           
+           WRITE MAIL-PRTREC FROM BODY-DTL2-INTRO2-D.                           
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL3-TBL-HEADER1.                        
+           WRITE MAIL-PRTREC FROM BODY-DTL3-TBL-HEADER2.                        
+                                                                                
+           PERFORM VARYING WS-ROW-CNT FROM 1 BY 1 UNTIL WS-ROW-CNT > 99         
+              IF WS-ROW1(WS-ROW-CNT) = SPACES                                   
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-ROW1(WS-ROW-CNT) TO BODY-DTL4-TBL-ROW1                 
+                 WRITE MAIL-PRTREC FROM BODY-DTL4-TBL-ROW1                      
+                 MOVE WS-ROW2(WS-ROW-CNT) TO BODY-DTL4-TBL-ROW2                 
+                 WRITE MAIL-PRTREC FROM BODY-DTL4-TBL-ROW2                      
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN6.                            
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN5.                            
+           WRITE MAIL-PRTREC FROM FOOTER-DTL2-END.                              
+                                                                                
+           PERFORM VARYING WS-ROW-CNT FROM 1 BY 1 UNTIL WS-ROW-CNT > 99         
+              MOVE SPACES    TO   WS-ROW1(WS-ROW-CNT)                           
+                                  WS-ROW2(WS-ROW-CNT)                           
+                                  WS-TO(WS-ROW-CNT)                             
+                                  WS-OIC(WS-ROW-CNT)                            
+           END-PERFORM.                                                         
+                                                                                
+           MOVE ZEROES       TO   WS-TXT-CNT                                    
+                                  WS-OIC-CNT                                    
+                                  WS-ROW-CNT.                                   
+           MOVE ZEROS        TO   BODY-SNO.                                     
+                                                                                
+       5200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       5500-SEND-KA-EMAIL.                                                      
+      *-------------------------------------------------------------            
+           IF F120-REC(690:10) NOT = WS-PREV-OIC                                
+              PERFORM 5600-KA-EMAIL-HDR THRU 5600-EXIT.                         
+                                                                                
+      ***************************                                               
+      * START OF TO AND CC LIST *                                               
+      ***************************                                               
+                                                                                
+           PERFORM 8000-CHECK-OIC-SAVED THRU 8000-EXIT.                         
+                                                                                
+           IF WS-OIC-FND = 'Y'                                                  
+              CONTINUE                                                          
+           ELSE                                                                 
+              IF WS-CSM-FND = 'Y'                                               
+                 CONTINUE                                                       
+              ELSE                                                              
+                 ADD 1 TO WS-TXT-CNT                                            
+                                                                                
+                 DISPLAY 'OIC ADDED : ' K022-NUM-OIC                            
+                 MOVE K022-NUM-OIC TO WS-OIC(WS-TXT-CNT)                        
+                                                                                
+                 MOVE SPACES           TO WS-BP13CCNT-LINK                      
+                 MOVE 'EML'            TO LINK-CNTCT-TYPE                       
+                 MOVE K022-NUM-OIC     TO WS-LINK-STAFF-NICK                    
+                                          LINK-STAFF-NICK                       
+                 MOVE SPACES           TO LINK-STAFF-NUM                        
+                 PERFORM 2100-CALL-BP13CCNT THRU 2100-EXIT                      
+      *          STRING K022-NUM-OIC DELIMITED BY SPACES                        
+      *                 '@hdb.gov.sg>' DELIMITED BY SIZE                        
+      *                 INTO WS-TO(WS-TXT-CNT)                                  
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *************************                                                 
+      * START OF BODY CONTENT *                                                 
+      *************************                                                 
+                                                                                
+           ADD 1                     TO BODY-SNO.                               
+           MOVE K022-NUM-OIC         TO BODY-CSM.                               
+           MOVE F120-REGN-NO         TO BODY-REGN.                              
+           MOVE F120-SCH-ACC-NO      TO BODY-SCH-ACC.                           
+                                                                                
+           MOVE F120-DTE-ACCEPTANCE  TO WS-SYS-DATE.                            
+           STRING WS-SYS-DATE(7:2) '/'                                          
+                  WS-SYS-DATE(5:2) '/'                                          
+                  WS-SYS-DATE(1:4)                                              
+                  DELIMITED BY SIZE  INTO BODY-SOCADATE.                        
+                                                                                
+           STRING F120-BLK-NO ', '                                              
+                  F120-STREET-NAME ', #'                                        
+                  F120-LEVEL-NO '-'                                             
+                  F120-MAIN-UNIT '. S('                                         
+                  F120-POSTAL-CODE ')'                                          
+                  DELIMITED BY SIZE  INTO BODY-ADDR.                            
+                                                                                
+           ADD 1             TO WS-ROW-CNT.                                     
+           MOVE BODY-DTL4-TBL-ROW1 TO WS-ROW1(WS-ROW-CNT).                      
+           MOVE BODY-DTL4-TBL-ROW2 TO WS-ROW2(WS-ROW-CNT).                      
+           ADD 1             TO WS-MAIL-WROTE.                                  
+                                                                                
+       5500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       5600-KA-EMAIL-HDR.                                                       
+      *-------------------------------------------------------------            
+           MOVE F120-REC(690:10) TO WS-PREV-OIC.                                
+                                                                                
+           IF WS-TXT-CNT NOT = ZEROES                                           
+              PERFORM 5700-KA-EMAIL-FOOTER THRU 5700-EXIT.                      
+                                                                                
+       5600-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       5700-KA-EMAIL-FOOTER.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER1.                                      
+           WRITE MAIL-PRTREC FROM HEADER2.                                      
+                                                                                
+           MOVE SPACES       TO MAIL-PRTREC.                                    
+           PERFORM VARYING WS-TXT-CNT FROM 1 BY 1 UNTIL WS-TXT-CNT > 99         
+              IF WS-TO(WS-TXT-CNT) = SPACES                                     
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-TO(WS-TXT-CNT) TO TO-MAIL-ID-1                         
+                 WRITE MAIL-PRTREC FROM HEADER-DTL1-TO1                         
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1A.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1B.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL2-CC1C.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL3.                                  
+           WRITE MAIL-PRTREC FROM HEADER-DTL4.                                  
+                                                                                
+           MOVE WS-TO(1) TO TO-MAIL-ID-A.                                       
+           WRITE MAIL-PRTREC FROM HEADER-DTL5-TOA.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA.                              
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA1.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA2.                             
+           WRITE MAIL-PRTREC FROM HEADER-DTL6-CCA3.                             
+                                                                                
+           PERFORM VARYING WS-TXT-CNT FROM 2 BY 1 UNTIL WS-TXT-CNT > 99         
+              IF WS-TO(WS-TXT-CNT) = SPACES                                     
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-TO(WS-TXT-CNT) TO CC-MAIL-ID-B                         
+                 WRITE MAIL-PRTREC FROM HEADER-DTL6-CCB                         
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           WRITE MAIL-PRTREC FROM HEADER-DTL7-SUBJECT-D.                        
+                                                                                
+           MOVE SPACES       TO MAIL-PRTREC.                                    
+           WRITE MAIL-PRTREC FROM BODY-DTL1-HEADER1                             
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL2-INTRO1-D.                           
+           WRITE MAIL-PRTREC FROM BODY-DTL2-INTRO2-D.                           
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-DTL3-TBL-HEADER1.                        
+           WRITE MAIL-PRTREC FROM BODY-DTL3-TBL-HEADER2.                        
+                                                                                
+           PERFORM VARYING WS-ROW-CNT FROM 1 BY 1 UNTIL WS-ROW-CNT > 99         
+              IF WS-ROW1(WS-ROW-CNT) = SPACES                                   
+                 MOVE 100 TO WS-TXT-CNT                                         
+              ELSE                                                              
+                 MOVE WS-ROW1(WS-ROW-CNT) TO BODY-DTL4-TBL-ROW1                 
+                 WRITE MAIL-PRTREC FROM BODY-DTL4-TBL-ROW1                      
+                 MOVE WS-ROW2(WS-ROW-CNT) TO BODY-DTL4-TBL-ROW2                 
+                 WRITE MAIL-PRTREC FROM BODY-DTL4-TBL-ROW2                      
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+           MOVE  SPACES      TO   MAIL-PRTREC.                                  
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN6.                            
+           WRITE MAIL-PRTREC FROM BODY-BLANK-LINE.                              
+           WRITE MAIL-PRTREC FROM FOOTER-DTL1-SIGN5.                            
+           WRITE MAIL-PRTREC FROM FOOTER-DTL2-END.                              
+                                                                                
+           PERFORM VARYING WS-ROW-CNT FROM 1 BY 1 UNTIL WS-ROW-CNT > 99         
+              MOVE SPACES    TO   WS-ROW1(WS-ROW-CNT)                           
+                                  WS-ROW2(WS-ROW-CNT)                           
+                                  WS-TO(WS-ROW-CNT)                             
+                                  WS-OIC(WS-ROW-CNT)                            
+           END-PERFORM.                                                         
+                                                                                
+           MOVE ZEROES       TO   WS-TXT-CNT                                    
+                                  WS-OIC-CNT                                    
+                                  WS-ROW-CNT.                                   
+           MOVE ZEROS        TO   BODY-SNO.                                     
+                                                                                
+       5700-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      ****************************************************************          
+       6000-UPDATE-BP13K022.                                                    
+      ****************************************************************          
+                                                                                
+            MOVE 'BP13C172'            TO K022-NUM-USERID.                      
+            MOVE WS-SYSTEM-DATE        TO K022-DTE-UPDATE.                      
+                                                                                
+            REWRITE BP13K022-REC.                                               
+                                                                                
+            EVALUATE BP13K022-STATUS                                            
+            WHEN 00                                                             
+               CONTINUE                                                         
+               ADD 1                   TO WS-K022-UPDATE                        
+            WHEN OTHER                                                          
+               DISPLAY 'ERROR UPDATING BP13K022. STATUS IS '                    
+                        BP13K022-STATUS                                         
+               PERFORM 9000-CLOSE-FILES       THRU 9000-EXIT                    
+            END-EVALUATE.                                                       
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6100-READ-BP13K435.                                                      
+      *-------------------------------------------------------------            
+           MOVE 'N'                TO  WS-K435-EOF                              
+                                       WS-K435-NOTFND.                          
+           MOVE SPACES             TO  WS-BORROWER.                             
+                                                                                
+           MOVE SPACES             TO  K435-KEY-FLD.                            
+           MOVE F120-SCH-ACC-NO    TO  K435-NUM-HDB-REF                         
+                                       WS-PREV-NUM-HDB-REF.                     
+                                                                                
+           START BP13K435 KEY >= K435-KEY-FLD.                                  
+                                                                                
+           EVALUATE BP13K435-STATUS                                             
+           WHEN 00                                                              
+                PERFORM 6200-READNEXT-BP13K435 THRU 6200-EXIT                   
+                  UNTIL WS-K435-NOTFND = 'Y'                                    
+                     OR WS-K435-EOF = 'Y'                                       
+           WHEN 23                                                              
+                MOVE 'Y' TO WS-K435-NOTFND                                      
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR START BP13K435, STATUS  '                        
+                        BP13K435-STATUS                                         
+                        ',  HDB REF ' K435-NUM-HDB-REF                          
+                MOVE BP13K435-STATUS TO RETURN-CODE                             
+                PERFORM 9000-CLOSE-FILES      THRU 9000-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       6100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       6200-READNEXT-BP13K435.                                                  
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13K435 NEXT RECORD                                            
+                AT END MOVE 'Y' TO WS-K435-EOF.                                 
+                                                                                
+           EVALUATE BP13K435-STATUS                                             
+           WHEN 00                                                              
+                IF K435-NUM-HDB-REF = F120-SCH-ACC-NO                           
+                   MOVE K435-NUM-KEY-LOCN TO F120-BO-CODE                       
+                ELSE                                                            
+                   MOVE 'Y' TO WS-K435-NOTFND                                   
+                END-IF                                                          
+           WHEN 10                                                              
+           WHEN 23                                                              
+                MOVE 'Y' TO WS-K435-EOF                                         
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR READING BP13K435, STATUS  '                      
+                        BP13K435-STATUS                                         
+                        ',  HDB REF ' K435-NUM-HDB-REF                          
+                MOVE BP13K435-STATUS TO RETURN-CODE                             
+                PERFORM 9000-CLOSE-FILES      THRU 9000-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       6200-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *----------------------------------------------------------------*        
+       8000-CHECK-OIC-SAVED.                                                    
+      *----------------------------------------------------------------*        
+           MOVE 'N' TO WS-OIC-FND                                               
+                       WS-CSM-FND                                               
+                       WS-BORROWER-FND.                                         
+                                                                                
+           PERFORM VARYING WS-OIC-CNT FROM 1 BY 1 UNTIL WS-OIC-CNT > 99         
+              IF WS-OIC(WS-OIC-CNT) = SPACES                                    
+                 MOVE 100 TO WS-OIC-CNT                                         
+              ELSE                                                              
+                 IF WS-OIC(WS-OIC-CNT) = K022-NUM-OIC                           
+                    MOVE 'Y' TO WS-CSM-FND                                      
+                 END-IF                                                         
+                 IF WS-OIC(WS-OIC-CNT) = F120-REC(690:10)                       
+                    MOVE 'Y' TO WS-BORROWER-FND                                 
+                 END-IF                                                         
+                 IF WS-CSM-FND = 'Y' AND WS-BORROWER-FND = 'Y'                  
+                    MOVE 'Y' TO WS-OIC-FND                                      
+                    MOVE 100 TO WS-OIC-CNT                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-PERFORM.                                                         
+                                                                                
+       8000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       9000-CLOSE-FILES.                                                        
+      *----------------------------------------------------------------*        
+           IF WS-TXT-CNT NOT = ZEROES                                           
+              IF WS-LETTER-TYPE = 'A'                                           
+                 PERFORM 4200-BO-EMAIL-FOOTER THRU 4200-EXIT                    
+              END-IF                                                            
+              IF WS-LETTER-TYPE = 'B'                                           
+                 PERFORM 4700-NON-BO-EMAIL-FOOTER THRU 4700-EXIT                
+              END-IF                                                            
+              IF WS-LETTER-TYPE = 'C'                                           
+                 PERFORM 5200-SO-EMAIL-FOOTER THRU 5200-EXIT                    
+              END-IF                                                            
+              IF WS-LETTER-TYPE = 'D'                                           
+                 PERFORM 5700-KA-EMAIL-FOOTER THRU 5700-EXIT                    
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           DISPLAY 'NO. OF REC BM06F120          = ' BM06F120-READ.             
+           DISPLAY 'NO. OF REC BP13K022 NOTFND   = ' WS-K022-NOTFND.            
+           DISPLAY 'NO. OF REC BP13K022 UPDATED  = ' WS-K022-UPDATE.            
+           DISPLAY 'NO. OF REC WRIITEN IN MAIL   = ' WS-MAIL-WROTE.             
+                                                                                
+           CLOSE  BM06F120                                                      
+                  BP13K022                                                      
+      *           BP13K435                                                      
+                  BP13MAIL.                                                     
+                                                                                
+           IF BP13K435-STATUS NOT = ZEROES                                      
+              MOVE BP13K435-STATUS TO RETURN-CODE                               
+              DISPLAY 'CLOSE BP13K435 FILE ERROR ' BP13K435-STATUS.             
+                                                                                
+           IF BP13K022-STATUS NOT = ZEROES                                      
+              MOVE BP13K022-STATUS TO RETURN-CODE                               
+              DISPLAY 'CLOSE BP13K022 FILE ERROR ' BP13K022-STATUS.             
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

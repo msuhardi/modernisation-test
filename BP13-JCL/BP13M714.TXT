@@ -1,0 +1,199 @@
+//BP13M714  JOB (BP13P),'BP13M714',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),           
+//        NOTIFY=CSD0071                                                        
+//JOBLIB  DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                    
+//*====================================================================         
+//* RUN ON 25TH OF THE MONTH                                                    
+//*====================================================================         
+//* 1) PASS THE REVISED INSTALMENT TO CPFB                                      
+//*====================================================================         
+//* BP132772 030506 LSB  DBSS                                                   
+//* BP133209 070308 LSB  ADD BP13CD16 BYPASS SEND REVISED INSTAL TO CPFB        
+//* BP133209 070327 LSB  ADD VFY STEP                                           
+//* BP133314 080616 LSB  TAKE DUE-FILE FROM BP13KD38 IN STEP1A                  
+//* BP133876 100406 LSB  FOR CHG RATE USING PENDING FILE STILL SEND             
+//*                      REC TO CPFB,CHG BP13CD16, STEP03 DEL COL 326           
+//* BP134872 030913 ESD1 CATER STEP FOR BP13CC29 TO ADD NEW FILES               
+//*                      FOR MLP.                                               
+//* BP135171 110214 RJE1 TO CATER FOR DB2 UPGRADE                               
+//* BP136692 150217 KSJ3 EXPAND AB02F860 FROM 600 TO 2000                       
+//*====================================================================         
+//*--------------------------------------------------------------------         
+//*      VERIFY FILES BEFORE DAILY PRODUCTION RUN                               
+//*--------------------------------------------------------------------         
+//STEP01  EXEC PGM=IDCAMS,COND=(0,NE)                                           
+//INPUT1   DD DSN=AB02.K020.NUMBER,DISP=OLD                                     
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN   DD *                                                                  
+          VFY FILE(INPUT1)                                                      
+//*  SEND DYNAMIC JDE AHEAD OF THE PRINT DATASET                                
+//*-----------------------------------------------------------------            
+//PRT01   EXEC PGM=IEBGENER                                                     
+//SYSUT1   DD *                                                                 
+1$DJDE$ BTEXT='DPT=GRPID-EAAARS1A CP-1',END;                                    
+1$DJDE$ JDE=BP13D,JDL=BP13,END;                                                 
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EAAARS1A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID),DEST=IOM2                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*-------------------------------------------------------------------*         
+//* BACKUP BP13KD38                                                             
+//*-------------------------------------------------------------------*         
+//STEP00   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.KD38.PPTRANS,DISP=SHR                                    
+//OUTPUT1  DD DSN=BP13.FD38.PPTRANS.M714,DISP=OLD                               
+//*                                                                             
+//INPUT2   DD DSN=BP13.FD38.PPTRANS.DUEDTE.ACCUM,DISP=SHR                       
+//OUTPUT2  DD DSN=BP13.FD38.PPTRANS.DUEDTE.M714,DISP=OLD                        
+//*                                                                             
+//INPUT3   DD DSN=BP13.FD38.PPTRANS.DUEDTE.EFFMTH,DISP=SHR                      
+//OUTPUT3  DD DSN=BP13.FD38.PPTRANS.DUEDTE.EFFMTH.PREV,DISP=OLD                 
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+     REPRO INFILE(INPUT2)  OUTFILE(OUTPUT2)                                     
+     REPRO INFILE(INPUT3)  OUTFILE(OUTPUT3)                                     
+//*                                                                             
+//*-----------------------------------------------------------------            
+//* SORT BP13KD92 BY REGN, PP-SCHDL-CPF-RATE (COL 649)                          
+//*-----------------------------------------------------------------            
+//STEP01   EXEC  SORT,COND=(0,NE)                                               
+//SORTIN   DD DSN=BP13.KD92.UPDLOAN,DISP=SHR                                    
+//SORTOUT  DD DSN=&&BP13FD92,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(20,10),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=1000,BLKSIZE=27000)                           
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,8,A,649,2,A),FORMAT=CH                                        
+   INCLUDE COND=(9,4,CH,EQ,C'RATE',AND,659,2,CH,NE,C'  ')                       
+//*-----------------------------------------------------------------            
+//* INCLUDE DUE CASES                                                           
+//* SORT BP13KD38 BY REGN, PP-SCHED                                             
+//*-----------------------------------------------------------------            
+//STEP1A   EXEC  SORT,COND=(0,NE)                                               
+//SORTIN   DD DSN=BP13.KD38.PPTRANS,DISP=SHR                                    
+//SORTOUT  DD DSN=&&BP13FD38,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(20,10),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=400,BLKSIZE=24000)                            
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,8,A,12,2,A),FORMAT=CH                                         
+   INCLUDE COND=(9,3,CH,EQ,C'DUE',AND,327,1,CH,EQ,C'Y')                         
+//*-----------------------------------------------------------------            
+//* UPDATE MATCHED KD38/FD38 CPF AMTS COMPUTED FROM KD92 (PENDING)              
+//*-----------------------------------------------------------------            
+//STEP1B   EXEC  PGM=BP13CD16,COND=(0,NE)                                       
+//BP13FD38 DD DSN=&&BP13FD38,DISP=(OLD,DELETE)                                  
+//BP13FD92 DD DSN=&&BP13FD92,DISP=(OLD,DELETE)                                  
+//BP13KD38 DD DSN=BP13.KD38.PPTRANS,DISP=SHR,                                   
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//P13FD38A DD DSN=BP13.FD38.PPTRANS.DUEDTE.ACCUM,DISP=OLD                       
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*-----------------------------------------------------------------            
+//* INCLUDED NEW LOAN > ZERO, SORT REGN/NUM-TRANS/SCHEDULE                      
+//*-----------------------------------------------------------------            
+//STEP01   EXEC  SORT,COND=(0,NE)                                               
+//SORTIN   DD DSN=BP13.FD38.PPTRANS.DUEDTE.ACCUM,DISP=SHR                       
+//SORTOUT  DD DSN=&&FD38SORT,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(20,10),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=400,BLKSIZE=27600)                            
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,8,A,24,8,D),FORMAT=CH                                         
+   INCLUDE COND=(49,9,CH,GT,C'000000000')                                       
+//*-----------------------------------------------------------------            
+//* CHECK FOR MULTIPLE REVISED INSTLAMENT EFFECTIVE THE NEXT MONTH              
+//* P13FD38A - NOT DUE                                                          
+//* P13FD38B - DUE IN THE COMING MTH                                            
+//* P13FD38C - DUPLICATE REC THAT DUE IN THE COMING MONTH                       
+//*-----------------------------------------------------------------            
+//STEP02   EXEC  PGM=BP13CC32,COND=(0,NE)                                       
+//BP13FD38 DD DSN=&&FD38SORT,DISP=(OLD,DELETE)                                  
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13KD38 DD DSN=BP13.KD38.PPTRANS,DISP=SHR,                                   
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//P13FD38A DD DSN=BP13.FD38.PPTRANS.DUEDTE.ACCUM,DISP=OLD                       
+//P13FD38B DD DSN=BP13.FD38.PPTRANS.DUEDTE.EFFMTH,DISP=OLD                      
+//P13FD38C DD DSN=BP13.FD38.PPTRANS.DELETE,DISP=OLD                             
+//BP13LC32 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*-------------------------------------------------------------------*         
+//* INCLUDED NEW LOAN > ZERO, SORT REGN/NUM-TRANS/SCHEDULE                      
+//* OMIT PP=01, FIRST-LOAN-TAG = Y                                              
+//*-----------------------------------------------------------------            
+//STEP03   EXEC  SORT,COND=(0,NE)                                               
+//SORTIN   DD DSN=BP13.FD38.PPTRANS.DUEDTE.EFFMTH,DISP=SHR                      
+//SORTOUT  DD DSN=&&FD38CPFB,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(20,10),RLSE),                              
+//            DCB=(RECFM=FB,LRECL=400,BLKSIZE=27600)                            
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,13,A),FORMAT=CH                                               
+   OMIT COND=(12,2,CH,EQ,C'01',OR,292,1,CH,EQ,C'Y',OR,                          
+             326,1,CH,EQ,C'Y')                                                  
+//*-----------------------------------------------------------------            
+//* CHECK REVISED INSTLAMENT EFFECTIVE THE NEXT MONTH,SEND CPFB                 
+//* CREATE APPLICATION FOR WITHDRAWAL                                           
+//*-------------------------------------------------------------------*         
+//STEP04   EXEC PGM=IKJEFT01,DYNAMNBR=20,COND=(0,NE),REGION=4096K               
+//BP13FD38 DD DSN=&&FD38CPFB,DISP=(OLD,PASS)                                    
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13K800 DD DSN=BP13.K800.APPLN,DISP=SHR,                                     
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BP13K820 DD DSN=BP13.K820.OCCUP,DISP=SHR,                                     
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BM06K100 DD DSN=BM06.K100.BLOCK,DISP=SHR,                                     
+//          AMP=('BUFND=4','BUFNI=8')                                           
+//BM06K110 DD DSN=BM06.K110.FLATINV,DISP=SHR,                                   
+//          AMP=('BUFND=4','BUFNI=8')                                           
+//BB14K500 DD DSN=BB14.K500.BLKLEASE,DISP=SHR,                                  
+//          AMP=('BUFND=4','BUFNI=8')                                           
+//AB02F860 DD DSN=BP13.F860.HDBWDL.PPMTH,DISP=SHR                               
+//AB02K020 DD DSN=AB02.K020.NUMBER,DISP=SHR                                     
+//BP13LC29 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSTSIN  DD *                                                                 
+  DSN SYSTEM(DSN)                                                               
+  RUN PROGRAM(BP13CC29) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+  END                                                                           
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* BACKUP BP13KD38                                                             
+//*-------------------------------------------------------------------*         
+//STEP05   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.F860.HDBWDL.PPMTH,DISP=SHR                               
+//OUTPUT1  DD DSN=BP13.F860.HDBWDL.PPBKUP(+1),DISP=(NEW,CATLG),                 
+//            SPACE=(CYL,(20,5)),                                               
+//            DCB=(BP13.GDG,BLKSIZE=0,LRECL=2000,RECFM=FB)                      
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+//*                                                                             
+//*-------------------------------------------------------------------*         
+//* CREATE BP13KD39 PP-TRANS HISTORY FILE                                       
+//*-------------------------------------------------------------------*         
+//STEP06   EXEC PGM=BP13CC61,COND=(0,NE)                                        
+//BP13FD38 DD DSN=BP13.FD38.PPTRANS.DELETE,DISP=SHR                             
+//BP13KD39 DD DSN=BP13.KD39.PPTRANS.HISTORY,DISP=SHR,                           
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* ACCUM BP13FD38 DELETED CASES                                                
+//*-------------------------------------------------------------------*         
+//STEP07   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.FD38.PPTRANS.DELETE,DISP=SHR                             
+//OUTPUT1  DD DSN=BP13.FD38.PPTRANS.DELETE.ACCUM,DISP=MOD                       
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+//*                                                                             
+

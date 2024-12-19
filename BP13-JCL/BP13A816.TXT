@@ -1,0 +1,329 @@
+//BP13A816 JOB (BP13P),'BP13A816',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//       NOTIFY=CSD0071                                                         
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//*********************************************************************         
+//* CHG REF  BY  ON      DESCRIPTION                                            
+//* -------- --- ------  -----------                                            
+//* BP133201 YCH2 09112007 DUPLICATE OF BP13A501 ONLY FOR SERS RUN              
+//* BP135171 RJE1 10022014 TO CATER FOR DB2 UPGRADE                             
+//* BP137724 YCH2 27092019 CHANGE TO IOM2                                       
+//*--------------------------------------------------------------------         
+//* 01      : SORT IN REGN/REF ODER                                             
+//* 03      : TO UPDATE DATE-BALLOT                                             
+//* 06      : FMS CHECK                                                         
+//* 08 - 10 : GET FLAT TYPE FROM PBF, BIGGER FLAT-TYPE                          
+//* 11 - 14 : UPDATE HOUSEHOLD TYPE                                             
+//*********************************************************************         
+//*  TO SEND DJDE AHEAD OF THE PRINT DATASET                                    
+//*  PRT01 : 1 COPY                                                             
+//*--------------------------------------------------------------------         
+//PRT01    EXEC PGM=IEBGENER                                                    
+//SYSUT1   DD *                                                                 
+1$DJDE$ BTEXT='DPT=GRPID-EASSRS1A CP-1',END;                                    
+1$DJDE$ JDE=BP13D,JDL=BP13,END;                                                 
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EASSRS1A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID),DEST=IOM2                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*---------------------------------------------------------------------        
+//* SORT F500-SEQUENCE FILE IN REGN-NO/REF-NO ORDER                             
+//*---------------------------------------------------------------------        
+//STEP01   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.SERS,DISP=SHR                              
+//SORTOUT  DD DSN=&&F510REQ,DISP=(NEW,PASS),                                    
+//            DCB=(BLKSIZE=27500,LRECL=500,RECFM=FB),                           
+//            UNIT=SYSDA,SPACE=(CYL,(80,50),RLSE)                               
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+//*---------------------------------------------------------------------        
+//* BP13.F500.SEQUENCE.SERS - ALREADY UPDATED WITH SEQ-REF-NO                   
+//* COMPUTE DTE-BALLOT FOR THE QUARTER                                          
+//*---------------------------------------------------------------------        
+//STEP03   EXEC PGM=BP13C705,COND=(0,NE)                                        
+//BP13F500 DD DSN=&&F510REQ,DISP=(OLD,PASS)                                     
+//BP13F520 DD DSN=BP13.F500.SEQUENCE.SERS,DISP=OLD                              
+//BP13K703 DD DSN=BP13.K703.SOCDATE,DISP=SHR                                    
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT BY NRIC SEQUENCE                                                       
+//*---------------------------------------------------------------------        
+//STEP05   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.SERS,DISP=SHR                               
+//SORTOUT  DD DSN=&&P13F558B,DISP=(NEW,PASS),                                   
+//            DCB=(BLKSIZE=27600,LRECL=600,RECFM=FB),                           
+//            UNIT=SYSDA,SPACE=(CYL,(200,30),RLSE)                              
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(9,9,A),FORMAT=CH                                                
+//*---------------------------------------------------------------------        
+//* BASED ON THE NRIC IN REQUEST, SOC-OCCUPIER FILE                             
+//* MATCH NRIC IN SMS FILE, IF MATCH UPDATE AS UPGRADER                         
+//*---------------------------------------------------------------------        
+//STEP06   EXEC PGM=BP13U706,COND=(0,NE)                                        
+//STEPLIB  DD DSN=BP13.BATCH.LOADCOB.BALLOT,DISP=SHR                            
+//BP13F558 DD DSN=&&P13F558B,DISP=(OLD,PASS)                                    
+//AB03K030 DD DSN=AB03.K030.SALEMAST,DISP=SHR,                                  
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//AB03K080 DD DSN=AB03.K080.UINACC,DISP=SHR,                                    
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//AB03K081 DD DSN=AB03.K080.PATH1,DISP=SHR,                                     
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//AB03K700 DD DSN=AB03.K700.CUSTFILE,DISP=SHR,                                  
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//P13F558O DD DSN=&&P13F558C,DISP=(NEW,PASS),                                   
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(200,30),RLSE)                              
+//BP13F559 DD DSN=BP13.F559.DUPSMS.SERS,DISP=OLD                                
+//BP13L706 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*-----------------------------------------------------------------            
+//* MATCH NRIC WITH TRANSFER HISTORY ONLY FOR TRF-APPLN-DTE  AFTER              
+//* '19970901' OR FOR DIVORCE CASES TRF-APPLN-DATE > 19970709                   
+//* AND TRF-SCH-ACC IS NOT THE SAME AS SMS-SCH-ACC                              
+//* AS ONE NRIC TRANSFER, ALL FOUR LESSEE WILL BE FOUND IN TRANSFER             
+//* BP13.F558.UPGOCCP.SERS CONTAINS TRANSFER HISTORY DATA                       
+//*-----------------------------------------------------------------            
+//STEP6A   EXEC PGM=BP13C619,COND=(0,NE)                                        
+//BB13K510 DD DSN=BB13.K510.UINHIST,DISP=SHR,                                   
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BB13K500 DD DSN=BB13.K500.HISTORY,DISP=SHR,                                   
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BP13F558 DD DSN=&&P13F558C,DISP=(OLD,PASS)                                    
+//P13F558O DD DSN=BP13.F558.UPGOCCP.SERS,DISP=OLD                               
+//SYSOUT   DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT IN SCH-ACC-NI ORDER FOR RETRIEVING FLAT TYPE FROM PBF                  
+//*---------------------------------------------------------------------        
+//STEP07   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.SERS,DISP=SHR                               
+//SORTOUT  DD DSN=&&F558SORT,DISP=(NEW,PASS),                                   
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(200,30),RLSE)                              
+//SYSIN     DD  *                                                               
+   SORT FIELDS=(101,11,A),FORMAT=CH                                             
+//*---------------------------------------------------------------------        
+//* FLAT TYPE  IS NOT AVAILABLE IN SMS                                          
+//* BASED ON THE SCHEME ACCOUNT FR SMS EXTRACT FLAT TYPE FROM PBF               
+//*---------------------------------------------------------------------        
+//STEP08   EXEC PGM=IKJEFT01,DYNAMNBR=20,COND=(0,NE),REGION=4096K               
+//BP13F558 DD DSN=&&F558SORT,DISP=(OLD,PASS)                                    
+//BP13OUT  DD DSN=&&F558PBF,DISP=(NEW,PASS),                                    
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(200,30),RLSE)                              
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSTSIN  DD *                                                                 
+  DSN SYSTEM(DSN)                                                               
+  RUN PROGRAM(BP13C742) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+  END                                                                           
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT OUT BP13F558 IN NRIC ORDER, IF ONE NRIC WITH MULTIPLE SMS REC          
+//* PROGRAM WILL SELECT THE BIGGER FLAT TYPE                                    
+//*---------------------------------------------------------------------        
+//STEP09   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F558PBF,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&F558SMSF,DISP=(NEW,PASS),                                   
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(200,30),RLSE)                              
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,17,A),FORMAT=CH                                               
+//*---------------------------------------------------------------------        
+//* SELECT THE LEAST PRIORITY IF FOUND TO HAVE MULTIPLE SMS RECORDS             
+//* SELECT BIGGER FLAT TYPE, DIRENT PURCHASE OVER OPEN MARKET                   
+//*---------------------------------------------------------------------        
+//STEP10   EXEC PGM=BP13C734,COND=(0,NE)                                        
+//BP13F558 DD DSN=&&F558SMSF,DISP=(OLD,PASS)                                    
+//P13F558A DD DSN=&&F558FLAT,DISP=(NEW,PASS),                                   
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(200,30),RLSE)                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT OUT BY NRIC SEQUENCE                                                   
+//*---------------------------------------------------------------------        
+//STEP09   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F558FLAT,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&F558NRIC,DISP=(NEW,PASS),                                   
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(200,30),RLSE)                              
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(9,9,A),FORMAT=CH                                                
+//*---------------------------------------------------------------------        
+//* BASED ON THE NRIC IN REQUEST , SOC-OCCUPIER FILE                            
+//* MATCH NRIC IN RESALE FILE, IF MATCH UPDATE AS UPGRADER                      
+//*---------------------------------------------------------------------        
+//STEP11   EXEC PGM=BP13U702,COND=(0,NE)                                        
+//STEPLIB  DD DSN=BP13.BATCH.LOADCOB.BALLOT,DISP=SHR                            
+//BP13F558 DD DSN=&&F558NRIC,DISP=(OLD,PASS)                                    
+//BB24K500 DD DSN=BB24.K500.RESLHIST,DISP=SHR,                                  
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//BB24K510 DD DSN=BB24.K510.UINHIST,DISP=SHR,                                   
+//            AMP=('BUFND=8','BUFNI=4')                                         
+//P13F558O DD DSN=BP13.F558.UPGOCCP.SERS,DISP=OLD                               
+//BP13L702 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT OUT THE HOUSEHOLD TYPE = 'G' UPGRADER CASES                            
+//*              HOUSEHOLD TYPE = '3' UPGRADER 3 ROOM CASES                     
+//*              SMS-SALE-TYPE 2B CASE, NH BUT HAVE TO PAY $618 REGN-FEE        
+//* SORT THE HOUSEHOLD TYPE IN DECENDING ORDER                                  
+//*---------------------------------------------------------------------        
+//STEP12   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.SERS,DISP=SHR                               
+//SORTOUT  DD DSN=&&F558UPG,DISP=(,PASS),                                       
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(150,20),RLSE)                              
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,8,A,93,1,D),FORMAT=CH                                         
+   SUM FIELDS=NONE                                                              
+   INCLUDE COND=(93,1,CH,EQ,C'G',OR,93,1,CH,EQ,C'3',OR,                         
+                 61,2,CH,EQ,C'2B')                                              
+//*---------------------------------------------------------------------        
+//* SORT BY REGISTRATION NUMBER SEQUENCE - NON-MATURE NT                        
+//* BP13.F500.SEQUENCE - ALREADY UPDATED WITH DATE-BALLOT & WAIT-TIME &         
+//*                    - NUM-UNSUCC-REQUEST                                     
+//*---------------------------------------------------------------------        
+//STEP13   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.SERS,DISP=SHR                              
+//SORTOUT  DD DSN=&&F500SEQ,DISP=(,PASS),                                       
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            UNIT=SYSDA,SPACE=(CYL,(32,20),RLSE)                               
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+//*---------------------------------------------------------------------        
+//* MATCH BY COL 123-130, FOR MATURE-NT - REF-NO (6 BYTES) = 2 SPACES           
+//*                       FOR NON-MATURE-NT - REGN-NO (8 BYTES)                 
+//* UPDATE HOUSEHOLD TYPE TO REQUEST FILE = 'G' (UPGRADER),                     
+//*                                         'H' (NEW HOUSEHOLD)                 
+//*---------------------------------------------------------------------        
+//STEP14   EXEC PGM=BP13U707,COND=(0,NE)                                        
+//STEPLIB  DD DSN=BP13.BATCH.LOADCOB.BALLOT,DISP=SHR                            
+//BP13F558 DD DSN=&&F558UPG,DISP=(OLD,PASS)                                     
+//BP13F500 DD DSN=&&F500SEQ,DISP=(OLD,PASS)                                     
+//BP13F510 DD DSN=BP13.F500.SEQUENCE.SERS,DISP=OLD                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT OUT LESSEES WHO ARE OWN AN HUDC FLAT                                   
+//*---------------------------------------------------------------------        
+//STEP15   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F558UPG,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&F558HUDC,DISP=(NEW,PASS),                                   
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600),                           
+//            UNIT=SYSDA,SPACE=(CYL,(40,10),RLSE)                               
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,8,A),FORMAT=CH                                                
+   INCLUDE COND=((101,4,CH,GE,C'7911',AND,101,4,CH,LE,C'7999'),OR,              
+                 (71,4,CH,GE,C'7911',AND,71,4,CH,LE,C'7999'))                   
+//*--------------------------------------------------------------------         
+//* PRINT EXISTING LESSEE AND EX-LESSEE OF HUDC PHASE 2 AND 3                   
+//* OUTPUT FILE FOR PRINTING INELIGIBLE LETTER                                  
+//*---------------------------------------------------------------------        
+//STEP16   EXEC PGM=BP13C856,COND=(0,NE)                                        
+//BP13F558 DD DSN=&&F558HUDC,DISP=(OLD,PASS)                                    
+//P13F558A DD DSN=BP13.F558.UPGOCCP.INELIG.SERS,DISP=OLD                        
+//BP13L856 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT OUT LESSEE-CHECK=YES CASES FOR MATCHING TRANSFER HISTORY               
+//* SORT IN NRIC ORDER                                                          
+//*---------------------------------------------------------------------        
+//STEP19   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.SERS,DISP=SHR                               
+//SORTOUT  DD DSN=&&F558DIVR,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(200,30),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD  *                                                                
+      SORT FIELDS=(9,9,A),FORMAT=CH                                             
+      INCLUDE COND=(84,1,CH,EQ,C'Y')                                            
+//*-----------------------------------------------------------------            
+//* MATCH TRANSFER HISTORY BY SCH-ACC-NO-TRF TO GET BUYER RECORDS               
+//* TO GET  DIVORCE CODE                                                        
+//*-----------------------------------------------------------------            
+//STEP19   EXEC PGM=BP13C182,COND=(0,NE)                                        
+//BB13K500 DD DSN=BB13.K500.HISTORY,DISP=SHR,                                   
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BP13F558 DD DSN=&&F558DIVR,DISP=(OLD,PASS)                                    
+//P13F558O DD DSN=BP13.F558.UPGOCCP.SERS,DISP=OLD                               
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT REQUEST OCCUPIER BY REGN/NRIC                                          
+//*---------------------------------------------------------------------        
+//STEP20   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F558.UPGOCCP.SERS,DISP=SHR                               
+//SORTOUT  DD DSN=&&F558TRAN,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(200,30),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=27600)                            
+//SYSIN    DD  *                                                                
+      SORT FIELDS=(1,17,A),FORMAT=CH                                            
+    INCLUDE COND=(255,1,CH,EQ,C'Y')                                             
+//*---------------------------------------------------------------------        
+//* SORT SOC REQUEST  BY REGN                                                   
+//*---------------------------------------------------------------------        
+//STEP21   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F500.SEQUENCE.SERS,DISP=SHR                              
+//SORTOUT  DD DSN=&&F500TRAN,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(240,20),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD  *                                                                
+      SORT FIELDS=(123,8,A),FORMAT=CH                                           
+//*---------------------------------------------------------------------        
+//* UPDATE CASES FOUND IN TRANSFER SYSTEM AS TRANSFEREE TO BE UPGRADER          
+//* IF DTE-REGN < DTE-TRANSFER                                                  
+//*---------------------------------------------------------------------        
+//STEP22   EXEC PGM=BP13C183,COND=(0,NE)                                        
+//BP13F500 DD DSN=&&F500TRAN,DISP=(OLD,PASS)                                    
+//BP13F558 DD DSN=&&F558TRAN,DISP=(OLD,PASS)                                    
+//BP13F520 DD DSN=BP13.F500.SEQUENCE.SERS,DISP=OLD                              
+//BP13L183 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//*  REPRO BALLOT FILE TO CARTRIDGE                                             
+//*---------------------------------------------------------------------        
+//STEP23   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.F500.SEQUENCE.SERS,DISP=SHR                              
+//OUTPUT1  DD DSN=BP13.F500.SEQUENCE.SERSA816,DISP=OLD                          
+//INPUT2   DD DSN=BP13.F558.UPGOCCP.SERS,DISP=SHR                               
+//OUTPUT2  DD DSN=BP13.F558.UPGOCCP.SERSA816,DISP=OLD                           
+//*                                                                             
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                       
+   REPRO INFILE(INPUT2)  OUTFILE(OUTPUT2)                                       
+

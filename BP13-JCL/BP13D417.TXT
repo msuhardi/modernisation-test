@@ -1,0 +1,117 @@
+//BP13D417 JOB (BP13P),'BP13D417',MSGLEVEL=(1,1),CLASS=I,MSGCLASS=N,            
+//             NOTIFY=CSD0071                                                   
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//*                                                                             
+//*=================================================================            
+//* TO PROCESS IRAS ACKNOWLEDGMENT FILE                                         
+//* TO SEND EMAIL ALERT OF PENDING IRAS PROCESSING TO OIC                       
+//*=================================================================            
+//* DATE MOD  BY      REF      DESCRIPTION                                      
+//* --------  ----  -------    -----------                                      
+//* 02/12/16  KVL1  BP136262   NEW JCL                                          
+//*=================================================================    00011200
+//******************************************************************            
+//* PREP   : VERIFY FILES BEFORE CREATING SENTIRAS FILE                         
+//******************************************************************            
+//STEP00   EXEC PGM=IDCAMS                                                      
+//INPUT1   DD DSN=BP13.K62A.STAMPREF,DISP=OLD                                   
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+          VFY FILE(INPUT1)                                                      
+//******************************************************************            
+//* SEPARATE HEADER AND FOOTER                                                  
+//******************************************************************            
+//STEP01   EXEC  PGM=SORT,PARM='DYNALLOC=(,255)',COND=(0,NE)                    
+//SORTIN   DD DSN=BP13.F416.RECVIRAS,DISP=SHR                                   
+//SORTOF01 DD DSN=&&DETAIL,DISP=(NEW,PASS),                                     
+//            UNIT=SYSDA,SPACE=(CYL,(50,50),RLSE),                              
+//            DCB=(BLKSIZE=27900,LRECL=100,RECFM=FB)                            
+//SORTOF02 DD DSN=&&HEAD,DISP=(NEW,PASS),                                       
+//            UNIT=SYSDA,SPACE=(CYL,(50,50),RLSE),                              
+//            DCB=(BLKSIZE=27900,LRECL=100,RECFM=FB)                            
+//SORTOF03 DD DSN=&&TRAIL,DISP=(NEW,PASS),                                      
+//            UNIT=SYSDA,SPACE=(CYL,(50,50),RLSE),                              
+//            DCB=(BLKSIZE=27900,LRECL=100,RECFM=FB)                            
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+  SORT   FIELDS=COPY                                                            
+  OUTFIL FILES=01,                                                              
+   INCLUDE=(1,6,CH,EQ,C'DETAIL')                                        00140000
+  OUTFIL FILES=02,                                                              
+   INCLUDE=(1,6,CH,EQ,C'HEAD  ')                                        00140000
+  OUTFIL FILES=03,                                                              
+   INCLUDE=(1,6,CH,EQ,C'TRAIL ')                                        00140000
+//*                                                                             
+//******************************************************************            
+//* GET THE NUMBER OF DETAIL ROWS                                     * 11      
+//******************************************************************            
+//STEP02   EXEC SORT,COND=(0,NE),PARM='DYNALLOC=(,255)'                         
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SORTIN   DD DSN=&&DETAIL,DISP=(OLD,PASS)                                      
+//SORTOUT  DD DSN=&&ROWS,DISP=(NEW,PASS),                                       
+//            UNIT=SYSDA,SPACE=(TRK,(1,5),RLSE),                                
+//            DCB=(BLKSIZE=27900,LRECL=100,RECFM=FB)                            
+//SYSIN    DD *                                                                 
+  SORT  FIELDS=COPY                                                             
+  OUTFIL REMOVECC,NODETAIL,                                                     
+  TRAILER1=('TOTAL: ',COUNT=(M11,LENGTH=10))                                    
+/*                                                                              
+//******************************************************************            
+//*  MATCH IRAS RECV FILE WITH BP13K62A/62E TO UPDATE DATA                      
+//******************************************************************            
+//STEP03   EXEC PGM=BP13C622,COND=(0,NE)                                        
+//BP13F41D DD DSN=&&DETAIL,DISP=(OLD,DELETE)                                    
+//BP13F41H DD DSN=&&HEAD,DISP=(OLD,DELETE)                                      
+//BP13F41T DD DSN=&&TRAIL,DISP=(OLD,DELETE)                                     
+//BP13F41R DD DSN=&&ROWS,DISP=(OLD,DELETE)                                      
+//BP13K62A DD DSN=BP13.K62A.STAMPREF,DISP=SHR                                   
+//BP13F622 DD DSN=BP13.F622.MISMATCH,DISP=SHR                                   
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*                                                                             
+//******************************************************************            
+//* EXTRACT FROM BP13.K62A.STAMPREF                                             
+//*(K62A-DTE-SENT-TO-IRAS + 8 DAYS = CURRENT DATE  AND                          
+//* K62A-DTE-IRAS-ACK-FILE-SENT = SPACES                                        
+//******************************************************************            
+//STEP04   EXEC SORT,PARM='DYNALLOC=(,255)',COND=(0,NE)                         
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SORTIN   DD DSN=BP13.K62A.STAMPREF,DISP=SHR                                   
+//SORTOUT  DD DSN=&&BP13F62A,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=1200),                                        
+//            SPACE=(CYL,(50,30),RLSE)                                          
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(321,08,A,30,08,A),FORMAT=CH                                      
+  INCLUDE COND=(321,08,ZD,LT,DATE1P-7,AND,                                      
+                321,08,CH,NE,C'       ',AND,                                    
+                714,08,CH,EQ,C'       ')                                        
+/*                                                                              
+//******************************************************************            
+//* CREATE REPORT ON REFUND STAMP DUTY BATCH NOT PROCESSED BY IRAS      11      
+//* AFTER 7 DAYS                                                        11      
+//******************************************************************            
+//STEP05   EXEC PGM=BP13C628,COND=(0,NE)                                        
+//BP13F62A DD DSN=&&BP13F62A,DISP=(OLD,DELETE)                                  
+//BP13L628 DD DSN=BP13.L628.NOIRAS,DISP=SHR                                     
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+/*                                                                              
+//******************************************************************            
+//*  SEND MAINFRAME EMAIL (BP13L628)                                            
+//******************************************************************            
+//STEP06   EXEC SENDMAIL,COND=(0,NE)                                            
+//INPUT    DD DSN=BP13.L628.NOIRAS,DISP=SHR                                     
+/*                                                                              
+//*------------------------------------------------------------*                
+//*                  END OF BP13D417                                            
+//*------------------------------------------------------------*                
+

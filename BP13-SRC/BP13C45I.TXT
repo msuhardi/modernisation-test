@@ -1,0 +1,610 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C45I.                                                 
+      *AUTHOR.        KSJ3.                                                     
+      *DATE-WRITTEN.  14/11/2016.                                               
+      * ========================================================== *            
+      * OBJECTIVE    : DAILY PROGRAM SWITCH UNUSED SELF BOOK SLOTS *            
+      *                TO MANUAL SLOTS AND DELETE FROM BP13KC30    *            
+      * ASSUMPTIONS  : BEFORE PGM, RUN JCL SORT WITH SUM FIELDS =  *            
+      *                APPT TYPE + APPT DATE + APPT TIME + STATUS. *            
+      * ========================================================== *            
+      * INPUT  FILES :  1.) BP13FC30                               *            
+      * I-O    FILES :  1.) BP13K452                               *            
+      *                 2.) BP13KC30                               *            
+      * LISTING      :  1.) BP13L45I                               *            
+      * ========================================================== *            
+      * CHG-NO   BY   DATE       DESCRIPTION                       *            
+      * -------- ---  ------     -----------                       *            
+      * BP136580 KSJ3 14/11/2016 NEW PROGRAM                       *            
+      * BP136561 KSJ3 18/01/2017 DELETE KC30 EVEN ON INSUFF SLOTS  *            
+      * ========================================================== *            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13FC30  ASSIGN        TO BP13FC30.                          
+                                                                                
+           SELECT BP13K452  ASSIGN        TO BP13K452                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K452-KEY-FLD                       
+                            FILE STATUS   IS WS-K452-STATUS.                    
+                                                                                
+           SELECT BP13KC30  ASSIGN        TO BP13KC30                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS KC30-KEY-FLD                       
+                            FILE STATUS   IS WS-KC30-STATUS.                    
+                                                                                
+           SELECT BP13L45I  ASSIGN        TO BP13L45I.                          
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD  BP13FC30                                                             
+           RECORDING MODE IS F                                                  
+           RECORD CONTAINS 200 CHARACTERS.                                      
+           COPY BP13FC30.                                                       
+                                                                                
+       FD  BP13K452                                                             
+           RECORD CONTAINS 1000 CHARACTERS.                                     
+           COPY BP13K452.                                                       
+                                                                                
+       FD  BP13KC30                                                             
+           RECORD CONTAINS 200 CHARACTERS.                                      
+           COPY BP13KC30.                                                       
+                                                                                
+       FD  BP13L45I                                                             
+           RECORDING MODE IS F                                                  
+           RECORD CONTAINS 132 CHARACTERS.                                      
+       01  BP13L45I-REC                  PIC X(132).                            
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-FILE-STATUS.                                                      
+           05  WS-K452-STATUS            PIC 9(2)   VALUE ZEROES.               
+           05  WS-KC30-STATUS            PIC 9(2)   VALUE ZEROES.               
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-CNT-FC30-READ          PIC 9(6)   VALUE ZEROES.               
+           05  WS-CNT-FC30-SKIP          PIC 9(6)   VALUE ZEROES.               
+           05  WS-CNT-K452-UPD           PIC 9(6)   VALUE ZEROES.               
+           05  WS-CNT-KC30-DEL           PIC 9(6)   VALUE ZEROES.               
+           05  WS-CNT-L45I-WRITE         PIC 9(6)   VALUE ZEROES.               
+           05  WS-CNT-PAGE               PIC 9(4)   VALUE ZEROES.               
+           05  WS-CNT-LINE               PIC 9(2)   VALUE 99.                   
+           05  WS-CNT-SNO                PIC 9(5)   VALUE ZEROES.               
+                                                                                
+       01  WS-FLAGS.                                                            
+           05  WS-FC30-EOF               PIC X(1)   VALUE 'N'.                  
+           05  WS-K452-FND               PIC X(1)   VALUE 'N'.                  
+           05  WS-TIME-FND-FL            PIC X(1)   VALUE 'N'.                  
+                                                                                
+       01  WS-DATE.                                                             
+           05  WS-DTE-FMT8.                                                     
+               10  WS-DTE-CCYY.                                                 
+                   15  WS-DTE-CC         PIC 9(2)   VALUE ZEROES.               
+                   15  WS-DTE-YY         PIC 9(2)   VALUE ZEROES.               
+               10  WS-DTE-MM             PIC 9(2)   VALUE ZEROES.               
+               10  WS-DTE-DD             PIC 9(2)   VALUE ZEROES.               
+           05  WS-DTE-FMT10.                                                    
+               10  WS-DTE-DD             PIC 9(2)   VALUE ZEROES.               
+               10  FILLER                PIC X      VALUE '/'.                  
+               10  WS-DTE-MM             PIC 9(2)   VALUE ZEROES.               
+               10  FILLER                PIC X      VALUE '/'.                  
+               10  WS-DTE-CCYY.                                                 
+                   15  WS-DTE-CC         PIC 9(2)   VALUE ZEROES.               
+                   15  WS-DTE-YY         PIC 9(2)   VALUE ZEROES.               
+           05  WS-DTE-CURR-8             PIC 9(8)   VALUE ZEROES.               
+           05  WS-DTE-CURR-10            PIC X(10)  VALUE ZEROES.               
+           05  WS-TIME-RUN               PIC X(8)   VALUE ZEROES.               
+                                                                                
+       01  WS-ARRAY-VARS.                                                       
+           05  WS-J                      PIC 9(2)   VALUE ZEROES.               
+           05  WS-J-MAX                  PIC 9(2)   VALUE 80.                   
+                                                                                
+       01  WS-BP13FC30-REC.                                                     
+           05  FILLER                    PIC X(28).                             
+           05  WS-FC30-CNT-REC           PIC 9(02).                             
+           05  FILLER                    PIC X(170).                            
+                                                                                
+       01  WS-OTHERS.                                                           
+           05  WS-NUM-DESC               PIC X(60).                             
+           05  WS-TMP-DIFF               PIC S9(3).                             
+                                                                                
+      *-------------------------------------------------------------            
+      *    REPORT LAYOUT                                                        
+      *-------------------------------------------------------------            
+       01  L45I-PR-HEAD-01.                                                     
+           05  FILLER                 PIC X(14)   VALUE 'BP13C45I'.             
+           05  FILLER                 PIC X(8)    VALUE 'HDB3    '.             
+           05  FILLER                 PIC X(25)   VALUE SPACES.                 
+           05  FILLER                 PIC X(39)   VALUE                         
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER                 PIC X(13)   VALUE SPACES.                 
+           05  FILLER                 PIC X(7)    VALUE 'DATE: '.               
+           05  PRINT-CURRENT-DATE     PIC X(10)   VALUE SPACES.                 
+           05  FILLER                 PIC X(3)    VALUE SPACES.                 
+           05  FILLER                 PIC X(7)    VALUE 'PAGE: '.               
+           05  PRINT-PAGE             PIC ZZZ9.                                 
+                                                                                
+       01  L45I-PR-HEAD-02.                                                     
+           05  FILLER                 PIC X(39)   VALUE SPACES.                 
+           05  FILLER                 PIC X(54)   VALUE                         
+              'EXCEPTION REPORT FOR AUTO SWITCHING OF SELF BOOK SLOTS'.         
+                                                                                
+       01  L45I-PR-TITLE-1.                                                     
+           05  FILLER                 PIC X(132)  VALUE                         
+              'S/NO     SENT DATE     APPT TYPE     APPT DATE     APPT T        
+      -       'IME     ERROR DESCRIPTION'.                                      
+                                                                                
+       01  L45I-PR-TITLE-2.                                                     
+           05  FILLER                 PIC X(132)  VALUE                         
+              '----     ---------     ---------     ---------     ------        
+      -       '---     -------------------------------------------------        
+      -       '-----------'.                                                    
+                                                                                
+       01  L45I-PR-DTL.                                                         
+           05  L45I-NUM-SNO           PIC ZZZ9.                                 
+           05  FILLER                 PIC X(5)    VALUE SPACES.                 
+           05  L45I-DTE-SENT          PIC X(8).                                 
+           05  FILLER                 PIC X(6)    VALUE SPACES.                 
+           05  L45I-NUM-APPT-TYPE     PIC X(4).                                 
+           05  FILLER                 PIC X(10)   VALUE SPACES.                 
+           05  L45I-DTE-APPT          PIC X(8).                                 
+           05  FILLER                 PIC X(6)    VALUE SPACES.                 
+           05  L45I-TME-APPT          PIC X(4).                                 
+           05  FILLER                 PIC X(10)   VALUE SPACES.                 
+           05  L45I-NUM-DESC          PIC X(60).                                
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *=============================================================            
+       0000-CONTROL.                                                            
+      *=============================================================            
+                                                                                
+           PERFORM 1000-OPEN-ROUTINE       THRU 1000-EXIT.                      
+           PERFORM 1100-GET-DATE           THRU 1100-EXIT.                      
+           PERFORM 2000-BP13FC30-READ      THRU 2000-EXIT.                      
+           PERFORM 3000-MAIN-ROUTINE       THRU 3000-EXIT                       
+                   UNTIL WS-FC30-EOF = 'Y'.                                     
+           PERFORM 9000-CLOSE-ROUTINE      THRU 9000-EXIT.                      
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       1000-OPEN-ROUTINE.                                                       
+      *=============================================================            
+                                                                                
+           OPEN INPUT  BP13FC30                                                 
+                I-O    BP13K452                                                 
+                       BP13KC30                                                 
+                OUTPUT BP13L45I.                                                
+                                                                                
+           IF WS-K452-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'OPENING BP13K452 ERROR ' WS-K452-STATUS                  
+              MOVE     WS-K452-STATUS      TO   RETURN-CODE                     
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF WS-KC30-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'OPENING BP13KC30 ERROR ' WS-KC30-STATUS                  
+              MOVE     WS-KC30-STATUS      TO   RETURN-CODE                     
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       1100-GET-DATE.                                                           
+      *=============================================================            
+                                                                                
+      *-------------------------------------------------------------            
+      *    GET CURRENT DATE                                                     
+      *-------------------------------------------------------------            
+           MOVE FUNCTION CURRENT-DATE(1:8) TO   WS-DTE-CURR-8.                  
+           MOVE WS-DTE-CURR-8              TO   WS-DTE-FMT8.                    
+           MOVE CORR WS-DTE-FMT8           TO   WS-DTE-FMT10.                   
+           MOVE WS-DTE-FMT10               TO   WS-DTE-CURR-10.                 
+                                                                                
+       1100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       2000-BP13FC30-READ.                                                      
+      *=============================================================            
+                                                                                
+           READ BP13FC30                                                        
+              AT END MOVE 'Y'              TO   WS-FC30-EOF.                    
+                                                                                
+           IF WS-FC30-EOF NOT = 'Y'                                             
+              ADD 1                        TO   WS-CNT-FC30-READ                
+           END-IF.                                                              
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       3000-MAIN-ROUTINE.                                                       
+      *=============================================================            
+                                                                                
+           MOVE BP13FC30-REC               TO   WS-BP13FC30-REC.                
+                                                                                
+      *-------------------------------------------------------------            
+      *    CHECK WORKPLAN FOR THE SLOT'S APPT DATE                              
+      *-------------------------------------------------------------            
+           MOVE SPACES                     TO   BP13K452-REC.                   
+           MOVE FC30-DTE-APPT              TO   K452-DTE-APPT.                  
+                                                                                
+           PERFORM 3100-BP13K452-READ      THRU 3100-EXIT.                      
+                                                                                
+      *-------------------------------------------------------------            
+      *    SKIP RECORDS IF APPT DATE NOT IN WORKPLAN                            
+      *-------------------------------------------------------------            
+           IF WS-K452-FND NOT = 'Y'                                             
+              MOVE 'APPT DATE NOT IN WORKPLAN'                                  
+                                           TO   WS-NUM-DESC                     
+              PERFORM 7900-PRINT-ERROR     THRU 7900-EXIT                       
+              GO TO 3000-CONTINUE-READ-NEXT                                     
+           END-IF.                                                              
+                                                                                
+           MOVE 'N'                        TO   WS-TIME-FND-FL.                 
+                                                                                
+      *-------------------------------------------------------------            
+      *    CHECK VACANCY FOR TIME SLOT (AM)                                     
+      *-------------------------------------------------------------            
+           IF FC30-TME-APPT > 0759 AND                                          
+              FC30-TME-APPT < 1201                                              
+              PERFORM VARYING WS-J FROM 1 BY 1                                  
+                        UNTIL WS-J > WS-J-MAX                                   
+                           OR WS-TIME-FND-FL = 'Y'                              
+                 IF K452-TME-SLOT(WS-J) = FC30-TME-APPT                         
+                    MOVE 'Y'          TO   WS-TIME-FND-FL                       
+                                                                                
+                    IF K452-NUM-MAX-CASE-SB(WS-J) NOT NUMERIC                   
+                       MOVE ZEROES    TO   K452-NUM-MAX-CASE-SB(WS-J)           
+                    END-IF                                                      
+                                                                                
+                    IF K452-NUM-TOT-TP-SB(WS-J) NOT NUMERIC                     
+                       MOVE ZEROES    TO   K452-NUM-TOT-TP-SB(WS-J)             
+                    END-IF                                                      
+                                                                                
+                    IF K452-NUM-TOT-SA-SB(WS-J) NOT NUMERIC                     
+                       MOVE ZEROES    TO   K452-NUM-TOT-SA-SB(WS-J)             
+                    END-IF                                                      
+                                                                                
+                    COMPUTE WS-TMP-DIFF =  K452-NUM-MAX-CASE-SB(WS-J) -         
+                                          (K452-NUM-TOT-TP-SB(WS-J)   +         
+                                           K452-NUM-TOT-SA-SB(WS-J))            
+                 END-IF                                                         
+              END-PERFORM                                                       
+           END-IF.                                                              
+                                                                                
+      *-------------------------------------------------------------            
+      *    CHECK VACANCY FOR TIME SLOT (PM)                                     
+      *-------------------------------------------------------------            
+           IF FC30-TME-APPT > 1200 AND                                          
+              FC30-TME-APPT < 1701                                              
+              PERFORM VARYING WS-J FROM 1 BY 1                                  
+                        UNTIL WS-J > WS-J-MAX                                   
+                           OR WS-TIME-FND-FL = 'Y'                              
+                 IF K452-PM-TME-SLOT(WS-J) = FC30-TME-APPT                      
+                    MOVE 'Y'          TO   WS-TIME-FND-FL                       
+                                                                                
+                    IF K452-PM-MAX-CASE-SB(WS-J) NOT NUMERIC                    
+                       MOVE ZEROES    TO   K452-PM-MAX-CASE-SB(WS-J)            
+                    END-IF                                                      
+                                                                                
+                    IF K452-PM-TOT-TP-SB(WS-J) NOT NUMERIC                      
+                       MOVE ZEROES    TO   K452-PM-TOT-TP-SB(WS-J)              
+                    END-IF                                                      
+                                                                                
+                    IF K452-PM-TOT-SA-SB(WS-J) NOT NUMERIC                      
+                       MOVE ZEROES    TO   K452-PM-TOT-SA-SB(WS-J)              
+                    END-IF                                                      
+                                                                                
+                    COMPUTE WS-TMP-DIFF =  K452-PM-MAX-CASE-SB(WS-J)  -         
+                                          (K452-PM-TOT-TP-SB(WS-J)    +         
+                                           K452-PM-TOT-SA-SB(WS-J))             
+                 END-IF                                                         
+              END-PERFORM                                                       
+           END-IF.                                                              
+                                                                                
+      *-------------------------------------------------------------            
+      *    CHECK VACANCY FOR TIME SLOT (OT)                                     
+      *-------------------------------------------------------------            
+           IF FC30-TME-APPT > 1659 AND                                          
+              FC30-TME-APPT < 2000                                              
+              PERFORM VARYING WS-J FROM 1 BY 1                                  
+                        UNTIL WS-J > WS-J-MAX                                   
+                           OR WS-TIME-FND-FL = 'Y'                              
+                 IF K452-OT-TME-SLOT(WS-J) = FC30-TME-APPT                      
+                    MOVE 'Y'          TO   WS-TIME-FND-FL                       
+                                                                                
+                    IF K452-OT-MAX-CASE-SB(WS-J) NOT NUMERIC                    
+                       MOVE ZEROES    TO   K452-OT-MAX-CASE-SB(WS-J)            
+                    END-IF                                                      
+                                                                                
+                    IF K452-OT-TOT-TP-SB(WS-J) NOT NUMERIC                      
+                       MOVE ZEROES    TO   K452-OT-TOT-TP-SB(WS-J)              
+                    END-IF                                                      
+                                                                                
+                    IF K452-OT-TOT-SA-SB(WS-J) NOT NUMERIC                      
+                       MOVE ZEROES    TO   K452-OT-TOT-SA-SB(WS-J)              
+                    END-IF                                                      
+                                                                                
+                    COMPUTE WS-TMP-DIFF =  K452-OT-MAX-CASE-SB(WS-J)  -         
+                                          (K452-OT-TOT-TP-SB(WS-J)    +         
+                                           K452-OT-TOT-SA-SB(WS-J))             
+                 END-IF                                                         
+              END-PERFORM                                                       
+           END-IF.                                                              
+                                                                                
+      *-------------------------------------------------------------            
+      *    SKIP RECORDS IF APPT TIME NOT IN WORKPLAN                            
+      *-------------------------------------------------------------            
+           IF WS-TIME-FND-FL NOT = 'Y'                                          
+              MOVE 'APPT TIME NOT FOUND IN WORKPLAN'                            
+                                           TO   WS-NUM-DESC                     
+              PERFORM 7900-PRINT-ERROR     THRU 7900-EXIT                       
+              GO TO 3000-CONTINUE-READ-NEXT                                     
+           END-IF.                                                              
+                                                                                
+      *-------------------------------------------------------------            
+      *    SKIP RECORDS IF VACANT SLOTS IS LESS THAN SLOTS TO SWITCH            
+      *-------------------------------------------------------------            
+           IF WS-TMP-DIFF < WS-FC30-CNT-REC                                     
+              MOVE 'INSUFFICIENT SLOTS TO SWITCH'                               
+                                           TO   WS-NUM-DESC                     
+              PERFORM 7900-PRINT-ERROR     THRU 7900-EXIT                       
+           ELSE                                                                 
+              PERFORM 4000-UPD-WORKPLAN    THRU 4000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           PERFORM 4100-DEL-SELFAPPT       THRU 4100-EXIT.                      
+                                                                                
+       3000-CONTINUE-READ-NEXT.                                                 
+                                                                                
+           PERFORM 2000-BP13FC30-READ      THRU 2000-EXIT.                      
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       3100-BP13K452-READ.                                                      
+      *=============================================================            
+                                                                                
+           READ BP13K452.                                                       
+                                                                                
+           EVALUATE WS-K452-STATUS                                              
+           WHEN 00                                                              
+              MOVE 'Y'                     TO   WS-K452-FND                     
+                                                                                
+           WHEN 10                                                              
+           WHEN 23                                                              
+              MOVE 'N'                     TO   WS-K452-FND                     
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'READ BP13K452 ERROR '    WS-K452-STATUS                  
+              MOVE    WS-K452-STATUS       TO   RETURN-CODE                     
+              PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       4000-UPD-WORKPLAN.                                                       
+      *=============================================================            
+                                                                                
+           SUBTRACT 1                      FROM WS-J.                           
+                                                                                
+                                                                                
+           IF FC30-TME-APPT > 0759 AND                                          
+              FC30-TME-APPT < 1201                                              
+              IF FC30-NUM-STATUS = 'V'                                          
+                 IF FC30-NUM-APPT-TYPE = 'TP'                                   
+                    SUBTRACT WS-FC30-CNT-REC                                    
+                                       FROM K452-NUM-TOT-TP-SB(WS-J)            
+                 ELSE                                                           
+                    SUBTRACT WS-FC30-CNT-REC                                    
+                                       FROM K452-NUM-TOT-SA-SB(WS-J)            
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              SUBTRACT WS-FC30-CNT-REC FROM K452-NUM-MAX-CASE-SB(WS-J)          
+              ADD      WS-FC30-CNT-REC TO   K452-NUM-MAX-CASE(WS-J)             
+           END-IF.                                                              
+                                                                                
+           IF FC30-TME-APPT > 1200 AND                                          
+              FC30-TME-APPT < 1701                                              
+              IF FC30-NUM-STATUS = 'V'                                          
+                 IF FC30-NUM-APPT-TYPE = 'TP'                                   
+                    SUBTRACT WS-FC30-CNT-REC                                    
+                                       FROM K452-PM-TOT-TP-SB(WS-J)             
+                 ELSE                                                           
+                    SUBTRACT WS-FC30-CNT-REC                                    
+                                       FROM K452-PM-TOT-SA-SB(WS-J)             
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              SUBTRACT WS-FC30-CNT-REC FROM K452-PM-MAX-CASE-SB(WS-J)           
+              ADD      WS-FC30-CNT-REC TO   K452-PM-MAX-CASE(WS-J)              
+           END-IF.                                                              
+                                                                                
+           IF FC30-TME-APPT > 1659 AND                                          
+              FC30-TME-APPT < 2000                                              
+              IF FC30-NUM-STATUS = 'V'                                          
+                 IF FC30-NUM-APPT-TYPE = 'TP'                                   
+                    SUBTRACT WS-FC30-CNT-REC                                    
+                                       FROM K452-OT-TOT-TP-SB(WS-J)             
+                 ELSE                                                           
+                    SUBTRACT WS-FC30-CNT-REC                                    
+                                       FROM K452-OT-TOT-SA-SB(WS-J)             
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              SUBTRACT WS-FC30-CNT-REC FROM K452-OT-MAX-CASE-SB(WS-J)           
+              ADD      WS-FC30-CNT-REC TO   K452-OT-MAX-CASE(WS-J)              
+           END-IF.                                                              
+                                                                                
+           PERFORM 4010-BP13K452-REWRITE   THRU 4010-EXIT.                      
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       4010-BP13K452-REWRITE.                                                   
+      *=============================================================            
+                                                                                
+           REWRITE BP13K452-REC.                                                
+                                                                                
+           EVALUATE WS-K452-STATUS                                              
+           WHEN 00                                                              
+              ADD 1                        TO   WS-CNT-K452-UPD                 
+                                                                                
+           WHEN OTHER                                                           
+              STRING 'REWRITE ERROR ON WORKPLAN: '                              
+                      WS-K452-STATUS '/' K452-KEY-FLD                           
+                      DELIMITED BY SIZE    INTO WS-NUM-DESC                     
+              PERFORM 7900-PRINT-ERROR     THRU 7900-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       4010-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       4100-DEL-SELFAPPT.                                                       
+      *=============================================================            
+                                                                                
+           MOVE SPACES                     TO   BP13KC30-REC.                   
+           MOVE FC30-KEY-FLD               TO   KC30-KEY-FLD.                   
+                                                                                
+           PERFORM 4110-BP13KC30-DELETE    THRU 4110-EXIT.                      
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       4110-BP13KC30-DELETE.                                                    
+      *=============================================================            
+                                                                                
+           DELETE BP13KC30.                                                     
+                                                                                
+           EVALUATE WS-KC30-STATUS                                              
+           WHEN 00                                                              
+              ADD 1                        TO   WS-CNT-KC30-DEL                 
+                                                                                
+           WHEN OTHER                                                           
+              STRING 'DELETE ERROR ON WORKPLAN: '                               
+                      WS-KC30-STATUS '/' KC30-KEY-FLD                           
+                      DELIMITED BY SIZE    INTO WS-NUM-DESC                     
+              PERFORM 7900-PRINT-ERROR     THRU 7900-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       4110-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       7900-PRINT-ERROR.                                                        
+      *=============================================================            
+                                                                                
+           IF WS-CNT-LINE > 55                                                  
+              PERFORM 7901-PRINT-ERROR-HDR THRU 7901-EXIT                       
+           END-IF.                                                              
+                                                                                
+           ADD 1                           TO   WS-CNT-SNO.                     
+           MOVE WS-CNT-SNO                 TO   L45I-NUM-SNO.                   
+           MOVE FC30-DTE-SENT-SELF-BK      TO   L45I-DTE-SENT.                  
+           MOVE FC30-NUM-APPT-TYPE         TO   L45I-NUM-APPT-TYPE              
+           MOVE FC30-DTE-APPT              TO   L45I-DTE-APPT.                  
+           MOVE FC30-TME-APPT              TO   L45I-TME-APPT.                  
+           MOVE WS-NUM-DESC                TO   L45I-NUM-DESC.                  
+                                                                                
+           WRITE BP13L45I-REC              FROM L45I-PR-DTL.                    
+                                                                                
+           ADD 1                           TO   WS-CNT-LINE.                    
+           ADD 1                           TO   WS-CNT-L45I-WRITE.              
+                                                                                
+           ADD 1                           TO   WS-CNT-FC30-SKIP.               
+                                                                                
+       7900-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       7901-PRINT-ERROR-HDR.                                                    
+      *=============================================================            
+                                                                                
+           ADD 1                           TO   WS-CNT-PAGE.                    
+           MOVE WS-CNT-PAGE                TO   PRINT-PAGE.                     
+           MOVE WS-DTE-CURR-10             TO   PRINT-CURRENT-DATE.             
+                                                                                
+           WRITE BP13L45I-REC FROM L45I-PR-HEAD-01 AFTER PAGE.                  
+           WRITE BP13L45I-REC FROM L45I-PR-HEAD-02.                             
+           WRITE BP13L45I-REC FROM L45I-PR-TITLE-1 AFTER 2.                     
+           WRITE BP13L45I-REC FROM L45I-PR-TITLE-2.                             
+                                                                                
+           MOVE SPACES                     TO   BP13L45I-REC.                   
+           WRITE BP13L45I-REC.                                                  
+                                                                                
+           MOVE 6                          TO   WS-CNT-LINE.                    
+                                                                                
+       7901-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       9000-CLOSE-ROUTINE.                                                      
+      *=============================================================            
+                                                                                
+           CLOSE BP13FC30                                                       
+                 BP13K452                                                       
+                 BP13KC30                                                       
+                 BP13L45I.                                                      
+                                                                                
+           IF WS-K452-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'CLOSING BP13K452 ERROR ' WS-K452-STATUS                  
+              MOVE     WS-K452-STATUS      TO   RETURN-CODE                     
+           END-IF.                                                              
+                                                                                
+           IF WS-KC30-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'CLOSING BP13KC30 ERROR ' WS-KC30-STATUS                  
+              MOVE     WS-KC30-STATUS      TO   RETURN-CODE                     
+           END-IF.                                                              
+                                                                                
+           DISPLAY '   '.                                                       
+           DISPLAY '*------- BP13C45I CONTROL TOTAL -------*'.                  
+           DISPLAY '   '.                                                       
+           DISPLAY ' 1. NO OF BP13FC30 READ      : ' WS-CNT-FC30-READ.          
+           DISPLAY ' 2. NO OF BP13FC30 SKIPPED   : ' WS-CNT-FC30-SKIP.          
+           DISPLAY ' 3. NO OF BP13K452 UPDATED   : ' WS-CNT-K452-UPD.           
+           DISPLAY ' 4. NO OF BP13KC30 DELETED   : ' WS-CNT-KC30-DEL.           
+           DISPLAY ' 5. NO OF BP13L45I WRITTEN   : ' WS-CNT-L45I-WRITE.         
+           DISPLAY '  '.                                                        
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

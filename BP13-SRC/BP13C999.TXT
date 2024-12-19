@@ -1,0 +1,247 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C999.                                                 
+       AUTHOR.        LMS.                                                      
+      *DATE-WRITTEN.  10/05/2007.                                               
+                                                                                
+      *=============================================================            
+      *                 PROGRAM PROFILE                                         
+      *=============================================================            
+      *  SYSTEM ID    :  BP13                                                   
+      *  PROGRAM-ID   :  BP13C999                                               
+      *  AUTHOR       :  LMS                                                    
+      *                                                                         
+      *-------------------------------------------------------------            
+      * OBJECTIVE AND FUNCTIONS OF PROGRAM :                                    
+      * ----------------------------------                                      
+      * HOUSEKEEPING OF DB2 PLAN TABLE                                          
+      * ------------------------------------                                    
+      * TO DELETE RECORDS FROM PLAN TABLE THAT ARE MORE THAN 2 DAYS             
+      * OLD.                                                                    
+      * COPY FROM BE01C018                                                      
+      *-------------------------------------------------------------            
+      * MODIFICATION LOG                                                        
+      * ----------------                                                        
+      * PH/CHG #  EFF DATE    AUTH  DESCRIPTION OF CHANGE                       
+      * --------  ----------  ----  ---------------------                       
+      * BP133064  MAY 2007    LMS   NEW PROGRAM                                 
+      *=============================================================            
+      *                    RELATED DOCUMENTS                                    
+      *=============================================================            
+      * INPUT-FILE    :                                                         
+      *                                                                         
+      * I-O-FILE      :                                                         
+      *                                                                         
+      * OUTPUT-FILE   :                                                         
+      *=============================================================            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       DATA DIVISION.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-WORK-VARIABLES.                                                   
+           05 WS-APPLNAME               PIC X(08) VALUE SPACES.                 
+           05 WS-PROGNAME               PIC X(08) VALUE SPACES.                 
+           05 WS-TIMESTAMP              PIC X(16) VALUE SPACES.                 
+           05 WS-QUERY-NO               PIC X(02) VALUE SPACES.                 
+           05 WS-DATE                   PIC X(08) VALUE SPACES.                 
+           05 WS-DATE1                  PIC 9(08) VALUE 0.                      
+           05 WS-DATE2                  PIC 9(07) VALUE 0.                      
+           05 WS-DATE3                  PIC 9(08) VALUE 0.                      
+                                                                                
+       01  WS-CNT-VARIABLES.                                                    
+           05 WS-END-CURSOR             PIC X(01) VALUE 'N'.                    
+           05 WS-DELETE-CTR             PIC S9(08) VALUE ZEROES.                
+           05 WS-DELETE-CTR-OUT         PIC Z(7)9 VALUE ZEROES.                 
+                                                                                
+             EXEC SQL INCLUDE  SQLCA    END-EXEC.                               
+                                                                                
+      *===============================================================          
+      *     CURSOR TO EXTRACT PLAN TABLE LATEST RECORDS                         
+      *===============================================================          
+           EXEC SQL                                                             
+              DECLARE PLANTABLE CURSOR WITH HOLD FOR                            
+                SELECT APPLNAME       ,                                         
+                       PROGNAME       ,                                         
+                       MAX(TIMESTAMP)                                           
+                FROM   PLAN_TABLE                                               
+                GROUP BY APPLNAME,PROGNAME                                      
+           END-EXEC.                                                            
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+      ***************************************************************           
+       0000-CONTROL.                                                            
+      ***************************************************************           
+                                                                                
+           PERFORM 1000-PROCESS-PLANTABLE    THRU 1000-EXIT.                    
+           PERFORM 9000-WRAP-UP              THRU 9000-EXIT.                    
+           STOP RUN.                                                            
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ***************************************************************           
+       1000-PROCESS-PLANTABLE.                                                  
+      ***************************************************************           
+                                                                                
+           PERFORM 2000-OPEN-PLANTABLE  THRU 2000-EXIT                          
+           MOVE 'N'                     TO   WS-END-CURSOR                      
+           PERFORM 3000-FETCH-PLANTABLE THRU 3000-EXIT                          
+                   UNTIL WS-END-CURSOR  = 'Y'                                   
+           PERFORM 5000-CLOSE-PLANTABLE THRU 5000-EXIT.                         
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ***************************************************************           
+       2000-OPEN-PLANTABLE.                                                     
+      ***************************************************************           
+                                                                                
+           MOVE '01'           TO WS-QUERY-NO                                   
+           EXEC SQL                                                             
+                OPEN PLANTABLE                                                  
+           END-EXEC.                                                            
+           EVALUATE SQLCODE                                                     
+           WHEN 000                                                             
+                CONTINUE                                                        
+           WHEN OTHER                                                           
+                PERFORM 9999-DB2-ERROR    THRU 9999-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ***************************************************************           
+       3000-FETCH-PLANTABLE.                                                    
+      ***************************************************************           
+                                                                                
+           MOVE SPACES         TO WS-WORK-VARIABLES                             
+           INITIALIZE             WS-WORK-VARIABLES                             
+                                                                                
+           MOVE '02'           TO WS-QUERY-NO                                   
+           EXEC SQL                                                             
+                FETCH PLANTABLE                                                 
+                INTO  :WS-APPLNAME  ,                                           
+                      :WS-PROGNAME  ,                                           
+                      :WS-TIMESTAMP                                             
+           END-EXEC                                                             
+                                                                                
+           EVALUATE SQLCODE                                                     
+           WHEN 000                                                             
+                MOVE WS-TIMESTAMP(1:8)    TO WS-DATE1                           
+                COMPUTE WS-DATE2 = FUNCTION INTEGER-OF-DATE(WS-DATE1)           
+                SUBTRACT 1 FROM WS-DATE2                                        
+                COMPUTE WS-DATE3 = FUNCTION DATE-OF-INTEGER(WS-DATE2)           
+                MOVE WS-DATE3             TO WS-DATE                            
+                                                                                
+                PERFORM 4000-DELETE-PLANTABLE THRU 4000-EXIT                    
+                PERFORM 9100-COMMIT           THRU 9100-EXIT                    
+           WHEN 100                                                             
+                MOVE 'Y'  TO WS-END-CURSOR                                      
+           WHEN OTHER                                                           
+                PERFORM 9999-DB2-ERROR    THRU 9999-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ***************************************************************           
+       4000-DELETE-PLANTABLE.                                                   
+      ***************************************************************           
+      *-----------------------------------------------------------------        
+      * RECORDS FROM PLAN TABLE WILL BE DELETED IF THE DATE IS OLDER            
+      * THAN WS-DATE.                                                           
+      *-----------------------------------------------------------------        
+                                                                                
+           MOVE '03'           TO WS-QUERY-NO                                   
+           EXEC SQL                                                             
+                DELETE                                                          
+                FROM     PLAN_TABLE                                             
+                WHERE    APPLNAME     = :WS-APPLNAME                            
+                AND      PROGNAME     = :WS-PROGNAME                            
+                AND      TIMESTAMP    < :WS-DATE                                
+           END-EXEC                                                             
+                                                                                
+           EVALUATE SQLCODE                                                     
+           WHEN 000                                                             
+                COMPUTE WS-DELETE-CTR = WS-DELETE-CTR + SQLERRD(3)              
+           WHEN 100                                                             
+                CONTINUE                                                        
+           WHEN OTHER                                                           
+                PERFORM 9999-DB2-ERROR    THRU 9999-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ***************************************************************           
+       5000-CLOSE-PLANTABLE.                                                    
+      ***************************************************************           
+                                                                                
+           MOVE '04'           TO WS-QUERY-NO                                   
+           EXEC SQL                                                             
+                CLOSE PLANTABLE                                                 
+           END-EXEC.                                                            
+           EVALUATE SQLCODE                                                     
+           WHEN 000                                                             
+                CONTINUE                                                        
+           WHEN OTHER                                                           
+                PERFORM 9999-DB2-ERROR    THRU 9999-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       9000-WRAP-UP.                                                            
+      ******************************************************************        
+                                                                                
+           MOVE WS-DELETE-CTR     TO WS-DELETE-CTR-OUT                          
+                                                                                
+           DISPLAY '***********************************************'            
+           DISPLAY '***      END OF THE PROGRAM BP13C999        ***'.           
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO OF RECORDS DELETED IN PLAN TABLE : '                     
+                    WS-DELETE-CTR-OUT                                           
+           DISPLAY SPACES.                                                      
+           DISPLAY '***********************************************'.           
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *****************************************************************         
+       9100-COMMIT.                                                             
+      *****************************************************************         
+           EXEC SQL                                                             
+                COMMIT                                                          
+           END-EXEC                                                             
+                                                                                
+           EVALUATE SQLCODE                                                     
+           WHEN 000                                                             
+                CONTINUE                                                        
+           WHEN OTHER                                                           
+                PERFORM 9999-DB2-ERROR    THRU 9999-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       9100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *****************************************************************         
+       9999-DB2-ERROR.                                                          
+      *****************************************************************         
+           CALL 'DBATIAR' USING SQLCA.                                          
+           DISPLAY 'QUERY NO. THAT CAUSED ABEND = ' WS-QUERY-NO                 
+           PERFORM 9000-WRAP-UP   THRU 9000-EXIT                                
+           MOVE 12 TO RETURN-CODE                                               
+           STOP RUN.                                                            
+                                                                                
+       9999-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+

@@ -1,0 +1,865 @@
+      *===============================================================*         
+       IDENTIFICATION DIVISION.                                                 
+      *===============================================================*         
+       PROGRAM-ID.    BP13CD82.                                                 
+       AUTHOR.        PAULO CAMIA LEGASPI.                                      
+       DATE-WRITTEN.  JUNE 16, 2010.                                            
+      *===============================================================*         
+      * OBJECTIVE  :  DETERMINE HF-2T, WHERE HOUSEHOLD TYPE = G DUE   *         
+      *            :  TO ONE OF THE APPLICANT = G                     *         
+      *         E.G:  HA1 = G, HA2 = H                                *         
+      *         E.G:  HA1 = H, HA2 = G, OR OCCUPIER SPOUSE = G        *         
+      *===============================================================*         
+      *                                                               *         
+      * INPUT FILE :                                                  *         
+      *               1. BP13F595                                     *         
+      *               2. BP13K558                                     *         
+      *                                                               *         
+      * OUTPUT FILE:  1. P13F595A                                     *         
+      *                                                               *         
+      *===============================================================*         
+      * REF NO   DATE       BY   AMENDMENTS/ENHANCEMENTS              *         
+      *---------------------------------------------------------------*         
+      * BP134041 16/06/2010 PCL3 NEW PROGRAM.                         *         
+      * BP134041 27/10/2010 PCL3 TO STARTBR BP13K595 WHEN NOT FOUND IN*         
+      *                          BP13K558.                            *         
+      * BP134598 15/08/2012 LSB1 CHECK TRANSFER WITH DIVORCE HHTY=G             
+      * BP134996 23/07/2013 IMC1 RESTRUCTURE CODE FOR EASIER MAINTENANCE        
+      * BP134996 29/07/2013 IMC1 CATER FOR MULTIPLE RECORDS IN K716             
+      * BP135350 21/05/2014 SMR2 CATER FOR OTHER SCENARIOS OF FT2T              
+      * BP136736 29/03/2017 SMR2 ENHANCE DETERMINATION OF FT2T                  
+      * BP137179 16/03/2018 FNP1 CATER FOR 2 SINGLES FT2T                       
+      * BP137768 18/04/2019 FNP1 REMOVE CHECKING FOR SIBLINGS                   
+      *                          FOR COUPLES W/ SMS SALES TYPE = 6 AND          
+      *                          WITH TOPUP GRANT (T1J, T2J, ETC),              
+      *                          DEFAULT FT2T = 'N'                             
+      * BP139518 28/02/2023 EAA2 TO INCLUDE 6 SALES TYPE CODE IN      *         
+      *                          HOUSEHOLD DETERMINATION              *         
+      *                          (8L/8M/8N/8R/8S/8T)                  *         
+      *===============================================================*         
+                                                                                
+                                                                                
+      **********************                                                    
+       ENVIRONMENT DIVISION.                                                    
+      **********************                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT  BP13F595  ASSIGN        TO BP13F595.                         
+           SELECT  P13F595A  ASSIGN        TO P13F595A.                         
+                                                                                
+           SELECT  BP13K558  ASSIGN        TO BP13K558                          
+                             ACCESS MODE   IS DYNAMIC                           
+                             ORGANIZATION  IS INDEXED                           
+                             RECORD KEY    IS K558-KEY-FLD                      
+                             FILE STATUS   IS WS-K558-STATUS.                   
+                                                                                
+           SELECT  BP13K595  ASSIGN        TO BP13K595                          
+                             ACCESS MODE   IS DYNAMIC                           
+                             ORGANIZATION  IS INDEXED                           
+                             RECORD KEY    IS K595-KEY-FLD                      
+                      ALTERNATE RECORD KEY IS K595-NUM-NRIC1                    
+                             FILE STATUS   IS WS-K595-STATUS.                   
+                                                                                
+           SELECT  BP13K716  ASSIGN        TO BP13K716                          
+                             ACCESS MODE   IS DYNAMIC                           
+                             ORGANIZATION  IS INDEXED                           
+                             RECORD KEY    IS K716-KEY-FLD                      
+                             FILE STATUS   IS WS-K716-STATUS.                   
+                                                                                
+                                                                                
+      ***************                                                           
+       DATA DIVISION.                                                           
+      ***************                                                           
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F595                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13F595.                                                           
+                                                                                
+       FD   P13F595A                                                            
+            BLOCK CONTAINS 0 RECORDS                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       01 P13F595A-REC        PIC X(500).                                       
+                                                                                
+       FD   BP13K558                                                            
+            RECORD CONTAINS 600 CHARACTERS.                                     
+       COPY BP13K558.                                                           
+                                                                                
+       FD   BP13K595                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BP13K595.                                                           
+                                                                                
+       FD   BP13K716                                                            
+            RECORD CONTAINS 350 CHARACTERS.                                     
+       COPY BP13K716.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      ******************************************************************        
+      *                   WORKING-STORAGE AREA                         *        
+      ******************************************************************        
+                                                                                
+       COPY BP13F23A.                                                           
+                                                                                
+       01  FILE-VARIABLES.                                                      
+           05  WS-EOF-F595             PIC X(1)  VALUE 'N'.                     
+           05  WS-EOF-K595             PIC X(1)  VALUE 'N'.                     
+           05  WS-EOF-K558             PIC X(1)  VALUE 'N'.                     
+           05  WS-EOF-K716             PIC X(1)  VALUE 'N'.                     
+           05  WS-K595-STATUS          PIC 9(02) VALUE ZEROES.                  
+           05  WS-K558-STATUS          PIC 9(02) VALUE ZEROES.                  
+           05  WS-K716-STATUS          PIC 9(02) VALUE ZEROES.                  
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F595-READ            PIC 9(7)  VALUE ZEROES.                  
+           05  WS-F595-WRITE           PIC 9(7)  VALUE ZEROES.                  
+           05  WS-K595-FOUND           PIC 9(7)  VALUE ZEROES.                  
+           05  WS-K558-FND             PIC 9(7)  VALUE ZEROES.                  
+           05  WS-K558-NFND            PIC 9(7)  VALUE ZEROES.                  
+           05  WS-HL-Y                 PIC 9(7)  VALUE ZEROES.                  
+           05  WS-HL-N                 PIC 9(7)  VALUE ZEROES.                  
+           05  WS-HH-Y                 PIC 9(7)  VALUE ZEROES.                  
+           05  WS-SPOUSE-NOTFD         PIC 9(7)  VALUE ZEROES.                  
+           05  WS-SMS-J-ALLO           PIC 9(7)  VALUE ZEROES.                  
+                                                                                
+       01  WS-VARIABLES.                                                        
+           05  WS-K558-FOUND           PIC X(1)  VALUE 'N'.                     
+           05  WS-K595-FND             PIC X(1)  VALUE 'N'.                     
+           05  WS-K558-OKAY            PIC X(1)  VALUE 'N'.                     
+           05  WS-CDE-HH               PIC X(1)  VALUE 'N'.                     
+           05  WS-HH-CHECK             PIC X(1)  VALUE 'N'.                     
+           05  WS-TEMP-PAR             PIC X(1)  VALUE 'N'.                     
+           05  WS-TEMP-SIB             PIC X(1)  VALUE 'N'.                     
+           05  WS-CO-NOTELIG           PIC X(1)  VALUE 'N'.                     
+           05  WS-APPLICANT-REC.                                                
+               10  WS-CDE-HH-A         PIC X(1)  VALUE SPACES.                  
+               10  WS-TAG-A            PIC X(1)  VALUE SPACES.                  
+               10  WS-FLAT-SMS-HA1     PIC X(11) VALUE SPACES.                  
+               10  WS-FLAT-NRIC-HA1    PIC X(09) VALUE SPACES.                  
+               10  WS-NUM-MS-A         PIC X(1)  VALUE SPACES.                  
+               10  WS-ALLO-SMS-HA1     PIC X(3)  VALUE SPACES.                  
+               10  WS-ST-SMS-HA1       PIC X(2)  VALUE SPACES.                  
+           05  WS-SPOUSE-REC.                                                   
+               10  WS-CDE-HH-B         PIC X(1)  VALUE SPACES.                  
+               10  WS-TAG-B            PIC X(1)  VALUE SPACES.                  
+               10  WS-FLAT-SMS-SP      PIC X(11) VALUE SPACES.                  
+               10  WS-FLAT-NRIC-SP     PIC X(09) VALUE SPACES.                  
+               10  WS-ALLO-SMS-SP      PIC X(3)  VALUE SPACES.                  
+               10  WS-ST-SMS-SP        PIC X(2)  VALUE SPACES.                  
+           05  WS-FATHER-REC.                                                   
+               10  WS-CDE-HH-C         PIC X(1)  VALUE SPACES.                  
+               10  WS-TAG-C            PIC X(1)  VALUE SPACES.                  
+               10  WS-FLAT-SMS-02      PIC X(11) VALUE SPACES.                  
+               10  WS-FLAT-NRIC-02     PIC X(09) VALUE SPACES.                  
+           05  WS-MOTHER-REC.                                                   
+               10  WS-CDE-HH-D         PIC X(1)  VALUE SPACES.                  
+               10  WS-TAG-D            PIC X(1)  VALUE SPACES.                  
+               10  WS-FLAT-SMS-12      PIC X(11) VALUE SPACES.                  
+               10  WS-FLAT-NRIC-12     PIC X(09) VALUE SPACES.                  
+           05  WS-CO-APPLICANT-REC.                                             
+               10  WS-CDE-HH-G         PIC X(1)  VALUE SPACES.                  
+               10  WS-TAG-G            PIC X(1)  VALUE SPACES.                  
+               10  WS-FLAT-SMS-HA2     PIC X(11) VALUE SPACES.                  
+               10  WS-FLAT-NRIC-HA2    PIC X(09) VALUE SPACES.                  
+               10  WS-NUM-MS-G         PIC X(1)  VALUE SPACES.                  
+           05  WS-K716-NRIC            PIC X(09) VALUE SPACES.                  
+           05  WS-NUM-REGN             PIC X(08) VALUE SPACES.                  
+           05  WS-K595-REGN            PIC X(08) VALUE SPACES.                  
+           05  WS-K595-DTE-REQ         PIC X(08) VALUE SPACES.                  
+                                                                                
+       01  WS-TOPUP-GRANT-ALLO-HA1     PIC X(03).                               
+           88  VALID-ALLO-HA1          VALUE 'BF1', 'BF2', 'CF1', 'CF2',        
+                                             'TFS', 'TF1', 'TF2', 'T1J',        
+                                             'T2J', 'T3J', 'UF1', 'UF2',        
+                                             'U1J', 'U2J', 'U3J', 'VF1',        
+                                             'VF2', 'WF1', 'WF2', 'V1J'.        
+                                                                                
+       01  WS-TOPUP-GRANT-ALLO-SP      PIC X(03).                               
+           88  VALID-ALLO-SP           VALUE 'BF1', 'BF2', 'CF1', 'CF2',        
+                                             'TFS', 'TF1', 'TF2', 'T1J',        
+                                             'T2J', 'T3J', 'UF1', 'UF2',        
+                                             'U1J', 'U2J', 'U3J', 'VF1',        
+                                             'VF2', 'WF1', 'WF2', 'V1J'.        
+                                                                                
+      ******************************************************************        
+      *                   P R O G R A M     B O D Y                    *        
+      ******************************************************************        
+                                                                                
+      ********************                                                      
+       PROCEDURE DIVISION.                                                      
+      ********************                                                      
+                                                                                
+      ******************************************************************        
+       0000-MAIN.                                                               
+      ******************************************************************        
+                                                                                
+           PERFORM 1000-OPEN-ROUTINE       THRU 1000-EXIT.                      
+                                                                                
+           PERFORM 2000-READ-BP13F595      THRU 2000-EXIT.                      
+                                                                                
+           PERFORM 3000-PROCESS-RECORDS    THRU 3000-EXIT                       
+             UNTIL WS-EOF-F595 = 'Y'.                                           
+                                                                                
+           PERFORM 9999-CLOSE-ROUTINE      THRU 9999-EXIT.                      
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       1000-OPEN-ROUTINE.                                                       
+      ******************************************************************        
+                                                                                
+           OPEN INPUT  BP13F595                                                 
+                       BP13K558                                                 
+                       BP13K716                                                 
+                       BP13K595                                                 
+                OUTPUT P13F595A.                                                
+                                                                                
+           IF WS-K558-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'BP13K558 - ERROR OPENING : ' WS-K558-STATUS              
+              MOVE WS-K558-STATUS                   TO RETURN-CODE              
+              PERFORM  9999-CLOSE-ROUTINE         THRU 9999-EXIT                
+           END-IF.                                                              
+                                                                                
+           IF WS-K595-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'BP13K595 - ERROR OPENING : ' WS-K595-STATUS              
+              MOVE WS-K595-STATUS                   TO RETURN-CODE              
+              PERFORM  9999-CLOSE-ROUTINE         THRU 9999-EXIT                
+           END-IF.                                                              
+                                                                                
+           IF WS-K716-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'BP13K716 - ERROR OPENING : ' WS-K716-STATUS              
+              MOVE WS-K716-STATUS                   TO RETURN-CODE              
+              PERFORM  9999-CLOSE-ROUTINE         THRU 9999-EXIT                
+           END-IF.                                                              
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       2000-READ-BP13F595.                                                      
+      ******************************************************************        
+                                                                                
+           READ BP13F595           AT   END                                     
+                MOVE 'Y'           TO   WS-EOF-F595                             
+                GO                 TO   2000-EXIT.                              
+                                                                                
+           MOVE F595-NUM-REGN        TO WS-NUM-REGN.                            
+           ADD  1                    TO WS-F595-READ.                           
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3000-PROCESS-RECORDS.                                                    
+      ******************************************************************        
+           MOVE SPACES                      TO WS-APPLICANT-REC                 
+                                               WS-SPOUSE-REC                    
+                                               WS-FATHER-REC                    
+                                               WS-MOTHER-REC                    
+                                               WS-CO-APPLICANT-REC              
+                                               WS-CDE-HH                        
+                                               WS-TOPUP-GRANT-ALLO-HA1          
+                                               WS-TOPUP-GRANT-ALLO-SP.          
+           MOVE 'N'    TO                              WS-HH-CHECK              
+                                                       WS-K558-FOUND            
+                                                       WS-TEMP-PAR              
+                                                       WS-TEMP-SIB              
+                                                       WS-K595-FND.             
+                                                                                
+           IF F595-CDE-ELIG-SCH = 'NCS'                                         
+              PERFORM 6000-WRITE-P13F595A         THRU 6000-EXIT                
+              PERFORM 2000-READ-BP13F595          THRU 2000-EXIT                
+              GO TO 3000-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           PERFORM 4000-STARTBR-BP13K558          THRU 4000-EXIT.               
+                                                                                
+           IF WS-K558-FOUND = 'N'                                               
+      * IF K558 NOT FND, READ K595 TO GET LATEST RECORD                         
+                                                                                
+              PERFORM 4200-STARTBR-BP13K595       THRU 4200-EXIT                
+                                                                                
+              IF WS-K595-FND   = 'Y'                                            
+                 PERFORM 4000-STARTBR-BP13K558       THRU 4000-EXIT             
+              ELSE                                                              
+                 IF WS-K558-FOUND = 'N'                                         
+                    MOVE '*'                           TO WS-CDE-HH             
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      * IF BOTH APPLICANTS ARE SINGLE AND ONE IS FT AND THE OTHER               
+      * IS 2T, UPDATE FT2T TO 'Y'                                               
+                                                                                
+                                                                                
+           IF F595-CDE-ELIG-SCH = 'JSE'                                         
+              IF WS-TAG-A = 'Y' AND WS-TAG-G = 'Y'                              
+                 IF WS-NUM-MS-A = 'S' OR 'D' OR 'W' OR                          
+                                  '1' OR '4' OR '3'                             
+                    IF (WS-CDE-HH-A = 'H' AND WS-CDE-HH-G = 'G') OR             
+                       (WS-CDE-HH-A = 'G' AND WS-CDE-HH-G = 'H')                
+                       MOVE 'E' TO WS-CDE-HH                                    
+                       PERFORM 6000-WRITE-P13F595A    THRU 6000-EXIT            
+                       PERFORM 2000-READ-BP13F595     THRU 2000-EXIT            
+                       GO TO 3000-EXIT                                          
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+                                                                                
+           IF WS-TAG-B = SPACES OR LOW-VALUES                                   
+             ADD 1                                  TO WS-SPOUSE-NOTFD          
+           END-IF.                                                              
+                                                                                
+                                                                                
+           MOVE WS-ALLO-SMS-HA1   TO WS-TOPUP-GRANT-ALLO-HA1.                   
+           MOVE WS-ALLO-SMS-SP    TO WS-TOPUP-GRANT-ALLO-SP.                    
+                                                                                
+      ****FOR MARRIED COUPLES, IF SMS SALES TYPE = '06' AND                     
+      ****SMS ALLO-SCH = 'T1J' OR 'T2J' OR 'V1J'  --> FT2T = 'N'                
+                                                                                
+           IF (WS-TAG-A = 'Y' AND WS-TAG-B = 'Y')                               
+              IF (WS-ST-SMS-HA1 = '6 ' AND VALID-ALLO-HA1) OR                   
+                 (WS-ST-SMS-SP = '6 '  AND VALID-ALLO-SP)                       
+                 ADD 1 TO WS-SMS-J-ALLO                                         
+                 MOVE 'N' TO WS-CDE-HH                                          
+                 PERFORM 6000-WRITE-P13F595A    THRU 6000-EXIT                  
+                 PERFORM 2000-READ-BP13F595     THRU 2000-EXIT                  
+                 GO TO 3000-EXIT                                                
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      * APPLICANT & SPOUSE - FOR MARRIED COUPLES                                
+           IF (WS-TAG-A = 'Y' AND WS-TAG-B = 'Y') OR                            
+      * MOTHER/FATHER - HA1 IS SINGLE OR DIVORCED OR WIDOWED                    
+      *               - HA1 IS A FIRST-TIMERS                                   
+      *               - ONE OF THE PARENT MUST BE CO-APPLICANT                  
+              (WS-TAG-C = 'Y' AND WS-TAG-D = 'Y' AND                            
+               WS-CDE-HH-A = 'H' AND                                            
+              (WS-NUM-MS-A = 'S' OR 'D' OR 'W' OR '1' OR '4' OR '3') AND        
+             ((WS-FLAT-NRIC-02 = F595-NUM-NRIC1 OR F595-NUM-NRIC2 OR            
+                                 F595-NUM-NRIC3 OR F595-NUM-NRIC4) OR           
+              (WS-FLAT-NRIC-12 = F595-NUM-NRIC1 OR F595-NUM-NRIC2 OR            
+                                 F595-NUM-NRIC3 OR F595-NUM-NRIC4)))            
+              IF WS-TAG-A = 'Y' AND WS-TAG-B = 'Y'                              
+                 IF WS-CO-NOTELIG = 'Y'                                         
+                    MOVE 'N'                      TO WS-CDE-HH                  
+                    ADD 1                         TO WS-HL-N                    
+                    PERFORM 6000-WRITE-P13F595A   THRU 6000-EXIT                
+                    PERFORM 2000-READ-BP13F595    THRU 2000-EXIT                
+                    GO TO 3000-EXIT                                             
+                 ELSE                                                           
+                    CONTINUE                                                    
+                 END-IF                                                         
+              ELSE                                                              
+                 IF WS-TAG-C = 'Y' AND WS-TAG-D = 'Y' AND                       
+                    WS-CDE-HH-A = 'H' AND                                       
+                   (WS-NUM-MS-A = 'S' OR 'D' OR 'W' OR                          
+                                  '1' OR '4' OR '3') AND                        
+                  ((WS-FLAT-NRIC-02 = F595-NUM-NRIC1 OR                         
+                    F595-NUM-NRIC2 OR F595-NUM-NRIC3 OR                         
+                    F595-NUM-NRIC4) OR                                          
+                   (WS-FLAT-NRIC-12 = F595-NUM-NRIC1 OR                         
+                    F595-NUM-NRIC2 OR F595-NUM-NRIC3 OR                         
+                    F595-NUM-NRIC4))                                            
+                    MOVE WS-CDE-HH-C        TO WS-CDE-HH-A                      
+                    MOVE WS-FLAT-NRIC-02    TO WS-FLAT-NRIC-HA1                 
+                    MOVE WS-FLAT-SMS-02     TO WS-FLAT-SMS-HA1                  
+                    MOVE WS-CDE-HH-D        TO WS-CDE-HH-B                      
+                    MOVE WS-FLAT-NRIC-12    TO WS-FLAT-NRIC-SP                  
+                    MOVE WS-FLAT-SMS-12     TO WS-FLAT-SMS-SP                   
+                    MOVE 'Y'                TO WS-TEMP-PAR                      
+                 END-IF                                                         
+              END-IF                                                            
+              PERFORM 5000-CHECK-CDE-HH           THRU 5000-EXIT                
+           ELSE                                                                 
+              ADD 1                                 TO WS-HL-N                  
+           END-IF.                                                              
+                                                                                
+           PERFORM 6000-WRITE-P13F595A            THRU 6000-EXIT.               
+           PERFORM 2000-READ-BP13F595             THRU 2000-EXIT.               
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4000-STARTBR-BP13K558.                                                   
+      ******************************************************************        
+                                                                                
+           MOVE SPACES          TO  BP13K558-REC.                               
+           INITIALIZE               BP13K558-REC.                               
+                                                                                
+           MOVE WS-NUM-REGN     TO  K558-NUM-REGN.                              
+                                                                                
+           MOVE 'N'             TO  WS-EOF-K558                                 
+                                    WS-CO-NOTELIG.                              
+                                                                                
+                                                                                
+           START BP13K558 KEY >= K558-KEY-FLD.                                  
+                                                                                
+           EVALUATE WS-K558-STATUS                                              
+           WHEN 00                                                              
+                PERFORM 4100-READNEXT-BP13K558 THRU 4100-EXIT                   
+                  UNTIL K558-NUM-REGN NOT = WS-NUM-REGN                         
+                     OR WS-EOF-K558 = 'Y'                                       
+           WHEN 10                                                              
+           WHEN 23                                                              
+                DISPLAY 'BP13K558 RECORD NOT FOUND  = ' K558-KEY-FLD            
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR START BP13K558, STATUS  '                        
+                        WS-K558-STATUS                                          
+                        ',  REGN ' K558-NUM-REGN                                
+                MOVE WS-K558-STATUS             TO RETURN-CODE                  
+                PERFORM 9999-CLOSE-ROUTINE    THRU 9999-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4100-READNEXT-BP13K558.                                                  
+      ******************************************************************        
+                                                                                
+           READ BP13K558 NEXT RECORD                                            
+                AT END MOVE 'Y' TO WS-EOF-K558.                                 
+                                                                                
+           EVALUATE WS-K558-STATUS                                              
+           WHEN 00                                                              
+           WHEN 02                                                              
+                IF K558-NUM-REGN = WS-NUM-REGN                                  
+                   MOVE 'Y'                           TO WS-K558-FOUND          
+                   PERFORM 4150-PROCESS-K558          THRU 4150-EXIT            
+                ELSE                                                            
+                   MOVE 'Y'                              TO WS-EOF-K558         
+                END-IF                                                          
+           WHEN 10                                                              
+           WHEN 23                                                              
+                MOVE 'Y'                                 TO WS-EOF-K558         
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR READING BP13K558, STATUS '                       
+                        WS-K558-STATUS ',  REGN ' K558-NUM-REGN                 
+                MOVE WS-K558-STATUS               TO RETURN-CODE                
+                PERFORM 9999-CLOSE-ROUTINE      THRU 9999-EXIT                  
+           END-EVALUATE.                                                        
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4150-PROCESS-K558.                                                       
+      ******************************************************************        
+      * PROCESS DIVORCE CASES                                                   
+           IF (K558-DTE-APPLN-TR > '19970709') AND                              
+              (K558-NUM-DIVORCE-TR = 'Y')      AND                              
+              (K558-CDE-HOUSEHOLD = 'H')                                        
+               IF K558-CDE-FLAT-TYPE-TR > 2                                     
+                  MOVE 'G' TO K558-CDE-HOUSEHOLD                                
+               ELSE                                                             
+                  IF (K558-NUM-SALES-TYPE-TR = '7 ' OR '7J' OR                  
+                      '8A' OR '8B' OR '8E' OR                                   
+                      '7C' OR '8L' OR '8M' OR '8N' OR                           
+                      '8R' OR '8S' OR '8T' ) OR                                 
+                     (K558-NUM-ALLO-SCH-TR = 'OM ' OR 'PPO' OR                  
+                      'AOM' OR 'ROM' OR 'PPR' OR 'SPR')                         
+                      MOVE 'H' TO K558-CDE-HOUSEHOLD                            
+                  ELSE                                                          
+                      IF (K558-NUM-ALLO-SCH-TR = 'STD' OR 'RP ') OR             
+                         (K558-NUM-HDB-REF-TR >= '85750245901' AND              
+                                               <= '85750375015')                
+                          MOVE 'G' TO K558-CDE-HOUSEHOLD                        
+                      END-IF                                                    
+                  END-IF                                                        
+               END-IF                                                           
+           END-IF                                                               
+                                                                                
+      * PROCESS MAIN APPLICANT                                                  
+           IF K558-CDE-RELATIONSHIP = '00'                                      
+              MOVE 'Y'                            TO WS-TAG-A                   
+              MOVE K558-NUM-MARITAL-STATUS        TO WS-NUM-MS-A                
+              MOVE K558-CDE-SALES-TYPE-SMS        TO WS-ST-SMS-HA1              
+              MOVE K558-NUM-ALLOC-SCH-SMS         TO WS-ALLO-SMS-HA1            
+              IF (K558-CDE-HOUSEHOLD = 'G' OR '3')                              
+                  MOVE 'G'                        TO WS-CDE-HH-A                
+                  IF K558-CDE-FILE-STATUS-SMS NOT = 'OM'                        
+                     MOVE K558-NUM-HDB-REF-SMS TO WS-FLAT-SMS-HA1               
+                     MOVE K558-NUM-NRIC        TO WS-FLAT-NRIC-HA1              
+                  END-IF                                                        
+      *           IF K558-CDE-FILE-STATUS-RSL NOT = 'OM'                        
+      *              MOVE K558-NUM-HDB-REF-RSL TO WS-FLAT-SMS-HA1               
+      *              MOVE K558-NUM-NRIC        TO WS-FLAT-NRIC-HA1              
+      *           END-IF                                                        
+              ELSE                                                              
+                  MOVE 'H'                        TO WS-CDE-HH-A                
+                  IF K558-NUM-HDB-REF-SMS NOT = SPACES AND LOW-VALUES           
+                     MOVE K558-NUM-HDB-REF-SMS TO WS-FLAT-SMS-HA1               
+                     MOVE K558-NUM-NRIC        TO WS-FLAT-NRIC-HA1              
+                  END-IF                                                        
+              END-IF                                                            
+           END-IF                                                               
+                                                                                
+      * PROCESS APPLICANT SPOUSE/FIANCE                                         
+           IF K558-CDE-RELATIONSHIP = '20' OR '09'                              
+              MOVE 'Y'                           TO WS-TAG-B                    
+              MOVE K558-CDE-SALES-TYPE-SMS        TO WS-ST-SMS-SP               
+              MOVE K558-NUM-ALLOC-SCH-SMS         TO WS-ALLO-SMS-SP             
+              IF (K558-CDE-HOUSEHOLD = 'G' OR '3')                              
+                  IF K558-CDE-FILE-STATUS-SMS NOT = 'OM'                        
+                     MOVE K558-NUM-HDB-REF-SMS TO WS-FLAT-SMS-SP                
+                     MOVE K558-NUM-NRIC        TO WS-FLAT-NRIC-SP               
+                  END-IF                                                        
+                  MOVE 'G'                        TO WS-CDE-HH-B                
+              ELSE                                                              
+                  MOVE 'H'                        TO WS-CDE-HH-B                
+                  IF K558-NUM-HDB-REF-SMS NOT = SPACES AND LOW-VALUES           
+                     MOVE K558-NUM-HDB-REF-SMS TO WS-FLAT-SMS-SP                
+                     MOVE K558-NUM-NRIC        TO WS-FLAT-NRIC-SP               
+                  END-IF                                                        
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      * PROCESS FATHER                                                          
+           IF K558-CDE-RELATIONSHIP = '02'                                      
+              MOVE 'Y'                           TO WS-TAG-C                    
+              IF (K558-CDE-HOUSEHOLD = 'G' OR '3')                              
+                  MOVE 'G'                        TO WS-CDE-HH-C                
+                  IF K558-CDE-FILE-STATUS-SMS NOT = 'OM'                        
+                     MOVE K558-NUM-HDB-REF-SMS TO WS-FLAT-SMS-02                
+                     MOVE K558-NUM-NRIC        TO WS-FLAT-NRIC-02               
+                  END-IF                                                        
+              ELSE                                                              
+                  MOVE 'H'                        TO WS-CDE-HH-C                
+                  IF K558-NUM-HDB-REF-SMS NOT = SPACES AND LOW-VALUES           
+                     MOVE K558-NUM-HDB-REF-SMS TO WS-FLAT-SMS-02                
+                     MOVE K558-NUM-NRIC        TO WS-FLAT-NRIC-02               
+                  END-IF                                                        
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      * PROCESS MOTHER                                                          
+           IF K558-CDE-RELATIONSHIP = '12'                                      
+              MOVE 'Y'                           TO WS-TAG-D                    
+              IF (K558-CDE-HOUSEHOLD = 'G' OR '3')                              
+                  MOVE 'G'                        TO WS-CDE-HH-D                
+                  IF K558-CDE-FILE-STATUS-SMS NOT = 'OM'                        
+                     MOVE K558-NUM-HDB-REF-SMS TO WS-FLAT-SMS-12                
+                     MOVE K558-NUM-NRIC        TO WS-FLAT-NRIC-12               
+                  END-IF                                                        
+              ELSE                                                              
+                  MOVE 'H'                        TO WS-CDE-HH-D                
+                  IF K558-NUM-HDB-REF-SMS NOT = SPACES AND LOW-VALUES           
+                     MOVE K558-NUM-HDB-REF-SMS TO WS-FLAT-SMS-12                
+                     MOVE K558-NUM-NRIC        TO WS-FLAT-NRIC-12               
+                  END-IF                                                        
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      * PROCESS SINGLE CO-APPLICANT                                             
+           IF (K558-NUM-MARITAL-STATUS = 'S' OR 'D' OR 'W' OR                   
+                                         '1' OR '4' OR '3')                     
+              IF (K558-NUM-NRIC NOT = WS-FLAT-NRIC-HA1) AND                     
+                 (K558-NUM-NRIC = F595-NUM-NRIC1 OR F595-NUM-NRIC2 OR           
+                                  F595-NUM-NRIC3 OR F595-NUM-NRIC4)             
+                 MOVE 'Y'                            TO WS-TAG-G                
+                 MOVE K558-NUM-MARITAL-STATUS        TO WS-NUM-MS-G             
+                 IF (K558-CDE-HOUSEHOLD = 'G' OR '3')                           
+                    MOVE 'G'                         TO WS-CDE-HH-G             
+                    IF K558-CDE-FILE-STATUS-SMS NOT = 'OM'                      
+                       MOVE K558-NUM-HDB-REF-SMS TO WS-FLAT-SMS-HA2             
+                       MOVE K558-NUM-NRIC        TO WS-FLAT-NRIC-HA2            
+                    END-IF                                                      
+                 ELSE                                                           
+                    MOVE 'H'                         TO WS-CDE-HH-G             
+                    IF K558-NUM-HDB-REF-SMS NOT = SPACES AND LOW-VALUES         
+                       MOVE K558-NUM-HDB-REF-SMS TO WS-FLAT-SMS-HA2             
+                       MOVE K558-NUM-NRIC        TO WS-FLAT-NRIC-HA2            
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+                                                                                
+      *** THIS CHECKING IS ONLY FOR COUPLE WITH CO-APPLICANT/S ***              
+      *** ALL CO-APPLICANTS SHOULD BE 1ST TIMER TO BE ELIGIBLE ***              
+      *** IF ATLEAST 1 OF THE CO-APPLICANTS IS 2ND TIMER, IT   ***              
+      *** WILL NOT BE ELIGIBLE FOR FT2T ANYMORE                ***              
+           IF (K558-CDE-RELATIONSHIP NOT = '00' AND '20' AND '09') AND          
+              (K558-NUM-NRIC = F595-NUM-NRIC1 OR F595-NUM-NRIC2 OR              
+                               F595-NUM-NRIC3 OR F595-NUM-NRIC4) AND            
+              (K558-CDE-HOUSEHOLD = 'G' OR '3')                                 
+              MOVE 'Y'                         TO WS-CO-NOTELIG                 
+           END-IF.                                                              
+                                                                                
+       4150-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4200-STARTBR-BP13K595.                                                   
+      ******************************************************************        
+                                                                                
+           MOVE SPACES          TO  BP13K595-REC.                               
+           INITIALIZE               BP13K595-REC.                               
+                                                                                
+           MOVE F595-NUM-NRIC1  TO  K595-NUM-NRIC1.                             
+                                                                                
+           MOVE 'N'             TO  WS-EOF-K595.                                
+           MOVE SPACES          TO  WS-K595-REGN                                
+                                    WS-K595-DTE-REQ.                            
+                                                                                
+           START BP13K595 KEY >= K595-NUM-NRIC1.                                
+                                                                                
+           EVALUATE WS-K595-STATUS                                              
+           WHEN 00                                                              
+                PERFORM 4300-READNEXT-BP13K595 THRU 4300-EXIT                   
+                  UNTIL K595-NUM-NRIC1 NOT = F595-NUM-NRIC1                     
+                     OR WS-EOF-K595 = 'Y'                                       
+           WHEN 10                                                              
+           WHEN 23                                                              
+                CONTINUE                                                        
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR START BP13K595, STATUS  '                        
+                        WS-K595-STATUS                                          
+                        ',  REGN ' K595-NUM-NRIC1                               
+                MOVE WS-K595-STATUS             TO RETURN-CODE                  
+                PERFORM 9999-CLOSE-ROUTINE    THRU 9999-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4300-READNEXT-BP13K595.                                                  
+      ******************************************************************        
+                                                                                
+           READ BP13K595 NEXT RECORD                                            
+                AT END MOVE 'Y' TO WS-EOF-K595.                                 
+                                                                                
+           EVALUATE WS-K595-STATUS                                              
+           WHEN 00                                                              
+           WHEN 02                                                              
+                IF K595-NUM-NRIC1 = F595-NUM-NRIC1                              
+                   IF K595-NUM-REGN NOT = F595-NUM-REGN                         
+                      ADD 1                             TO WS-K595-FOUND        
+                                                                                
+                      IF K595-DTE-REQUEST NOT = SPACES AND LOW-VALUES           
+                         IF K595-DTE-REQUEST > WS-K595-DTE-REQ                  
+                            PERFORM 4400-READ-BP13K558  THRU 4400-EXIT          
+                                                                                
+                            IF WS-K558-OKAY = 'Y'                               
+                               MOVE K595-DTE-REQUEST TO WS-K595-DTE-REQ         
+                               MOVE K595-NUM-REGN    TO WS-NUM-REGN             
+                            END-IF                                              
+                         END-IF                                                 
+                      END-IF                                                    
+                   END-IF                                                       
+                ELSE                                                            
+                   MOVE 'Y'                          TO WS-EOF-K595             
+                END-IF                                                          
+           WHEN 10                                                              
+           WHEN 23                                                              
+                MOVE 'Y'                                 TO WS-EOF-K595         
+           WHEN OTHER                                                           
+                DISPLAY 'ERROR READING BP13K595, STATUS '                       
+                        WS-K595-STATUS ',  REGN ' K595-NUM-NRIC1                
+                MOVE WS-K595-STATUS               TO RETURN-CODE                
+                PERFORM 9999-CLOSE-ROUTINE      THRU 9999-EXIT                  
+           END-EVALUATE.                                                        
+                                                                                
+       4300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4400-READ-BP13K558.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                               TO BP13K558-REC.           
+           INITIALIZE                                   BP13K558-REC.           
+                                                                                
+           MOVE K595-NUM-NRIC1                       TO K558-NUM-NRIC.          
+           MOVE K595-NUM-REGN                        TO K558-NUM-REGN.          
+           MOVE 'N'                                  TO WS-K558-OKAY.           
+                                                                                
+           READ BP13K558.                                                       
+                                                                                
+           EVALUATE WS-K558-STATUS                                              
+               WHEN 00                                                          
+                    ADD 1                            TO WS-K558-FND             
+                    MOVE 'Y'                         TO WS-K595-FND             
+                                                        WS-K558-OKAY            
+                                                                                
+               WHEN 23                                                          
+                    ADD 1                            TO WS-K558-NFND            
+                                                                                
+               WHEN OTHER                                                       
+                    DISPLAY 'ERROR READING BP13K558, STATUS '                   
+                            WS-K558-STATUS ',  REGN ' K558-KEY-FLD              
+                    MOVE WS-K558-STATUS               TO RETURN-CODE            
+                    PERFORM 9999-CLOSE-ROUTINE      THRU 9999-EXIT              
+           END-EVALUATE.                                                        
+                                                                                
+       4400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5000-CHECK-CDE-HH.                                                       
+      ******************************************************************        
+                                                                                
+           PERFORM 5100-CHECK-HH-NRIC               THRU 5100-EXIT.             
+                                                                                
+           IF WS-HH-CHECK = 'Y'                                                 
+              ADD 1                                   TO WS-HH-Y                
+              MOVE 'N'                                TO WS-CDE-HH              
+           ELSE                                                                 
+            IF (WS-CDE-HH-A = 'H' OR 'T') AND (WS-CDE-HH-B = 'G') AND           
+                (F595-CDE-HOUSEHOLD = 'G')                                      
+                MOVE 'Y'                              TO WS-CDE-HH              
+                ADD 1                                 TO WS-HL-Y                
+              ELSE                                                              
+              IF (WS-CDE-HH-A = 'G') AND (WS-CDE-HH-B = 'H' OR 'T') AND         
+                 (F595-CDE-HOUSEHOLD = 'G')                                     
+                  MOVE 'Y'                          TO WS-CDE-HH                
+                  ADD 1                             TO WS-HL-Y                  
+              ELSE                                                              
+                  MOVE 'N'                          TO WS-CDE-HH                
+                  ADD 1                             TO WS-HL-N                  
+              END-IF                                                            
+            END-IF                                                              
+           END-IF.                                                              
+                                                                                
+           IF WS-TEMP-PAR = 'Y'                                                 
+              MOVE 'P' TO BP13F595-REC(500:1)                                   
+           END-IF.                                                              
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5100-CHECK-HH-NRIC.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE 'N'                                    TO  WS-HH-CHECK.         
+                                                                                
+           IF WS-FLAT-NRIC-HA1 NOT = SPACES AND LOW-VALUES                      
+              MOVE WS-FLAT-NRIC-HA1                    TO WS-K716-NRIC          
+              PERFORM 5200-READ-BP13K716             THRU 5200-EXIT             
+           END-IF.                                                              
+                                                                                
+           IF WS-HH-CHECK = 'N'                                                 
+              IF WS-FLAT-NRIC-SP NOT = SPACES AND LOW-VALUES                    
+                 MOVE WS-FLAT-NRIC-SP                  TO WS-K716-NRIC          
+                 PERFORM 5200-READ-BP13K716          THRU 5200-EXIT             
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       5100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5200-READ-BP13K716.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                             TO  BP13K716-REC.            
+           INITIALIZE                                  BP13K716-REC.            
+                                                                                
+           MOVE WS-NUM-REGN                        TO  K716-NUM-REGN.           
+           MOVE WS-K716-NRIC                       TO  K716-NUM-NRIC.           
+                                                                                
+           READ BP13K716.                                                       
+                                                                                
+           EVALUATE WS-K716-STATUS                                              
+           WHEN 00                                                              
+                IF (K716-NUM-HDB-REF = WS-FLAT-SMS-HA1 OR                       
+                                       WS-FLAT-SMS-SP) AND                      
+                   (K716-NUM-ROLE = '025')                                      
+                   MOVE 'Y'                            TO WS-HH-CHECK           
+                END-IF                                                          
+                                                                                
+           WHEN 23                                                              
+                CONTINUE                                                        
+                                                                                
+           WHEN OTHER                                                           
+                DISPLAY 'READ ERROR BP13K716, STATUS  '                         
+                        WS-K716-STATUS                                          
+                        ',  NRIC ' K716-NUM-NRIC                                
+                MOVE WS-K716-STATUS             TO RETURN-CODE                  
+                PERFORM 9999-CLOSE-ROUTINE    THRU 9999-EXIT                    
+           END-EVALUATE.                                                        
+                                                                                
+       5200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       6000-WRITE-P13F595A.                                                     
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                   TO P13F595A-REC.                       
+           INITIALIZE                       P13F595A-REC.                       
+                                                                                
+           MOVE WS-CDE-HH                TO F595-NUM-FT2T.                      
+                                                                                
+           WRITE P13F595A-REC          FROM BP13F595-REC.                       
+           ADD 1                         TO WS-F595-WRITE.                      
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       9999-CLOSE-ROUTINE.                                                      
+      ******************************************************************        
+                                                                                
+           DISPLAY '*************** CONTROL    TOTALS ***************'.         
+           DISPLAY 'PROGRAM-ID : BP13CD82'.                                     
+           DISPLAY '-------------------------------------------------'.         
+           DISPLAY ' (1) NO OF BP13F595 RECORDS READ............. : '           
+                    WS-F595-READ.                                               
+           DISPLAY ' (2) NO OF NUM-HH TAG =  Y .................. : '           
+                    WS-HL-Y.                                                    
+           DISPLAY ' (3) NO OF NUM-HH TAG =  N .................. : '           
+                    WS-HL-N.                                                    
+           DISPLAY ' (4) NO OF P13F595A RECORDS WRITTEN.......... : '           
+                    WS-F595-WRITE.                                              
+           DISPLAY ' (5) SPOUSE NOTFD                  .......... : '           
+                    WS-SPOUSE-NOTFD.                                            
+           DISPLAY ' (6) NO OF BP13K595 RECS FOUND............... : '           
+                    WS-K595-FOUND.                                              
+           DISPLAY ' (7) NO OF BP13K558 RECS FOUND............... : '           
+                    WS-K558-FND.                                                
+           DISPLAY ' (8) NO OF BP13K558 RECS NOT FOUND........... : '           
+                    WS-K558-NFND.                                               
+           DISPLAY ' (9) NO OF RECORDS FT2T = N DUE TO SMS ALLO.. : '           
+                    WS-SMS-J-ALLO.                                              
+                                                                                
+           CLOSE    BP13F595                                                    
+                    P13F595A                                                    
+                    BP13K558                                                    
+                    BP13K595                                                    
+                    BP13K716.                                                   
+                                                                                
+           IF WS-K558-STATUS  NOT = 00 AND 97                                   
+              DISPLAY 'BP13K558 - ERROR CLOSING : ' WS-K558-STATUS              
+           END-IF.                                                              
+                                                                                
+           IF WS-K716-STATUS  NOT = 00 AND 97                                   
+              DISPLAY 'BP13K716 - ERROR CLOSING : ' WS-K716-STATUS              
+           END-IF.                                                              
+                                                                                
+           IF WS-K595-STATUS  NOT = 00 AND 97                                   
+              DISPLAY 'BP13K595 - ERROR CLOSING : ' WS-K595-STATUS              
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9999-EXIT.                                                               
+           EXIT.                                                                
+

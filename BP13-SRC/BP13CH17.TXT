@@ -1,0 +1,1122 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CH17.                                                 
+      *AUTHOR.        PAULO CAMIA LEGASPI.                                      
+      *DATE-WRITTEN.  19/03/2009.                                               
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (BP13)                                             
+      * ========================================================== *            
+      *                                                            *            
+      * OBJECTIVES: FOR RE-SELECTION CASES, CHECK IF FOUND IN TAG  *            
+      *             AS NON-SELECTION, DELETE 1 COUNT IF WITHIN THE *            
+      *             LIMIT, IF FOUND WITH DTE-DEBAR, RE-UPDATE OR   *            
+      *             BLANK OFF DTE-DEBAR.                           *            
+      * ---------------------------------------------------------- *            
+      * CHG REF   BY    DATE      DETAILS                          *            
+      * -------   ====  ========= ================================ *            
+      * BP133555  PCL3  19032009  NEW PROGRAM                      *            
+      * BP135037  IMC1  18092013  NON-SELECTION FOR FT2T, 2T, FTS  *            
+      * BP135635  IMC1  28012015  CATER FOR FTS                    *            
+      * BP139545  SC54  20112023  POLICY CHANGE STARTING           *            
+      *                           FROM 202310                      *            
+      * ========================================================== *            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+                                                                                
+           SELECT SY02F001  ASSIGN        TO SY02F001.                          
+           SELECT BP13F310  ASSIGN        TO BP13F310.                          
+           SELECT BP13LH17  ASSIGN        TO BP13LH17.                          
+                                                                                
+           SELECT BP13KH10  ASSIGN        TO BP13KH10                           
+                            ACCESS MODE   IS RANDOM                             
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS KH10-KEY-FLD                       
+                            FILE STATUS   IS WS-KH10-STATUS.                    
+                                                                                
+           SELECT BP13K800  ASSIGN        TO BP13K800                           
+                            ACCESS MODE   IS RANDOM                             
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K800-NUM-REGN                      
+                            FILE STATUS   IS WS-K800-STATUS.                    
+                                                                                
+      *-------------------------------------------------------------            
+       DATA DIVISION.                                                           
+      *-------------------------------------------------------------            
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       COPY SY02F001.                                                           
+                                                                                
+       FD   BP13F310                                                            
+            RECORD CONTAINS 150 CHARACTERS                                      
+            BLOCK CONTAINS 0 RECORDS                                            
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13F310.                                                           
+                                                                                
+       FD   BP13KH10                                                            
+            RECORD CONTAINS 2000 CHARACTERS.                                    
+       COPY BP13KH10.                                                           
+                                                                                
+       FD   BP13K800                                                            
+            RECORD CONTAINS 2000 CHARACTERS.                                    
+       COPY BP13K800.                                                           
+                                                                                
+       FD   BP13LH17                                                            
+            BLOCK  CONTAINS 0 RECORDS                                           
+            RECORD CONTAINS 132 CHARACTERS                                      
+            LABEL RECORD IS OMITTED                                             
+            RECORDING MODE IS F.                                                
+       01   BP13LH17-REC               PIC X(132).                              
+                                                                                
+      *-------------------------------------------------------------            
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+       01 WS-FILE-STATUS.                                                       
+          05 WS-KH10-STATUS       PIC 9(02) VALUE ZEROES.                       
+          05 WS-K800-STATUS       PIC 9(02) VALUE ZEROES.                       
+          05 WS-F001-EOF          PIC X(1)  VALUE 'N'.                          
+             88 EOF-F001                    VALUE 'Y'.                          
+                                                                                
+       01 WS-COUNTERS.                                                          
+          05 WS-K800-FND          PIC 9(08) VALUE ZEROES.                       
+          05 WS-K800-NFND         PIC 9(08) VALUE ZEROES.                       
+          05 WS-NRIC-CNT          PIC 9(08) VALUE ZEROES.                       
+          05 WS-F310-READ         PIC 9(08) VALUE ZEROES.                       
+          05 WS-KH10-NOTFD        PIC 9(08) VALUE ZEROES.                       
+          05 WS-KH10-UPD          PIC 9(08) VALUE ZEROES.                       
+          05 WS-KH10-FND          PIC 9(08) VALUE ZEROES.                       
+          05 WS-KH10-FND-REG      PIC 9(08) VALUE ZEROES.                       
+          05 WS-KH10-DEBAR        PIC 9(08) VALUE ZEROES.                       
+          05 WS-KH10-SELN         PIC 9(08) VALUE ZEROES.                       
+          05 WS-CNT               PIC 9(02) VALUE ZEROES.                       
+          05 WS-CNT-DEBAR         PIC 9(02) VALUE ZEROES.                       
+          05 WS-SNO               PIC 9(08) VALUE ZEROES.                       
+          05 WS-LINE-CTR          PIC 9(02) VALUE ZEROES.                       
+          05 WS-PAGE-CTR          PIC 9(04) VALUE ZEROES.                       
+          05 WS-MAX-LINE          PIC 9(02) VALUE 55.                           
+                                                                                
+       01 WS-SWITCHES.                                                          
+          05 WS-F310-EOF          PIC X(01) VALUE 'N'.                          
+                                                                                
+       01 WS-VARIABLES.                                                         
+          05 WS-K800-NRIC         PIC X(09) VALUE SPACES.                       
+          05 WS-HH-TYPE           PIC X(03) VALUE SPACES.                       
+          05 WS-DTE-DEBAR-KH10    PIC X(08) VALUE SPACES.                       
+          05 WS-DATE-DEBAR        PIC X(08) VALUE SPACES.                       
+          05 WS-DATE-DEB-EXP      PIC X(08) VALUE SPACES.                       
+          05 WS-TEMP-2-DIGIT      PIC X(02).                                    
+          05 WS-TEMP-2-DIGIT-FMT REDEFINES WS-TEMP-2-DIGIT.                     
+             10 WS-NUM-2-DIGIT    PIC 9(02).                                    
+          05 WS-DATE-DEBAR-EXP    PIC X(8).                                     
+          05 FILLER REDEFINES WS-DATE-DEBAR-EXP.                                
+             10 WS-DTE-DEB-EXP-YR PIC 9(4).                                     
+             10 WS-DTE-DEB-EXP-MM PIC 9(2).                                     
+             10 WS-DTE-DEB-EXP-DD PIC 9(2).                                     
+          05 WS-QUOTIENT          PIC 9(4)  VALUE ZEROES.                       
+          05 WS-REMAINDER         PIC 9(4)  VALUE ZEROES.                       
+          05 WS-SYSTEM-DATE       PIC 9(8)  VALUE ZEROES.                       
+                                                                                
+       01  CH17-HEADER01.                                                       
+           05  FILLER              PIC X(8)      VALUE 'BP13LH17'.              
+           05  FILLER              PIC X(4)      VALUE SPACES.                  
+           05  FILLER              PIC X(8)      VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(24)     VALUE SPACES.                  
+           05  FILLER              PIC X(20)     VALUE                          
+                                  'S Y S T E M   O F   '.                       
+           05  FILLER              PIC X(19) VALUE                              
+                                  'C O M M I T M E N T'.                        
+           05  FILLER              PIC X(15)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE 'DATE : '.               
+           05  CH17-DATE-HDR       PIC X(10)     VALUE SPACES.                  
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE 'PAGE : '.               
+           05  CH17-PAGE-HDR       PIC ZZZ9      VALUE ZEROES.                  
+                                                                                
+       01  CH17-HEADER02.                                                       
+           05  FILLER              PIC X(38)     VALUE SPACES.                  
+           05  FILLER              PIC X(52)     VALUE                          
+               'REPORT ON RE-SELECTION ADJUST NON-SELECTION RECORD '.           
+                                                                                
+       01  CH17-HEADER03.                                                       
+           05  FILLER              PIC X(37)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'BEF'.                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'BEFORE'.                
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'BEFORE'.                
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'DATE'.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'AFT'.                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'AFTER'.                 
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'AFTER'.                 
+      ** CR-BP139545 START                                                      
+      *    05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(14)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE 'FT'.                    
+      ** CR-BP139545 END.                                                       
+                                                                                
+       01  CH17-HEADER04.                                                       
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(05)     VALUE '  S/N'.                 
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(08)     VALUE 'REGN NO '.              
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(09)     VALUE 'NRIC NO '.              
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(06)     VALUE 'BALLOT'.                
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'SEL'.                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'DEBAR DATE'.            
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'EXPIRY DTE'.            
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'APPT'.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'SEL'.                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'DEBAR DATE'.            
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(10)     VALUE 'EXPIRY DTE'.            
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE 'LIM'.                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(05)     VALUE 'R-SEL'.                 
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+      ** CR-BP139545 START                                                      
+           05  FILLER              PIC X(03)     VALUE 'PMC'.                   
+      ** CR-BP139545 END.                                                       
+                                                                                
+       01  CH17-DETAIL01.                                                       
+           05  FILLER              PIC X(01)        VALUE SPACES.               
+           05  CH17-SN             PIC ZZZZ9        VALUE ZEROES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-REGN           PIC X(08)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-NRIC           PIC X(09)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-DTE-BALLOT     PIC X(06)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-NON-SELECT-B   PIC X(03)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-DTE-DEBAR-B    PIC X(10)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-DTE-DEB-EXP-B  PIC X(10)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-DTE-APPT       PIC X(10)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-NON-SELECT-A   PIC X(03)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-DTE-DEBAR-A    PIC X(10)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-DTE-DEB-EXP-A  PIC X(10)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-LIMIT          PIC X(03)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+           05  CH17-RESELECT       PIC X(05)        VALUE SPACES.               
+           05  FILLER              PIC X(02)        VALUE SPACES.               
+      ** CR-BP139545 START                                                      
+           05  CH17-FTPMC          PIC X(01)        VALUE SPACES.               
+      ** CR-BP139545 END.                                                       
+                                                                                
+      *-------------------------------------------------------------            
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN.                                                               
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM 1000-OPEN-FILES     THRU 1000-EXIT.                          
+           PERFORM 2000-READ-BP13F310  THRU 2000-EXIT.                          
+           PERFORM 3000-PROCESS-DATA   THRU 3000-EXIT                           
+              UNTIL WS-F310-EOF = 'Y'.                                          
+           PERFORM 9000-CLOSE-ROUTINE  THRU 9000-EXIT.                          
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       1000-OPEN-FILES.                                                         
+      *-------------------------------------------------------------            
+                                                                                
+           OPEN INPUT  BP13F310                                                 
+                       SY02F001                                                 
+                       BP13K800                                                 
+      **               BP13KH10                                                 
+                I-O    BP13KH10                                                 
+              OUTPUT   BP13LH17.                                                
+                                                                                
+           IF WS-KH10-STATUS  NOT = 00 AND 97                                   
+              DISPLAY 'ERROR OPENING - BP13KH10 : ' WS-KH10-STATUS              
+              MOVE     WS-KH10-STATUS       TO RETURN-CODE                      
+              PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           IF WS-K800-STATUS  NOT = 00 AND 97                                   
+              DISPLAY 'ERROR OPENING - BP13K800 : ' WS-K800-STATUS              
+              MOVE     WS-K800-STATUS       TO RETURN-CODE                      
+              PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                        
+           END-IF.                                                              
+                                                                                
+           READ SY02F001 AT END MOVE 'Y'  TO WS-F001-EOF.                       
+                                                                                
+           IF EOF-F001                                                          
+              DISPLAY 'RECORD NOT FOUND IN SY01F001 '                           
+              DISPLAY 'PROCESSING TERMINATED '                                  
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           ELSE                                                                 
+              MOVE F001-DTE-CURRENT          TO WS-SYSTEM-DATE                  
+           END-IF.                                                              
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2000-READ-BP13F310.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13F310 AT END                                                 
+             MOVE 'Y'                TO WS-F310-EOF                             
+             GO TO 2000-EXIT.                                                   
+                                                                                
+           ADD 1                     TO WS-F310-READ.                           
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3000-PROCESS-DATA.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM 3200-READ-BP13K800         THRU 3200-EXIT.                   
+           PERFORM 2000-READ-BP13F310         THRU 2000-EXIT.                   
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3200-READ-BP13K800.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE F310-REGN-NO           TO K800-NUM-REGN.                        
+                                                                                
+           READ BP13K800.                                                       
+                                                                                
+           EVALUATE WS-K800-STATUS                                              
+               WHEN 00                                                          
+                    ADD 1                             TO WS-K800-FND            
+                                                                                
+                    IF K800-NUM-SCH-ACC NOT = SPACES AND LOW-VALUES             
+                       PERFORM 3400-CHECK-NRIC        THRU 3400-EXIT            
+                    END-IF                                                      
+                                                                                
+               WHEN 23                                                          
+                    ADD 1                             TO WS-K800-NFND           
+                    DISPLAY 'REGN NO. NOT IN BP13K800 : ' F310-REGN-NO          
+                                                                                
+               WHEN OTHER                                                       
+                    MOVE WS-K800-STATUS               TO RETURN-CODE            
+                    DISPLAY 'ERROR READING BP13K800:' WS-K800-STATUS            
+                            ' KEY : ' K800-NUM-REGN                             
+                    PERFORM  9000-CLOSE-ROUTINE     THRU 9000-EXIT              
+           END-EVALUATE.                                                        
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3400-CHECK-NRIC.                                                         
+      *-------------------------------------------------------------            
+                                                                                
+           IF K800-NUM-NRIC1 NOT = SPACES AND LOW-VALUES                        
+              ADD 1                             TO WS-NRIC-CNT                  
+              MOVE K800-NUM-NRIC1               TO WS-K800-NRIC                 
+              PERFORM 4000-READ-BP13KH10      THRU 4000-EXIT                    
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC2 NOT = SPACES AND LOW-VALUES                        
+              ADD 1                             TO WS-NRIC-CNT                  
+              MOVE K800-NUM-NRIC2               TO WS-K800-NRIC                 
+              PERFORM 4000-READ-BP13KH10      THRU 4000-EXIT                    
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC3 NOT = SPACES AND LOW-VALUES                        
+              ADD 1                             TO WS-NRIC-CNT                  
+              MOVE K800-NUM-NRIC3               TO WS-K800-NRIC                 
+              PERFORM 4000-READ-BP13KH10      THRU 4000-EXIT                    
+           END-IF.                                                              
+                                                                                
+           IF K800-NUM-NRIC4 NOT = SPACES AND LOW-VALUES                        
+              ADD 1                             TO WS-NRIC-CNT                  
+              MOVE K800-NUM-NRIC4               TO WS-K800-NRIC                 
+              PERFORM 4000-READ-BP13KH10      THRU 4000-EXIT                    
+           END-IF.                                                              
+                                                                                
+       3400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4000-READ-BP13KH10.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE WS-K800-NRIC           TO KH10-NUM-UIN.                         
+                                                                                
+           READ BP13KH10.                                                       
+                                                                                
+           EVALUATE WS-KH10-STATUS                                              
+               WHEN 00                                                          
+                    ADD 1                             TO WS-KH10-FND            
+                    PERFORM 5000-PROCESS-BP13KH10   THRU 5000-EXIT              
+                                                                                
+               WHEN 23                                                          
+                    ADD 1                             TO WS-KH10-NOTFD          
+               WHEN OTHER                                                       
+                    MOVE WS-KH10-STATUS               TO RETURN-CODE            
+                    DISPLAY 'ERROR READING BP13KH10:' WS-KH10-STATUS            
+                            ' KEY : ' KH10-NUM-UIN                              
+                    PERFORM  9000-CLOSE-ROUTINE     THRU 9000-EXIT              
+           END-EVALUATE.                                                        
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       5000-PROCESS-BP13KH10.                                                   
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM VARYING WS-CNT FROM 1 BY 1                                   
+             UNTIL WS-CNT > 15                                                  
+                IF KH10-NUM-REGN(WS-CNT)         = K800-NUM-REGN                
+                   ADD 1   TO WS-KH10-FND-REG                                   
+                   PERFORM 5100-CHECK-HOUSEHOLD     THRU 5100-EXIT              
+                   MOVE 16                            TO WS-CNT                 
+                END-IF                                                          
+           END-PERFORM.                                                         
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       5100-CHECK-HOUSEHOLD.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           EVALUATE TRUE                                                        
+             WHEN  KH10-NUM-ALLOC-SCHEME(WS-CNT)     = 'FTS'                    
+                   MOVE KH10-DTE-DEBAR-FTS   TO WS-DTE-DEBAR-KH10               
+                   MOVE 'FTS'                TO WS-HH-TYPE                      
+                   PERFORM 6300-CHECK-NON-SELN-FTS     THRU 6300-EXIT           
+                   MOVE WS-DTE-DEBAR-KH10    TO KH10-DTE-DEBAR-FTS              
+                   MOVE WS-DATE-DEBAR-EXP TO KH10-DTE-DEBAR-EXPIRY-FTS          
+                                                                                
+             WHEN (KH10-NUM-HOUSEHOLD(WS-CNT)        = 'H' OR 'T' ) AND         
+                   KH10-NUM-BALLOT-HOUSEHOLD(WS-CNT) = 'H'                      
+      ** CR-BP139545 START                                                      
+                   IF KH10-DTE-BALLOT(WS-CNT) < '202310'                        
+                      MOVE KH10-DTE-DEBAR-FT-HH                                 
+                                          TO WS-DTE-DEBAR-KH10                  
+                      MOVE 'FT'           TO WS-HH-TYPE                         
+                      PERFORM 6000-CHECK-NON-SELN-FT-HH                         
+                                          THRU 6000-EXIT                        
+                      MOVE WS-DTE-DEBAR-KH10                                    
+                                          TO KH10-DTE-DEBAR-FT-HH               
+                      MOVE WS-DATE-DEBAR-EXP                                    
+                                          TO KH10-DTE-DEBAR-EXPIRY-FT-HH        
+                   ELSE                                                         
+                      IF KH10-NUM-FTPMC(WS-CNT) NOT = 'N' AND SPACE             
+                         MOVE KH10-DTE-DEBAR-FTPMC                              
+                                          TO WS-DTE-DEBAR-KH10                  
+                         MOVE 'FTP'       TO WS-HH-TYPE                         
+                         PERFORM 6400-CHECK-NON-SELN-FTPMC                      
+                                          THRU 6400-EXIT                        
+                         MOVE WS-DTE-DEBAR-KH10                                 
+                                          TO KH10-DTE-DEBAR-FTPMC               
+                         MOVE WS-DATE-DEBAR-EXP                                 
+                                          TO KH10-DTE-DEBAR-EXPIRY-FTPMC        
+                      ELSE                                                      
+                         MOVE KH10-DTE-DEBAR-FT-HH                              
+                                          TO WS-DTE-DEBAR-KH10                  
+                         MOVE 'FT'        TO WS-HH-TYPE                         
+                         PERFORM 6000-CHECK-NON-SELN-FT-HH                      
+                                          THRU 6000-EXIT                        
+                         MOVE WS-DTE-DEBAR-KH10                                 
+                                          TO KH10-DTE-DEBAR-FT-HH               
+                         MOVE WS-DATE-DEBAR-EXP                                 
+                                          TO KH10-DTE-DEBAR-EXPIRY-FT-HH        
+                      END-IF                                                    
+                   END-IF                                                       
+      ** CR-BP139545 END.                                                       
+                                                                                
+             WHEN (KH10-NUM-HOUSEHOLD(WS-CNT)        = 'H' OR 'T' ) AND         
+                   KH10-NUM-BALLOT-HOUSEHOLD(WS-CNT) = 'G'                      
+                   MOVE KH10-DTE-DEBAR-FT-HG   TO WS-DTE-DEBAR-KH10             
+                   MOVE 'F2T'                  TO WS-HH-TYPE                    
+                   PERFORM 6100-CHECK-NON-SELN-FT-HG   THRU 6100-EXIT           
+                   MOVE WS-DATE-DEBAR-EXP TO KH10-DTE-DEBAR-EXPIRY-FT-HG        
+                                                                                
+             WHEN  KH10-NUM-HOUSEHOLD(WS-CNT)        = 'G' AND                  
+                   KH10-NUM-BALLOT-HOUSEHOLD(WS-CNT) = 'F' AND                  
+                   KH10-NUM-FT2T(WS-CNT)             = 'Y'                      
+      ** CR-BP139545 START                                                      
+                   IF KH10-DTE-BALLOT(WS-CNT) < '202310'                        
+                      MOVE KH10-DTE-DEBAR-FT-HH                                 
+                                          TO WS-DTE-DEBAR-KH10                  
+                      MOVE 'FT'           TO WS-HH-TYPE                         
+                      PERFORM 6000-CHECK-NON-SELN-FT-HH                         
+                                          THRU 6000-EXIT                        
+                      MOVE WS-DTE-DEBAR-KH10                                    
+                                          TO KH10-DTE-DEBAR-FT-HH               
+                      MOVE WS-DATE-DEBAR-EXP                                    
+                                          TO KH10-DTE-DEBAR-EXPIRY-FT-HH        
+                   ELSE                                                         
+                      IF KH10-NUM-FTPMC(WS-CNT) NOT = 'N' AND SPACE             
+                         MOVE KH10-DTE-DEBAR-FTPMC                              
+                                          TO WS-DTE-DEBAR-KH10                  
+                         MOVE 'FTP'       TO WS-HH-TYPE                         
+                         PERFORM 6400-CHECK-NON-SELN-FTPMC                      
+                                          THRU 6400-EXIT                        
+                         MOVE WS-DTE-DEBAR-KH10                                 
+                                          TO KH10-DTE-DEBAR-FTPMC               
+                         MOVE WS-DATE-DEBAR-EXP                                 
+                                          TO KH10-DTE-DEBAR-EXPIRY-FTPMC        
+                      ELSE                                                      
+                         MOVE KH10-DTE-DEBAR-FT-HH                              
+                                          TO WS-DTE-DEBAR-KH10                  
+                         MOVE 'FT'        TO WS-HH-TYPE                         
+                         PERFORM 6000-CHECK-NON-SELN-FT-HH                      
+                                          THRU 6000-EXIT                        
+                         MOVE WS-DTE-DEBAR-KH10                                 
+                                          TO KH10-DTE-DEBAR-FT-HH               
+                         MOVE WS-DATE-DEBAR-EXP                                 
+                                          TO KH10-DTE-DEBAR-EXPIRY-FT-HH        
+                      END-IF                                                    
+                   END-IF                                                       
+      ** CR-BP139545 END.                                                       
+                                                                                
+             WHEN  KH10-NUM-HOUSEHOLD(WS-CNT)        = 'G' AND                  
+                   KH10-NUM-BALLOT-HOUSEHOLD(WS-CNT) = 'G' AND                  
+                   KH10-NUM-FT2T(WS-CNT)             = 'Y'                      
+                   MOVE KH10-DTE-DEBAR-FT-HG   TO WS-DTE-DEBAR-KH10             
+                   MOVE 'F2T'                  TO WS-HH-TYPE                    
+                   PERFORM 6100-CHECK-NON-SELN-FT-HG   THRU 6100-EXIT           
+                   MOVE WS-DTE-DEBAR-KH10    TO KH10-DTE-DEBAR-FT-HG            
+                   MOVE WS-DATE-DEBAR-EXP TO KH10-DTE-DEBAR-EXPIRY-FT-HG        
+                                                                                
+                                                                                
+             WHEN  KH10-NUM-HOUSEHOLD(WS-CNT)        = 'G' AND                  
+                   KH10-NUM-BALLOT-HOUSEHOLD(WS-CNT) = 'G'                      
+                   MOVE KH10-DTE-DEBAR-ST      TO WS-DTE-DEBAR-KH10             
+                   MOVE 'ST'                   TO WS-HH-TYPE                    
+                   PERFORM 6200-CHECK-NON-SELN-ST      THRU 6200-EXIT           
+                   MOVE WS-DTE-DEBAR-KH10    TO KH10-DTE-DEBAR-ST               
+                   MOVE WS-DATE-DEBAR-EXP  TO KH10-DTE-DEBAR-EXPIRY-ST          
+                                                                                
+           END-EVALUATE.                                                        
+                                                                                
+                                                                                
+       5100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6000-CHECK-NON-SELN-FT-HH.                                               
+      *-------------------------------------------------------------            
+                                                                                
+      *    DISPLAY ' BF 6000-' KH10-KEY-FLD                                     
+      *            ' FT-' KH10-NUM-NON-SELN-FT                                  
+      *            ' DF-' KH10-DTE-DEBAR-FT-HH                                  
+      *            ' DEX-' KH10-DTE-DEBAR-EXPIRY-FT-HH.                         
+                                                                                
+           MOVE SPACES                               TO CH17-DETAIL01.          
+           INITIALIZE                                   CH17-DETAIL01.          
+                                                                                
+           MOVE 'Y'                       TO KH10-NUM-RESELECT(WS-CNT).         
+                                                                                
+           IF KH10-NUM-NON-SELN-FT    NOT NUMERIC                               
+              MOVE ZEROES                 TO KH10-NUM-NON-SELN-FT               
+           END-IF.                                                              
+                                                                                
+           MOVE KH10-NUM-NON-SELN-FT      TO WS-TEMP-2-DIGIT                    
+                                             CH17-NON-SELECT-B                  
+                                             CH17-NON-SELECT-A.                 
+                                                                                
+           MOVE KH10-DTE-DEBAR-FT-HH         TO WS-DATE-DEBAR.                  
+           MOVE KH10-DTE-DEBAR-EXPIRY-FT-HH  TO WS-DATE-DEB-EXP.                
+                                                                                
+           IF WS-NUM-2-DIGIT >= 1                                               
+              SUBTRACT 1                FROM WS-NUM-2-DIGIT                     
+           END-IF.                                                              
+                                                                                
+           MOVE WS-TEMP-2-DIGIT           TO KH10-NUM-NON-SELN-FT               
+                                             CH17-NON-SELECT-A.                 
+           ADD 1                          TO WS-KH10-SELN.                      
+                                                                                
+           IF KH10-NUM-WITHIN-LIMIT(WS-CNT) = 'Y'                               
+              IF WS-NUM-2-DIGIT  <= 01                                          
+                 MOVE WS-TEMP-2-DIGIT     TO KH10-NUM-NON-SELN-FT               
+                                             CH17-NON-SELECT-A                  
+                 MOVE SPACES              TO KH10-DTE-DEBAR-FT-HH               
+                                             KH10-DTE-DEBAR-EXPIRY-FT-HH        
+              ELSE                                                              
+                 PERFORM 7000-CHECK-DATE-DEBAR   THRU 7000-EXIT                 
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+                                                                                
+      *    DISPLAY ' AF 6000-' KH10-KEY-FLD                                     
+      *            ' FT-' KH10-NUM-NON-SELN-FT                                  
+      *            ' DF-' KH10-DTE-DEBAR-FT-HH                                  
+      *            ' DEX-' KH10-DTE-DEBAR-EXPIRY-FT-HH.                         
+           PERFORM 8000-REWRITE-BP13KH10         THRU 8000-EXIT.                
+           PERFORM 8200-PRINT-REPORT             THRU 8200-EXIT.                
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6100-CHECK-NON-SELN-FT-HG.                                               
+      *-------------------------------------------------------------            
+                                                                                
+      *    DISPLAY ' BF 6100-' KH10-KEY-FLD                                     
+      *            ' FT-' KH10-NUM-NON-SELN-FT                                  
+      *            ' DF-' KH10-DTE-DEBAR-FT-HH                                  
+      *            ' DEX-' KH10-DTE-DEBAR-EXPIRY-FT-HH.                         
+                                                                                
+           MOVE SPACES                               TO CH17-DETAIL01.          
+           INITIALIZE                                   CH17-DETAIL01.          
+                                                                                
+           MOVE 'Y'                       TO KH10-NUM-RESELECT(WS-CNT).         
+                                                                                
+           IF KH10-NUM-NON-SELN-FT    NOT NUMERIC                               
+              MOVE ZEROES                 TO KH10-NUM-NON-SELN-FT               
+           END-IF.                                                              
+                                                                                
+           MOVE KH10-NUM-NON-SELN-FT      TO WS-TEMP-2-DIGIT                    
+                                             CH17-NON-SELECT-B                  
+                                             CH17-NON-SELECT-A.                 
+                                                                                
+           MOVE KH10-DTE-DEBAR-FT-HG         TO WS-DATE-DEBAR.                  
+           MOVE KH10-DTE-DEBAR-EXPIRY-FT-HG  TO WS-DATE-DEB-EXP.                
+                                                                                
+           IF WS-NUM-2-DIGIT >= 1                                               
+              SUBTRACT 1                FROM WS-NUM-2-DIGIT                     
+           END-IF.                                                              
+                                                                                
+           MOVE WS-TEMP-2-DIGIT           TO KH10-NUM-NON-SELN-FT               
+                                             CH17-NON-SELECT-A.                 
+           ADD 1                          TO WS-KH10-SELN.                      
+                                                                                
+           IF KH10-NUM-WITHIN-LIMIT(WS-CNT) = 'Y'                               
+              IF WS-NUM-2-DIGIT  <= 01                                          
+                 MOVE WS-TEMP-2-DIGIT     TO KH10-NUM-NON-SELN-FT               
+                                             CH17-NON-SELECT-A                  
+                 MOVE SPACES              TO KH10-DTE-DEBAR-FT-HG               
+                                             KH10-DTE-DEBAR-EXPIRY-FT-HG        
+              ELSE                                                              
+                 PERFORM 7000-CHECK-DATE-DEBAR   THRU 7000-EXIT                 
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *    DISPLAY ' AF 6100-' KH10-KEY-FLD                                     
+      *            ' FT-' KH10-NUM-NON-SELN-FT                                  
+      *            ' DF-' KH10-DTE-DEBAR-FT-HH                                  
+      *            ' DEX-' KH10-DTE-DEBAR-EXPIRY-FT-HH.                         
+                                                                                
+           PERFORM 8000-REWRITE-BP13KH10         THRU 8000-EXIT.                
+           PERFORM 8200-PRINT-REPORT             THRU 8200-EXIT.                
+                                                                                
+       6100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6200-CHECK-NON-SELN-ST.                                                  
+      *-------------------------------------------------------------            
+                                                                                
+      *    DISPLAY ' BF 6200-' KH10-KEY-FLD                                     
+      *            ' FT-' KH10-NUM-NON-SELN-ST                                  
+      *            ' DF-' KH10-DTE-DEBAR-ST                                     
+      *            ' DEX-' KH10-DTE-DEBAR-EXPIRY-ST.                            
+                                                                                
+           MOVE SPACES                               TO CH17-DETAIL01.          
+           INITIALIZE                                   CH17-DETAIL01.          
+                                                                                
+           MOVE 'Y'                       TO KH10-NUM-RESELECT(WS-CNT).         
+                                                                                
+           IF KH10-NUM-NON-SELN-ST    NOT NUMERIC                               
+              MOVE ZEROES                 TO KH10-NUM-NON-SELN-ST               
+           END-IF.                                                              
+                                                                                
+           MOVE KH10-NUM-NON-SELN-ST      TO WS-TEMP-2-DIGIT                    
+                                             CH17-NON-SELECT-B                  
+                                             CH17-NON-SELECT-A.                 
+                                                                                
+           MOVE KH10-DTE-DEBAR-ST            TO WS-DATE-DEBAR.                  
+           MOVE KH10-DTE-DEBAR-EXPIRY-ST     TO WS-DATE-DEB-EXP.                
+                                                                                
+           IF WS-NUM-2-DIGIT >= 1                                               
+              SUBTRACT 1                FROM WS-NUM-2-DIGIT                     
+           END-IF.                                                              
+                                                                                
+           MOVE WS-TEMP-2-DIGIT           TO KH10-NUM-NON-SELN-ST               
+                                             CH17-NON-SELECT-A.                 
+           ADD 1                          TO WS-KH10-SELN.                      
+                                                                                
+           IF KH10-NUM-WITHIN-LIMIT(WS-CNT) = 'Y'                               
+              IF WS-NUM-2-DIGIT  <= 01                                          
+                 MOVE WS-TEMP-2-DIGIT     TO KH10-NUM-NON-SELN-ST               
+                                             CH17-NON-SELECT-A                  
+                 MOVE SPACES              TO KH10-DTE-DEBAR-ST                  
+                                             KH10-DTE-DEBAR-EXPIRY-ST           
+              ELSE                                                              
+                 PERFORM 7000-CHECK-DATE-DEBAR   THRU 7000-EXIT                 
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *    DISPLAY ' AF 6200-' KH10-KEY-FLD                                     
+      *            ' FT-' KH10-NUM-NON-SELN-ST                                  
+      *            ' DF-' KH10-DTE-DEBAR-ST                                     
+      *            ' DEX-' KH10-DTE-DEBAR-EXPIRY-ST.                            
+                                                                                
+           PERFORM 8000-REWRITE-BP13KH10         THRU 8000-EXIT.                
+           PERFORM 8200-PRINT-REPORT             THRU 8200-EXIT.                
+                                                                                
+       6200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6300-CHECK-NON-SELN-FTS.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+      *    DISPLAY ' BF 6300-' KH10-KEY-FLD                                     
+      *            ' FT-' KH10-NUM-NON-SELN-FTS                                 
+      *            ' DF-' KH10-DTE-DEBAR-FTS                                    
+      *            ' DEX-' KH10-DTE-DEBAR-EXPIRY-FTS.                           
+                                                                                
+           MOVE SPACES                               TO CH17-DETAIL01.          
+           INITIALIZE                                   CH17-DETAIL01.          
+                                                                                
+           MOVE 'Y'                       TO KH10-NUM-RESELECT(WS-CNT).         
+                                                                                
+           IF KH10-NUM-NON-SELN-FTS   NOT NUMERIC                               
+              MOVE ZEROES                 TO KH10-NUM-NON-SELN-FTS              
+           END-IF.                                                              
+                                                                                
+           MOVE KH10-NUM-NON-SELN-FTS     TO WS-TEMP-2-DIGIT                    
+                                             CH17-NON-SELECT-B                  
+                                             CH17-NON-SELECT-A.                 
+                                                                                
+           MOVE KH10-DTE-DEBAR-FTS           TO WS-DATE-DEBAR.                  
+           MOVE KH10-DTE-DEBAR-EXPIRY-FTS    TO WS-DATE-DEB-EXP.                
+                                                                                
+           IF WS-NUM-2-DIGIT >= 1                                               
+              SUBTRACT 1                FROM WS-NUM-2-DIGIT                     
+           END-IF.                                                              
+                                                                                
+           MOVE WS-TEMP-2-DIGIT           TO KH10-NUM-NON-SELN-FTS              
+                                             CH17-NON-SELECT-A.                 
+           ADD 1                          TO WS-KH10-SELN.                      
+                                                                                
+           IF KH10-NUM-WITHIN-LIMIT(WS-CNT) = 'Y'                               
+              IF WS-NUM-2-DIGIT  <= 01                                          
+                 MOVE WS-TEMP-2-DIGIT     TO KH10-NUM-NON-SELN-FTS              
+                                             CH17-NON-SELECT-A                  
+                 MOVE SPACES              TO KH10-DTE-DEBAR-ST                  
+                                             KH10-DTE-DEBAR-EXPIRY-FTS          
+              ELSE                                                              
+                 PERFORM 7000-CHECK-DATE-DEBAR   THRU 7000-EXIT                 
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+      *    DISPLAY ' AF 6300-' KH10-KEY-FLD                                     
+      *            ' FT-' KH10-NUM-NON-SELN-FTS                                 
+      *            ' DF-' KH10-DTE-DEBAR-FTS                                    
+      *            ' DEX-' KH10-DTE-DEBAR-EXPIRY-FTS.                           
+                                                                                
+           PERFORM 8000-REWRITE-BP13KH10         THRU 8000-EXIT.                
+           PERFORM 8200-PRINT-REPORT             THRU 8200-EXIT.                
+                                                                                
+       6300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ** CR - BP139545 START                                                    
+      *-------------------------------------------------------------            
+       6400-CHECK-NON-SELN-FTPMC.                                               
+      *-------------------------------------------------------------            
+                                                                                
+      *    DISPLAY ' BF 6400-' KH10-KEY-FLD                                     
+      *            ' FT-' KH10-NUM-NON-SELN-FTPMC                               
+      *            ' DF-' KH10-DTE-DEBAR-FTPMC                                  
+      *            ' DEX-' KH10-DTE-DEBAR-EXPIRY-FTPMC                          
+                                                                                
+           MOVE SPACES                               TO CH17-DETAIL01.          
+           INITIALIZE                                   CH17-DETAIL01.          
+                                                                                
+           MOVE 'Y'                       TO KH10-NUM-RESELECT(WS-CNT).         
+                                                                                
+           IF KH10-NUM-NON-SELN-FTPMC NOT NUMERIC                               
+              MOVE ZEROES                 TO KH10-NUM-NON-SELN-FTPMC            
+           END-IF.                                                              
+                                                                                
+           MOVE KH10-NUM-NON-SELN-FTPMC   TO WS-TEMP-2-DIGIT                    
+                                             CH17-NON-SELECT-B                  
+                                             CH17-NON-SELECT-A.                 
+                                                                                
+           MOVE KH10-DTE-DEBAR-FTPMC         TO WS-DATE-DEBAR.                  
+           MOVE KH10-DTE-DEBAR-EXPIRY-FTPMC  TO WS-DATE-DEB-EXP.                
+                                                                                
+           IF WS-NUM-2-DIGIT >= 1                                               
+              SUBTRACT 1                FROM WS-NUM-2-DIGIT                     
+           END-IF.                                                              
+                                                                                
+           MOVE WS-TEMP-2-DIGIT           TO KH10-NUM-NON-SELN-FTPMC            
+                                             CH17-NON-SELECT-A.                 
+           ADD 1                          TO WS-KH10-SELN.                      
+                                                                                
+           IF KH10-NUM-WITHIN-LIMIT(WS-CNT) = 'Y'                               
+              IF WS-NUM-2-DIGIT  <= 01                                          
+                 MOVE WS-TEMP-2-DIGIT     TO KH10-NUM-NON-SELN-FTPMC            
+                                             CH17-NON-SELECT-A                  
+                 MOVE SPACES              TO KH10-DTE-DEBAR-FTPMC               
+                                             KH10-DTE-DEBAR-EXPIRY-FTPMC        
+              ELSE                                                              
+                 PERFORM 7000-CHECK-DATE-DEBAR   THRU 7000-EXIT                 
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+                                                                                
+      *    DISPLAY ' AF 6400-' KH10-KEY-FLD                                     
+      *            ' FT-' KH10-NUM-NON-SELN-FTPMC                               
+      *            ' DF-' KH10-DTE-DEBAR-FTPMC                                  
+      *            ' DEX-' KH10-DTE-DEBAR-EXPIRY-FTPMC                          
+                                                                                
+           PERFORM 8000-REWRITE-BP13KH10         THRU 8000-EXIT.                
+           PERFORM 8200-PRINT-REPORT             THRU 8200-EXIT.                
+                                                                                
+       6400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ** CR - BP139545 END.                                                     
+      *-------------------------------------------------------------            
+       7000-CHECK-DATE-DEBAR.                                                   
+      *-------------------------------------------------------------            
+                                                                                
+           IF WS-NUM-2-DIGIT >= 02                                              
+              IF KH10-DTE-APPT(WS-CNT) = WS-DTE-DEBAR-KH10                      
+                 PERFORM 7200-PROCESS-DATE-DEBAR       THRU 7200-EXIT           
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       7000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       7200-PROCESS-DATE-DEBAR.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM VARYING WS-CNT-DEBAR FROM 1 BY 1                             
+             UNTIL WS-CNT-DEBAR > 15                                            
+                IF KH10-DTE-APPT(WS-CNT-DEBAR) > WS-DTE-DEBAR-KH10              
+                   PERFORM 7400-COMPUTE-DEBAR-EXP  THRU 7400-EXIT               
+                   MOVE 16                           TO WS-CNT-DEBAR            
+                END-IF                                                          
+           END-PERFORM.                                                         
+                                                                                
+       7200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       7400-COMPUTE-DEBAR-EXP.                                                  
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE KH10-DTE-APPT(WS-CNT-DEBAR)       TO WS-DTE-DEBAR-KH10          
+                                                     WS-DATE-DEBAR-EXP.         
+                                                                                
+           ADD 1                                  TO WS-DTE-DEB-EXP-YR.         
+           SUBTRACT 1                           FROM WS-DTE-DEB-EXP-MM.         
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 0                                             
+              MOVE 12                             TO WS-DTE-DEB-EXP-MM          
+              SUBTRACT 1                        FROM WS-DTE-DEB-EXP-YR          
+           END-IF.                                                              
+                                                                                
+           IF WS-DTE-DEB-EXP-MM = 1 OR 3 OR 5 OR 7 OR 8 OR 10 OR 12             
+              MOVE 31                             TO WS-DTE-DEB-EXP-DD          
+           ELSE                                                                 
+              IF WS-DTE-DEB-EXP-MM = 4 OR 6 OR 9 OR 11                          
+                 MOVE 30                          TO WS-DTE-DEB-EXP-DD          
+              ELSE                                                              
+                 DIVIDE WS-DTE-DEB-EXP-YR BY 4 GIVING  WS-QUOTIENT              
+                                             REMAINDER WS-REMAINDER             
+                 IF WS-REMAINDER = 0                                            
+                    MOVE 29             TO WS-DTE-DEB-EXP-DD                    
+                 ELSE                                                           
+                    MOVE 28             TO WS-DTE-DEB-EXP-DD                    
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           ADD  1                       TO WS-KH10-DEBAR.                       
+                                                                                
+       7400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       8000-REWRITE-BP13KH10.                                                   
+      *-------------------------------------------------------------            
+                                                                                
+                                                                                
+           REWRITE BP13KH10-REC.                                                
+                                                                                
+           EVALUATE WS-KH10-STATUS                                              
+               WHEN 00                                                          
+                    ADD 1                             TO WS-KH10-UPD            
+                                                                                
+               WHEN 23                                                          
+                    ADD 1                             TO WS-KH10-NOTFD          
+                    DISPLAY ' NRIC NO. NOT IN BP13KH10 : ' WS-K800-NRIC         
+                            ' REGN NO. : ' K800-NUM-REGN                        
+                                                                                
+               WHEN OTHER                                                       
+                    MOVE WS-KH10-STATUS               TO RETURN-CODE            
+                    DISPLAY 'ERROR REWRITING BP13KH10: ' WS-KH10-STATUS         
+                            ' KEY : ' WS-K800-NRIC                              
+                    PERFORM  9000-CLOSE-ROUTINE     THRU 9000-EXIT              
+           END-EVALUATE.                                                        
+                                                                                
+       8000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       8200-PRINT-REPORT.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM 8400-MOVE-FIELDS                THRU 8400-EXIT.              
+                                                                                
+           ADD 1                                     TO WS-SNO.                 
+           MOVE WS-SNO                               TO CH17-SN.                
+           PERFORM  8600-CHECK-WRITE-HEADER        THRU 8600-EXIT.              
+                                                                                
+           WRITE BP13LH17-REC                      FROM CH17-DETAIL01.          
+           ADD 1                                     TO WS-LINE-CTR.            
+                                                                                
+       8200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       8400-MOVE-FIELDS.                                                        
+      *-------------------------------------------------------------            
+                                                                                
+           STRING WS-SYSTEM-DATE(7:2) '/'                                       
+                  WS-SYSTEM-DATE(5:2) '/'                                       
+                  WS-SYSTEM-DATE(1:4)                                           
+              DELIMITED BY SIZE INTO CH17-DATE-HDR.                             
+                                                                                
+           MOVE K800-NUM-REGN                      TO CH17-REGN.                
+           MOVE WS-K800-NRIC                       TO CH17-NRIC.                
+           MOVE K800-DTE-BALLOT                    TO CH17-DTE-BALLOT.          
+                                                                                
+           IF WS-DATE-DEBAR NOT = SPACES AND LOW-VALUES AND ZEROES              
+              STRING WS-DATE-DEBAR(7:2) '/'                                     
+                     WS-DATE-DEBAR(5:2) '/'                                     
+                     WS-DATE-DEBAR(1:4)                                         
+                 DELIMITED BY SIZE INTO CH17-DTE-DEBAR-B                        
+           END-IF.                                                              
+                                                                                
+           EVALUATE TRUE                                                        
+           WHEN WS-HH-TYPE = 'FT'                                               
+                IF KH10-DTE-DEBAR-FT-HH NOT = SPACES AND LOW-VALUES             
+                                                     AND ZEROES                 
+                   STRING KH10-DTE-DEBAR-FT-HH(7:2) '/'                         
+                          KH10-DTE-DEBAR-FT-HH(5:2) '/'                         
+                          KH10-DTE-DEBAR-FT-HH(1:4)                             
+                          DELIMITED BY SIZE INTO CH17-DTE-DEBAR-A               
+                END-IF                                                          
+                                                                                
+                IF KH10-DTE-DEBAR-EXPIRY-FT-HH NOT = SPACES AND                 
+                                                     LOW-VALUES AND             
+                                                     ZEROES                     
+                   STRING KH10-DTE-DEBAR-EXPIRY-FT-HH(7:2) '/'                  
+                          KH10-DTE-DEBAR-EXPIRY-FT-HH(5:2) '/'                  
+                          KH10-DTE-DEBAR-EXPIRY-FT-HH(1:4)                      
+                          DELIMITED BY SIZE INTO CH17-DTE-DEB-EXP-A             
+                END-IF                                                          
+                                                                                
+           WHEN WS-HH-TYPE = 'F2T'                                              
+                IF KH10-DTE-DEBAR-FT-HG NOT = SPACES AND LOW-VALUES             
+                                                     AND ZEROES                 
+                   STRING KH10-DTE-DEBAR-FT-HG(7:2) '/'                         
+                          KH10-DTE-DEBAR-FT-HG(5:2) '/'                         
+                          KH10-DTE-DEBAR-FT-HG(1:4)                             
+                          DELIMITED BY SIZE INTO CH17-DTE-DEBAR-A               
+                END-IF                                                          
+                                                                                
+                IF KH10-DTE-DEBAR-EXPIRY-FT-HG NOT = SPACES AND                 
+                                                     LOW-VALUES AND             
+                                                     ZEROES                     
+                   STRING KH10-DTE-DEBAR-EXPIRY-FT-HG(7:2) '/'                  
+                          KH10-DTE-DEBAR-EXPIRY-FT-HG(5:2) '/'                  
+                          KH10-DTE-DEBAR-EXPIRY-FT-HG(1:4)                      
+                          DELIMITED BY SIZE INTO CH17-DTE-DEB-EXP-A             
+                END-IF                                                          
+                                                                                
+           WHEN WS-HH-TYPE = 'ST'                                               
+                IF KH10-DTE-DEBAR-ST NOT = SPACES AND LOW-VALUES                
+                                                  AND ZEROES                    
+                   STRING KH10-DTE-DEBAR-ST(7:2) '/'                            
+                          KH10-DTE-DEBAR-ST(5:2) '/'                            
+                          KH10-DTE-DEBAR-ST(1:4)                                
+                          DELIMITED BY SIZE INTO CH17-DTE-DEBAR-A               
+                END-IF                                                          
+                                                                                
+                IF KH10-DTE-DEBAR-EXPIRY-ST NOT = SPACES AND                    
+                                                  LOW-VALUES AND                
+                                                  ZEROES                        
+                   STRING KH10-DTE-DEBAR-EXPIRY-ST(7:2) '/'                     
+                          KH10-DTE-DEBAR-EXPIRY-ST(5:2) '/'                     
+                          KH10-DTE-DEBAR-EXPIRY-ST(1:4)                         
+                          DELIMITED BY SIZE INTO CH17-DTE-DEB-EXP-A             
+                END-IF                                                          
+                                                                                
+           WHEN WS-HH-TYPE = 'FTS'                                              
+                IF KH10-DTE-DEBAR-FTS NOT = SPACES AND LOW-VALUES               
+                                                  AND ZEROES                    
+                   STRING KH10-DTE-DEBAR-FTS(7:2) '/'                           
+                          KH10-DTE-DEBAR-FTS(5:2) '/'                           
+                          KH10-DTE-DEBAR-FTS(1:4)                               
+                          DELIMITED BY SIZE INTO CH17-DTE-DEBAR-A               
+                END-IF                                                          
+                                                                                
+                IF KH10-DTE-DEBAR-EXPIRY-FTS NOT = SPACES AND                   
+                                                   LOW-VALUES AND               
+                                                   ZEROES                       
+                   STRING KH10-DTE-DEBAR-EXPIRY-FTS(7:2) '/'                    
+                          KH10-DTE-DEBAR-EXPIRY-FTS(5:2) '/'                    
+                          KH10-DTE-DEBAR-EXPIRY-FTS(1:4)                        
+                          DELIMITED BY SIZE INTO CH17-DTE-DEB-EXP-A             
+                END-IF                                                          
+                                                                                
+      ** CR - BP139545 START                                                    
+           WHEN WS-HH-TYPE = 'FTP'                                              
+                IF KH10-DTE-DEBAR-FTPMC NOT = SPACES AND LOW-VALUES             
+                                                  AND ZEROES                    
+                   STRING KH10-DTE-DEBAR-FTPMC(7:2) '/'                         
+                          KH10-DTE-DEBAR-FTPMC(5:2) '/'                         
+                          KH10-DTE-DEBAR-FTPMC(1:4)                             
+                          DELIMITED BY SIZE INTO CH17-DTE-DEBAR-A               
+                END-IF                                                          
+                                                                                
+                IF KH10-DTE-DEBAR-EXPIRY-FTPMC NOT = SPACES AND                 
+                                                   LOW-VALUES AND               
+                                                   ZEROES                       
+                   STRING KH10-DTE-DEBAR-EXPIRY-FTPMC(7:2) '/'                  
+                          KH10-DTE-DEBAR-EXPIRY-FTPMC(5:2) '/'                  
+                          KH10-DTE-DEBAR-EXPIRY-FTPMC(1:4)                      
+                          DELIMITED BY SIZE INTO CH17-DTE-DEB-EXP-A             
+                END-IF                                                          
+      ** CR - BP139545 END                                                      
+                                                                                
+           END-EVALUATE.                                                        
+                                                                                
+           IF WS-DATE-DEB-EXP NOT = SPACES AND LOW-VALUES AND ZEROES            
+              STRING WS-DATE-DEB-EXP(7:2) '/'                                   
+                     WS-DATE-DEB-EXP(5:2) '/'                                   
+                     WS-DATE-DEB-EXP(1:4)                                       
+                 DELIMITED BY SIZE INTO CH17-DTE-DEB-EXP-B                      
+           END-IF.                                                              
+                                                                                
+                                                                                
+           IF KH10-DTE-APPT(WS-CNT) NOT = SPACES AND LOW-VALUES                 
+                                                 AND ZEROES                     
+              STRING KH10-DTE-APPT(WS-CNT)(7:2) '/'                             
+                     KH10-DTE-APPT(WS-CNT)(5:2) '/'                             
+                     KH10-DTE-APPT(WS-CNT)(1:4)                                 
+                 DELIMITED BY SIZE INTO CH17-DTE-APPT                           
+           END-IF.                                                              
+                                                                                
+           MOVE KH10-NUM-WITHIN-LIMIT(WS-CNT) TO CH17-LIMIT.                    
+           MOVE KH10-NUM-RESELECT(WS-CNT)     TO CH17-RESELECT.                 
+      ** CR - BP139545 START                                                    
+           MOVE KH10-NUM-FTPMC(WS-CNT)        TO CH17-FTPMC.                    
+      ** CR - BP139545 END.                                                     
+                                                                                
+       8400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       8600-CHECK-WRITE-HEADER.                                                 
+      ******************************************************************        
+                                                                                
+           IF (WS-LINE-CTR  >  WS-MAX-LINE) OR (WS-SNO = 1)                     
+              PERFORM 8800-PRINT-HEADER      THRU 8800-EXIT                     
+           END-IF.                                                              
+                                                                                
+       8600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       8800-PRINT-HEADER.                                                       
+      ******************************************************************        
+                                                                                
+           ADD 1                               TO WS-PAGE-CTR.                  
+           MOVE ZEROES                         TO CH17-PAGE-HDR.                
+           MOVE WS-PAGE-CTR                    TO CH17-PAGE-HDR.                
+                                                                                
+           WRITE BP13LH17-REC    FROM CH17-HEADER01 AFTER PAGE.                 
+           WRITE BP13LH17-REC    FROM CH17-HEADER02.                            
+           WRITE BP13LH17-REC    FROM CH17-HEADER03 AFTER 2.                    
+           WRITE BP13LH17-REC    FROM CH17-HEADER04.                            
+                                                                                
+           INITIALIZE WS-LINE-CTR.                                              
+           MOVE 5  TO WS-LINE-CTR.                                              
+                                                                                
+       8800-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       9000-CLOSE-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           DISPLAY ' BP13CH17 CONTROL TOTAL '.                                  
+           DISPLAY '------------------------------------------'.                
+           DISPLAY SPACES.                                                      
+           DISPLAY 'NO OF RECS READ FROM F310    : ' WS-F310-READ.              
+           DISPLAY 'NO OF RECS FOUND BP13K800    : ' WS-K800-FND.               
+           DISPLAY 'NO OF NRIC FOUND BP13K800    : ' WS-NRIC-CNT.               
+           DISPLAY 'NO OF RECS NOT FOUND BP13K800: ' WS-K800-NFND.              
+           DISPLAY 'NO OF RECS NOT FOUND BP13KH10: ' WS-KH10-NOTFD.             
+           DISPLAY 'NO OF RECS FOUND IN BP13KH10 : ' WS-KH10-FND.               
+           DISPLAY 'NO OF NRIC FOUND REGN TALLY  : ' WS-KH10-FND-REG.           
+           DISPLAY 'NO OF RECS UPDATE BP13KH10   : ' WS-KH10-UPD.               
+           DISPLAY 'NO OF RECS DEBAR BP13KH10    : ' WS-KH10-DEBAR.             
+           DISPLAY 'NO OF RECS UPDATE NON-SELN   : ' WS-KH10-SELN.              
+                                                                                
+           CLOSE BP13F310                                                       
+                 BP13LH17                                                       
+                 BP13KH10                                                       
+                 BP13K800                                                       
+                 SY02F001.                                                      
+                                                                                
+           IF WS-KH10-STATUS  NOT = 00 AND 97                                   
+              DISPLAY 'ERROR CLOSING - BP13KH10 : ' WS-KH10-STATUS              
+              MOVE WS-KH10-STATUS                TO RETURN-CODE                 
+           END-IF.                                                              
+                                                                                
+           IF WS-K800-STATUS  NOT = 00 AND 97                                   
+              DISPLAY 'ERROR CLOSING - BP13K800 : ' WS-K800-STATUS              
+              MOVE WS-K800-STATUS                TO RETURN-CODE                 
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

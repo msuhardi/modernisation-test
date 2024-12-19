@@ -1,0 +1,247 @@
+//BP13A559 JOB (BP13P),'BP13A559',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//             NOTIFY=CSD0071                                                   
+//JOBLIB   DD  DSN=BP13.BATCH.LOADCOB,DISP=SHR                                  
+//******************************************************************            
+//* IMPORTANT NOTE :                                                            
+//* THIS JCL IS FOR THE AUTOMATION OF THE POSTAL CODE UPDATE FOR SBF            
+//******************************************************************            
+//*CHG REF  OIC   DATE    DESCRIPTION                                           
+//*-------- ---- -------- -----------                                           
+//*BP136205 ESA1 20160518 NEW JCL FOR POSTAL CODES UPDATE                       
+//*BP13XXXX EL27 20171023 REPLACE MATCHING OF BP13F205 AND BM06F120             
+//*                       TO BP13F205 AND BM06K110                              
+//*                       THEN JOIN BM06K110(1:500) & BM06F120(501:200)         
+//*BP138717 MRR5 20201023 CHANGES TO BP13K016 LAYOUT/KEY                        
+//*****************************************************************             
+//*---------------------------------------------------------------------        
+//*      VERIFY FILES BEFORE DAILY PRODUCTION RUN                               
+//*--------------------------------------------------------------------         
+//STEP01 EXEC    PGM=IDCAMS,COND=(0,NE)                                         
+//INPUT1   DD  DSN=BP13.K016.POSTAL,DISP=OLD                                    
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  *                                                                
+          VFY FILE(INPUT1)                                                      
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT OUT BTO CASES                                                          
+//*--------------------------------------------------------------------         
+//STEP02   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K813.BTOBE,DISP=SHR                                      
+//SORTOUT  DD DSN=&&BP13F813,DISP=(NEW,PASS),                                   
+//         UNIT=SYSDA,                                                          
+//         DCB=(RECFM=FB,LRECL=1000),                                           
+//        SPACE=(CYL,(20,10),RLSE)                                              
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,11,A),FORMAT=CH                                               
+   INCLUDE COND=(113,3,CH,EQ,C'BTO')                                            
+//*---------------------------------------------------------------------        
+//* MATCH BY NT AND FT - IN BP13K016 FORMAT                                     
+//*---------------------------------------------------------------------        
+//STEP03   EXEC PGM=SORT,COND=(0,NE)                                            
+//SORTJNF1 DD DSN=BP13.K016.POSTAL,DISP=SHR                                     
+//SORTJNF2 DD DSN=&&BP13F813,DISP=(OLD,DELETE)                                  
+//MATCH    DD DSN=&&BP13F016,DISP=(NEW,PASS),                                   
+//            DCB=(RECFM=FB,LRECL=50),                                          
+//            SPACE=(CYL,(20,10),RLSE)                                          
+//SYSIN DD *                                                                    
+   JOINKEYS FILE=F1,FIELDS=(1,3,A,16,2,A)                                       
+   JOINKEYS FILE=F2,FIELDS=(1,3,A,4,2,A)                                        
+   REFORMAT FIELDS=(F1:1,50)                                                    
+   OUTFILE FNAMES=MATCH                                                         
+   SORT FIELDS=(1,17,A),FORMAT=CH                                               
+/*                                                                              
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//*  BACK UP BP13.K016.POSTAL                                                   
+//*---------------------------------------------------------------------        
+//STEP04   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.K016.POSTAL,DISP=SHR,                                    
+//            AMP=('BUFND=23')                                                  
+//SORTOUT  DD DSN=BP13.F016.POSTAL.BACKUP,DISP=SHR                              
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(1,17,A),FORMAT=CH                                                
+//*---------------------------------------------------------------------        
+//* TO DELETE & REDEFINE BP13K016                                       00020004
+//* DEL (BP13.K016.POSTAL) CLUSTER PURGE                                001     
+//*---------------------------------------------------------------------        
+//STEP05   EXEC PGM=IDCAMS,COND=(0,NE)                                  00030000
+//SYSPRINT DD SYSOUT=*                                                  00040000
+//INPUT    DD DSN=BP13.BLANK.CHAR50,DISP=SHR                                    
+//SYSIN    DD *                                                         00050000
+  DEL (BP13.K016.POSTAL) CLUSTER PURGE                                  001     
+  DEF CLUSTER                                          -                001     
+        (NAME(BP13.K016.POSTAL)                        -                  001   
+        SHAREOPTIONS(2,3)                              -                  001   
+        KEYS(17 0)                                     -                  001   
+        CYL(1 1)                                       -                  001   
+        RECSZ(50 50)                                   -                  001   
+        FREESPACE(10 10)                               -                  001   
+        CISZ(4096)                                     -                  001   
+        STORCLAS(PRODRLS)                              -                        
+        LOG(NONE)                                      -                        
+        IXD                                            -                  001   
+        UNQ)                                           -                  001   
+      DATA                                             -                      00
+        (NAME(BP13.K016.POSTAL.DATA))                  -                  001   
+      INDEX                                            -                      00
+        (NAME(BP13.K016.POSTAL.INDEX))                                    001   
+         IF LASTCC = 0 THEN                            -                        
+           REPRO IFILE(INPUT)                          -                        
+                 ODS(BP13.K016.POSTAL)                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* CTRL REC FOR OPTION PO - EXTRACT POSTAL CODES FOR SBF                       
+//*--------------------------------------------------------------------         
+//STEP06   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K205.CTLREC,DISP=SHR                                     
+//SORTOUT  DD DSN=&&BP13F205,DISP=(NEW,PASS),                                   
+//         UNIT=SYSDA,                                                          
+//         DCB=(RECFM=FB,LRECL=80),                                             
+//        SPACE=(CYL,(5,2),RLSE)                                                
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,15,A),FORMAT=CH                                               
+   INCLUDE COND=(14,2,CH,EQ,C'PO')                                              
+//*---------------------------------------------------------------------        
+//* TO FILTER CASES ACCORDING TO BALLOT-QTR SUBMITTED UNDER SBF                 
+//*---------------------------------------------------------------------        
+//STEP07A  EXEC PGM=SORT,COND=(0,NE)                                            
+//SORTJNF1 DD DSN=&&BP13F205,DISP=(SHR,PASS)                                    
+//SORTJNF2 DD DSN=BM06.K110.FLATINV,DISP=SHR                                    
+//MATCH    DD DSN=&&BM06F110,DISP=(NEW,PASS),                                   
+//         UNIT=SYSDA,SPACE=(CYL,(50,50),RLSE),                                 
+//         DCB=(RECFM=FB,LRECL=500,BLKSIZE=0)                                   
+//SYSIN DD *                                                                    
+   SORT FIELDS=COPY                                                             
+   JOINKEYS FILE=F1,FIELDS=(24,6,A)                                             
+   JOINKEYS FILE=F2,FIELDS=(410,6,A)                                            
+   REFORMAT FIELDS=(F2:1,500)                                                   
+   OUTFILE FNAMES=MATCH                                                         
+/*                                                                              
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//STEP07B  EXEC PGM=SORT,COND=(0,NE)                                            
+//SORTJNF1 DD DSN=&&BM06F110,DISP=(OLD,DELETE)                                  
+//SORTJNF2 DD DSN=BM06.F120.FLATINV.PIDB,DISP=SHR                               
+//MATCH    DD DSN=&&BM06F120,DISP=(NEW,PASS),                                   
+//         UNIT=SYSDA,SPACE=(CYL,(50,50),RLSE),                                 
+//         DCB=(RECFM=FB,LRECL=700,BLKSIZE=0)                                   
+//SYSIN DD *                                                                    
+   SORT FIELDS=COPY                                                             
+   JOINKEYS FILE=F1,FIELDS=(1,11,A)                                             
+   JOINKEYS FILE=F2,FIELDS=(1,11,A)                                             
+   REFORMAT FIELDS=(F1:1,500,F2:501,200)                                        
+   OUTFILE FNAMES=MATCH                                                         
+/*                                                                              
+//SYSUDUMP DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSABOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//*         TO FORMAT BM06F120 TO CATER FOR COMBINED FT & NT                    
+//*---------------------------------------------------------------------        
+//STEP08   EXEC PGM=BP13C25Y,COND=(0,NE)                                        
+//BM06F120 DD DSN=&&BM06F120,DISP=(OLD,DELETE)                                  
+//BP13K813 DD DSN=BP13.K813.BTOBE,DISP=SHR                                      
+//BP13K246 DD DSN=BP13.K246.SBF.LOOKUP,DISP=SHR                                 
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR                                    
+//M06F120A DD DSN=&&BM6F120A,DISP=(NEW,PASS),                                   
+//         UNIT=SYSDA,SPACE=(CYL,(50,50),RLSE),                                 
+//         DCB=(RECFM=FB,LRECL=700,BLKSIZE=0)                                   
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//*-------------------------------------------------------------------- 00001190
+//*   TO INCLUDE SBF UNITS ONLY IN BM06F120                             00001200
+//*-------------------------------------------------------------------- 00001190
+//STEP09   EXEC  SORT,COND=(0,NE)                                       00001230
+//SORTIN   DD DSN=&&BM6F120A,                                           00001240
+//            DISP=(SHR,PASS)                                           00001250
+//SORTOUT  DD DSN=&&BM6F120B,DISP=(NEW,PASS),                                   
+//         UNIT=SYSDA,SPACE=(CYL,(50,50),RLSE),                                 
+//         DCB=(RECFM=FB,LRECL=700,BLKSIZE=0)                                   
+//SYSOUT   DD  SYSOUT=*                                                 00001280
+//SYSIN    DD  *                                                        00001290
+   SUM FIELDS=NONE                                                              
+   SORT FIELDS=(615,3,A,606,2,A,592,6,A),FORMAT=CH                              
+   INCLUDE COND=(356,3,CH,EQ,C'SBF',AND,605,1,CH,EQ,C'Y')                       
+//*-------------------------------------------------------------------- 00001190
+//*         TO CREATE BP13K016                                                  
+//*-------------------------------------------------------------------- 00001190
+//STEP10   EXEC PGM=BP13C25Z,COND=(0,NE)                                        
+//BM06F120 DD DSN=&&BM6F120B,DISP=(OLD,DELETE)                                  
+//BP13K016 DD DSN=BP13.K016.POSTAL,DISP=SHR                                     
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR                                    
+//BM06K110 DD DSN=BM06.K110.FLATINV,DISP=SHR                                    
+//BP13L25Z DD DSN=BP13.L25Z.POSTAL,DISP=SHR                                     
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//*-------------------------------------------------------------------- 00001190
+//*   TO INCLUDE SBF UNITS ONLY IN BM06F120                             00001200
+//*-------------------------------------------------------------------- 00001190
+//STEP11   EXEC  SORT,COND=(0,NE)                                       00001230
+//SORTIN   DD DSN=&&BM6F120A,                                           00001240
+//            DISP=(OLD,DELETE)                                         00001250
+//SORTOUT  DD DSN=&&BM6F120C,DISP=(NEW,PASS),                                   
+//         UNIT=SYSDA,SPACE=(CYL,(50,50),RLSE),                                 
+//         DCB=(RECFM=FB,LRECL=700,BLKSIZE=0)                                   
+//SYSOUT   DD  SYSOUT=*                                                 00001280
+//SYSIN    DD  *                                                        00001290
+   SUM FIELDS=NONE                                                              
+   SORT FIELDS=(615,3,A,606,2,A,592,6,A),FORMAT=CH                              
+   INCLUDE COND=(356,3,CH,EQ,C'SBF',AND,605,1,CH,EQ,C'N')                       
+//*-------------------------------------------------------------------- 00001190
+//*         TO CREATE BP13K016                                                  
+//*-------------------------------------------------------------------- 00001190
+//STEP12   EXEC PGM=BP13C25Z,COND=(0,NE)                                        
+//BM06F120 DD DSN=&&BM6F120C,DISP=(OLD,DELETE)                                  
+//BP13K016 DD DSN=BP13.K016.POSTAL,DISP=SHR                                     
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR                                    
+//BM06K110 DD DSN=BM06.K110.FLATINV,DISP=SHR                                    
+//BP13L25Z DD DSN=BP13.L25Z.POSTAL,DISP=MOD                                     
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//*-------------------------------------------------------------------- 00001190
+//*   REMOVE DUPLICATE IN BP13F016 BEFORE REPRO                         00001200
+//*---------------------------------------------------------------------00001220
+//STEP13   EXEC  SORT,COND=(0,NE)                                       00001230
+//SORTIN   DD DSN=&&BP13F016,DISP=(OLD,DELETE)                          00001240
+//SORTOUT  DD DSN=&&P13F016A,DISP=(NEW,PASS),                                   
+//             DCB=(RECFM=FB,LRECL=50),                                         
+//             SPACE=(CYL,(20,10),RLSE)                                         
+//SYSOUT   DD  SYSOUT=*                                                 00001280
+//SYSIN    DD  *                                                        00001290
+   SUM FIELDS=NONE                                                              
+   SORT FIELDS=(1,17,A),FORMAT=CH                                               
+//*-----------------------------------------------------------------            
+//*    REPRO BTO CASES IN BP13F016 TO BP13K016                                  
+//*-----------------------------------------------------------------            
+//STEP14   EXEC PGM=IDCAMS                                                      
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=&&P13F016A,DISP=(OLD,DELETE)                                  
+//OUTPUT1  DD DSN=BP13.K016.POSTAL,DISP=SHR                                     
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1) REPLACE                               
+//*-----------------------------------------------------------------    00002300
+//*  ACCUMULATE CONTROL REC INTO CTLREC-ACC FILE                        00002310
+//*-----------------------------------------------------------------    00002320
+//STEP15   EXEC  PGM=IDCAMS,COND=(0,NE)                                 00002330
+//SYSPRINT DD  SYSOUT=*                                                 00002340
+//INPUT1   DD  DSN=&&BP13F205,DISP=(OLD,DELETE)                         00002350
+//OUTPUT1  DD  DSN=BP13.F205.ACCUM,                                     00002370
+//             DISP=MOD                                                 00002380
+//SYSIN    DD  *                                                        00002430
+      REPRO INFILE(INPUT1) OUTFILE(OUTPUT1)                                     
+//*-------------------------------------------------------------------*         
+//* SEND MESSAGE TO OPERATOR TO OPEN FILES                            *         
+//*-------------------------------------------------------------------*         
+//STEP13   EXEC WTOG,COND=(0,NE)                                                
+   ----> ############################################                           
+   ---->    AFTER SUCCESSFUL COMPLETION OF BP13A559                             
+   ---->    PLEASE OPEN BP13K016.                                               
+   ----> ############################################                           
+

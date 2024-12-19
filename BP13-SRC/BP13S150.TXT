@@ -1,0 +1,146 @@
+ /*================================================================*/           
+ /* SAS PROGRAM TO PRINT DAILY REPORT FOR VALIDATED UNMATCHED KIV  */           
+ /* CASES FOR REGN FEE, BOOKING FEE, COMMITMENT DEPOSIT FOR THE DAY.*/          
+ /* BP130289 15/05/97 RHB  TO CATER FOR 4005 CASES.                 */          
+ /* BP130307 29/05/97 LJL  TO CATER FOR REGN FEE REFUND.            */          
+ /* BP130338 21/08/97 LSB  TO CATER FOR NRIC ERROR                  */          
+ /*================================================================*/           
+  OPTIONS  NODATE NONUMBER;                                                     
+                                                                                
+     PROC FORMAT;                                                               
+        PICTURE DOL LOW-<0 = '000,009.99DR'                                     
+                             (PREFIX='$' MULT=100.0000001)                      
+                    0-HIGH = '000,009.99CR'                                     
+                             (PREFIX='$' MULT=100.0000001);                     
+                                                                                
+  DATA BP13K140 ;                                                               
+     INFILE BP13K140;                                                           
+     INPUT  @01  TRANCDE  $CHAR2.      @05  ORIGNO   $CHAR8.                    
+            @13  POSTDTE  YYMMDD8.     @21  HISTCNT  $CHAR3.                    
+            @25  NRIC     $CHAR9.                                               
+            @34  NAME     $CHAR32.     @66  RECPT    $CHAR14.                   
+            @75  DOCNO    $CHAR5.      @81  AMTRE    ZD9.2                      
+            @90  CRDR     $CHAR1.      @91  TRANDTE  YYMMDD8.                   
+            @99  PAYTYPE  $CHAR3.      @102 SCHACCT  $CHAR11.                   
+            @113 ERRCDE   $CHAR1.      @114 VALID    $CHAR1.;                   
+                                                                                
+     IF TRANCDE ^= '  ' AND VALID = ' ';                                        
+                                                                                
+     FORMAT AMTRE DOL.;                                                         
+                                                                                
+     LENGTH K800KEY $8;                                                         
+     K800KEY = ORIGNO;                                                          
+     INFILE BP13K800 VSAM KEY = K800KEY;                                        
+     INPUT @;                                                                   
+     RC=_IORC_;                                                                 
+     IF RC =0 THEN                                                              
+        INPUT @259  ALL_TAG $CHAR2.;                                            
+     ELSE _IORC_ =0;                                                            
+                                                                                
+     LENGTH K820KEY $17;                                                        
+     K820KEY = ORIGNO||NRIC;                                                    
+                                                                                
+     INFILE BP13K820 VSAM KEY = K820KEY;                                        
+     INPUT @;                                                                   
+     RC=_IORC_;                                                                 
+     IF RC =0 THEN                                                              
+        INPUT @28 NAME $CHAR66.;                                                
+     ELSE _IORC_ =0;                                                            
+                                                                                
+     PROC SORT; BY ALL_TAG TRANCDE PAYTYPE TRANDTE;                             
+                                                                                
+     DATA _NULLS_;                                                              
+     SET BP13K140 END=FINAL;                                                    
+     BY ALL_TAG TRANCDE PAYTYPE TRANDTE;                                        
+     OPTIONS PAGESIZE=55 LS=132 NODATE;                                         
+     FILE BP13L150   HEADER=HH PS=60 NOTITLES;                                  
+                                                                                
+     IF FIRST.ALL_TAG THEN PUT _PAGE_;                                          
+                                                                                
+     IF TRANCDE = '11' THEN                                                     
+        TRANSTY = 'CASH';                                                       
+     IF TRANCDE = '12' THEN                                                     
+        TRANSTY = 'CPF';                                                        
+     IF TRANCDE = '13' OR TRANCDE = '14' OR                                     
+        TRANCDE = '15' OR TRANCDE = '16' THEN                                   
+        TRANSTY = 'VRCH';                                                       
+                                                                                
+     IF ERRCDE = 'C' THEN ERROR = 'CPF-NO ERROR';                               
+     IF ERRCDE = 'R' THEN ERROR = 'ORIG-NO ERROR';                              
+     IF ERRCDE = 'A' THEN ERROR = 'SCH-ACCT ERROR';                             
+     IF ERRCDE = 'B' THEN ERROR = 'BKING FEE EXCEED';                           
+     IF ERRCDE = 'N' THEN ERROR = 'BK FEE NOT REQ';                             
+     IF ERRCDE = 'M' THEN ERROR = 'ADJ AMT NOT TALLY';                          
+     IF ERRCDE = 'X' THEN ERROR = 'NOT FND IN EXAPPL';                          
+     IF ERRCDE = 'F' THEN ERROR = 'FLAT ALREADY SOLD';                          
+     IF ERRCDE = 'S' THEN ERROR = 'IT IS A 4005 CASE';                          
+     IF ERRCDE = 'L' THEN ERROR = 'INSUFFICIENT FUND';                          
+     IF ERRCDE = 'G' THEN ERROR = 'NRIC ERROR       ';                          
+                                                                                
+     SUBAMT+AMTRE;                                                              
+     TOTAMT+AMTRE;                                                              
+     GRDTOT+AMTRE;                                                              
+     N+1;                                                                       
+     M+1;                                                                       
+     L+1;                                                                       
+     PUT @1   N                                                                 
+         @05  TRANSTY  $CHAR4.      @10  ALL_TAG $CHAR2.                        
+         @14  SCHACCT $CHAR11.      @26  NAME    $CHAR18.                       
+         @45  ORIGNO   $CHAR8.      @53  POSTDTE DDMMYY8.                       
+         @62  HISTCNT  $CHAR3.      @66  NRIC     $CHAR9.                       
+         @75  RECPT    $CHAR14.                                                 
+         @89  AMTRE    DOL.          @103 TRANDTE  DDMMYY8.                     
+         @112 PAYTYPE  $CHAR3.       @116 ERROR    $CHAR17.;                    
+                                                                                
+                                                                                
+     IF LAST.ALL_TAG THEN DO;                                                   
+        PUT //@03 'NUMBER OF CASES       = ' @28 M                              
+              @61 'SUB-TOTAL FOR ' TRANSTY                                      
+              @82  SUBAMT DOL.//;                                               
+         SUBAMT=0;                                                              
+         L=0;                                                                   
+         M=0;                                                                   
+     END;                                                                       
+                                                                                
+     IF L=50 OR (FIRST.ALL_TAG AND L^=1) THEN DO;                               
+        PUT _PAGE_;                                                             
+        L=0;                                                                    
+     END;                                                                       
+                                                                                
+     IF FINAL THEN DO;                                                          
+        PUT //@03 'TOTAL NUMBER OF CASES = ' @28 N                              
+        @61 'GRAND-TOTAL ' @82  GRDTOT DOL.;                                    
+     END;                                                                       
+     RETURN;                                                                    
+                                                                                
+  HH:                                                                           
+     PAGE + 1;                                                                  
+     CURRENT =DATE();                                                           
+     YR=YEAR(POSTDTE);                                                          
+     PUT @1   'BP13L150' @15 'HDBCAT 3'                                         
+         @47  'S Y S T E M   O F   C O M M I T M E N T'                         
+         @98  'DATE :' @105 CURRENT DDMMYY8.                                    
+         @119 'PAGE :' @126 PAGE 3.;                                            
+     PUT @98  '(  SALES AGREEMENT TEAM )';                                      
+     PUT @41  'REPORT ON UNMATCHED CASES FOR PAYMENT IN KIV FILE';              
+     PUT @50  'FOR WEEK ENDING ' @67 CURRENT DDMMYY8.//;                        
+     PUT @53  'DATE'                                                            
+         @61  'HIST'                                                            
+         @75  'RECEIPT/'                                                        
+         @104 'TRANS'                                                           
+         @111 'PAY';                                                            
+     PUT @1   'S/N '                                                            
+         @4   'T-TYPE'                                                          
+         @14  'SCH/ACC NO'                                                      
+         @26  'NAME'                                                            
+         @45  'ORIG-NO'                                                         
+         @53  'POSTED'                                                          
+         @62  'CNT'                                                             
+         @66  'CPF-NO'                                                          
+         @75  'JOURNAL NO'                                                      
+         @93  'AMOUNT'                                                          
+         @104 'DATE'                                                            
+         @111 'TYP'                                                             
+         @117 'ERROR CODE';                                                     
+     RETURN;                                                                    
+

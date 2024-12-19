@@ -1,0 +1,134 @@
+//BP13D232 JOB (BP13P),'BP13D232',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),    JOB04136
+//             NOTIFY=CSD0071                                                   
+//JOBLIB DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                     
+//*********************************************************************         
+//*                                                                   *         
+//* OBJECTIVE : TO SYNC BP13KL00 WITH INET FILE (UPDATE ACK FIELDS)   *         
+//*             CREATE OBF K203 FROM K757                             *         
+//*                                 -                                 *         
+//*===================================================================*         
+//* CHG NO   BY     DATE     DESCRIPTION                              *         
+//* -------- ---  --------   ----------                               *         
+//* BP136951 KAM4 20171103 - NEW                                      *         
+//* BP13XXXX EL27 20200918 - ADD CREATION OF K203 FOR OBF CASES       *         
+//* BP139280 YCH2 21112023 - EXPAND K757 FROM 3000 TO 4000            *         
+//*===================================================================*         
+//*---------------------------------------------------------------------        
+//*      VERIFY FILES BEFORE DAILY PRODUCTION RUN                               
+//*--------------------------------------------------------------------         
+//STEP01 EXEC    PGM=IDCAMS,COND=(0,NE)                                         
+//INPUT1   DD  DSN=BP13.KL00.LETTER,DISP=OLD                                    
+//INPUT2   DD  DSN=BP13.K203.SMS,DISP=OLD                                       
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  *                                                                
+          VFY FILE(INPUT1)                                                      
+          VFY FILE(INPUT2)                                                      
+//*-------------------------------------------------------------------*         
+//* SAS PROGRAM TO SORTOUT KL00 FOR DTE-ACK >= (CURRDATE -1)          *         
+//*-------------------------------------------------------------------*         
+//STEPSAS  EXEC  SAS,COND=(0,NE)                                                
+//BP13KL0A DD DSN=BP13.KL00.LETTER.INET,DISP=SHR                                
+//BP13FOUT DD DSN=&&BP13FL0A,DISP=(NEW,PASS),                                   
+//         UNIT=SYSDA,                                                          
+//         DCB=(RECFM=FB,LRECL=200),                                            
+//         SPACE=(CYL,(200,50),RLSE)                                            
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13S27L),DISP=SHR                             
+//*---------------------------------------------------------------------        
+//* TO MATCH KL0A TO KL00 AND UPDATE KL00 WHEN FL0A-DTE-ACK-BY IS NOT           
+//* EMPTY AND KL00-DTE-ACK-BY IS EMPTY.                                         
+//*---------------------------------------------------------------------        
+//STEP02  EXEC PGM=BP13C27L,COND=(0,NE)                                         
+//BP13FL0A DD DSN=&&BP13FL0A,DISP=(OLD,PASS)                                    
+//BP13KL00 DD DSN=BP13.KL00.LETTER,DISP=SHR                                     
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* EXTRACT YESTERDAY OBF CASES                                                 
+//*---------------------------------------------------------------------        
+//STEP11   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K757.BTO,DISP=SHR                                        
+//SORTOUT  DD DSN=&&P13F757A,                                                   
+//            DISP=(NEW,PASS),                                                  
+//            SPACE=(CYL,(50,20),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=4000,BLKSIZE=0)                               
+//SYSIN    DD  *                                                        00000800
+   SORT FIELDS=(1,8,A),FORMAT=CH                                                
+   INCLUDE COND=(2985,8,CH,EQ,DATE1-1,AND,                                      
+                 2918,3,CH,EQ,C'OBF')                                           
+//*---------------------------------------------------------------------        
+//* REFORMAT K757 TO K203 FILE LAYOUT                                           
+//*---------------------------------------------------------------------        
+//STEP12  EXEC SORT,COND=(0,NE)                                                 
+//SORTIN   DD DSN=&&P13F757A,DISP=(SHR,DELETE)                                  
+//SORTOUT  DD DSN=&&P13F203A,                                                   
+//            DISP=(NEW,PASS),                                                  
+//            SPACE=(CYL,(5,5),RLSE),                                           
+//            DCB=(RECFM=FB,LRECL=200,BLKSIZE=0)                                
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(1,19,A),FORMAT=CH                                               
+   OUTREC FIELDS=(2918,3,12,3,15,2,15,2,100,1,1,8,                              
+                  2894,6,2901,8,2913,5,                                         
+                  2909,4,17,9,26,66,154,8,1X,                                   
+                  C'HA1',2X,1,8,                                                
+                  1X,1X,8X,51X)                                                 
+//*---------------------------------------------------------------------        
+//* ASSUMING HA1'S RACE WILL THE CASE ETHNIC, SINCE NO K800 PROCESS             
+//*---------------------------------------------------------------------        
+//STEP13   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&P13F203A,DISP=(SHR,DELETE)                                  
+//SORTOUT  DD DSN=&&P13F203B,                                                   
+//            DISP=(NEW,PASS),                                                  
+//            SPACE=(CYL,(5,5),RLSE),                                           
+//            DCB=(RECFM=FB,LRECL=200,BLKSIZE=0)                                
+//SYSIN    DD  *                                                                
+   SORT FIELDS=COPY                                                             
+   OUTREC IFTHEN=(WHEN=(11,1,CH,EQ,C'M'),                                       
+                  BUILD=(1:1,10,11:C'1',12:12,189)),                            
+          IFTHEN=(WHEN=(11,1,CH,EQ,C'C'),                                       
+                  BUILD=(1:1,10,11:C'2',12:12,189)),                            
+          IFTHEN=(WHEN=(11,1,CH,EQ,C'I'),                                       
+                  BUILD=(1:1,10,11:C'3',12:12,189)),                            
+          IFTHEN=(WHEN=(11,1,CH,EQ,C'O'),                                       
+                  BUILD=(1:1,10,11:C'4',12:12,189)),                            
+          IFTHEN=(WHEN=NONE,                                                    
+                  BUILD=(1:1,200))                                              
+//*---------------------------------------------------------------------        
+//* ENSURE WE DO NOT OVERWRITE K203 RECORDS IF IT ALREADY EXIST                 
+//*---------------------------------------------------------------------        
+//STEP14   EXEC SORT,COND=(0,NE)                                                
+//SORTJNF1 DD DSN=&&P13F203B,                                                   
+//            DISP=(SHR,DELETE)                                                 
+//SORTJNF2 DD DSN=BP13.K203.SMS,                                                
+//            DISP=SHR                                                          
+//SORTOUT  DD DSN=&&P13F203C,                                                   
+//            DISP=(NEW,PASS),                                                  
+//            SPACE=(CYL,(5,5),RLSE),                                           
+//            DCB=(RECFM=FB,LRECL=200,BLKSIZE=0)                                
+//SYSIN    DD *                                                                 
+   SORT FIELDS=COPY                                                             
+   JOINKEYS FILES=F1,FIELDS=(1,19,A)                                            
+   JOINKEYS FILES=F2,FIELDS=(1,19,A)                                            
+   JOIN UNPAIRED,F1,ONLY                                                        
+   REFORMAT FIELDS=(F1:1,200)                                                   
+//*---------------------------------------------------------------------        
+//* ORDER BY KEY FIELDS                                                         
+//*---------------------------------------------------------------------        
+//STEP15   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&P13F203C,DISP=(SHR,DELETE)                                  
+//SORTOUT  DD DSN=BP13.F203.SMS.OBF,DISP=OLD                                    
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,19,A),FORMAT=CH                                               
+//*---------------------------------------------------------------------        
+//* REPRO AND REPLACE INTO K203 FILE                                            
+//*---------------------------------------------------------------------        
+//STEP16   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.F203.SMS.OBF,DISP=SHR                                    
+//OUTPUT1  DD DSN=BP13.K203.SMS,DISP=MOD                                        
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1) REPLACE                               
+//*---------------------------------------------------------------------        
+

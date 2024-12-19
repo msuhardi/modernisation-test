@@ -1,0 +1,157 @@
+/*********************************************************************/         
+/*                SYSTEM  OF  COMMITMENT  (BP13)                     */         
+/* ================================================================= */         
+/*  PROGRAM ID   : BP13S038                                          */         
+/*  AUTHOR       : JIANG BO                                          */         
+/*  DATE WRITTEN : 25/11/2009                                        */         
+/*  OBJECTIVE    : PRINT REPORT ON NEW LOAN AND ADDITIONAL LOAN DISBS*/         
+/*                 BASED ON FINANCIAL YEAR                           */         
+/*  INPUT FILES  : SY02F001                                          */         
+/*                 BP13FD38                                          */         
+/*                 BP13FD00 - SORT FROM DBSS MASTER AND HISTORY FILE */         
+/*                            RECORD LENGTH IS 30                    */         
+/*                 BP13KA10 - GET PROJECT NAME                       */         
+/*  OUTPUT FILES : BP13L038                                          */         
+/* ================================================================= */         
+/* CHANGE RQ BY   DATE     DESC                                      */         
+/* --------- ---- -------- ----------------------------------------- */         
+/* BP133784  JB8  20091125 NEW PROGRAM                               */         
+/* BP133876  JB8  20100510 ROUNDUP EACH SUB-TOTAL                    */         
+/*********************************************************************/         
+  %GLOBAL DATE;                                                                 
+  OPTIONS NODATE CAPS;                                                          
+                                                                                
+   PROC FORMAT;                                                                 
+        PICTURE DOL LOW-<0 = '000,000,009.99'                                   
+                             (PREFIX='-$' MULT=100.00000000001)                 
+                    0-HIGH = '000,000,009.99'                                   
+                             (PREFIX='$' MULT=100.00000000001);                 
+   DATA SY02F001;                                                               
+     INFILE SY02F001 END=EOF;                                                   
+     INPUT @1   CURR_YM      $CHAR6.                                            
+           @1   CURR_YR      $CHAR4.                                            
+           @5   CURR_MTH     $CHAR2.                                            
+           @7   CURR_DAY     $CHAR2.                                            
+           @21  PREV_YM      $CHAR6.                                            
+           @21  PREV_YR      $CHAR4.                                            
+           @25  PREV_MTH     $CHAR2.                                            
+           @27  PREV_DAY     $CHAR2.;                                           
+                                                                                
+      CUR_DTE=CURR_DAY||'/'||CURR_MTH||'/'||CURR_YR;                            
+      CALL SYMPUT('DATE',CUR_DTE);                                              
+                                                                                
+     /* TO CATER FOR FINANCIAL YEAR                          */                 
+     /* FINANCIAL YEAR FROM APRIL TO NEXT MARCH              */                 
+      IF PREV_MTH > '03' THEN FIN_YR = PREV_YR;                                 
+      IF PREV_MTH < '04' THEN FIN_YR = PREV_YR - 1;                             
+      START_YM = FIN_YR||'04';                                                  
+      END_YM = PREV_YM;                                                         
+      CALL SYMPUT('FYR',FIN_YR);                                                
+      CALL SYMPUT('START_YM',START_YM);                                         
+      CALL SYMPUT('END_YM',END_YM);                                             
+   RUN;                                                                         
+                                                                                
+   DATA BP13FD38;                                                               
+     INFILE BP13FD38 END=EOF;                                                   
+     INPUT @1    REGN_NO     $CHAR8.                                            
+           @24   DUE_YM      $CHAR6.                                            
+           @24   DUE_YR      $CHAR4.                                            
+           @26   DUE_YY      $CHAR2.                                            
+           @28   DUE_MTH     $CHAR2.                                            
+           @49   LOAN_NEW    9.2                                                
+           @67   INT_NEW_LN  7.2                                                
+           ;                                                                    
+                                                                                
+     FORMAT LOAN_NEW DOL.;                                                      
+                                                                                
+     IF INT_NEW_LN > 0;                                                         
+                                                                                
+     START_YM = SYMGET('START_YM');                                             
+     END_YM   = SYMGET('END_YM');                                               
+                                                                                
+     IF DUE_YM <= END_YM AND DUE_YM >= START_YM;                                
+                                                                                
+     DUE_DATE = DUE_YR || '-' || DUE_MTH || ' ($M)';                            
+                                                                                
+     ML_LOAN_NEW = LOAN_NEW / 1000000;                                          
+                                                                                
+   RUN;                                                                         
+                                                                                
+   DATA BP13FD00;                                                               
+     INFILE BP13FD00 END=EOF;                                                   
+     INPUT @1    REGN_NO    $CHAR8.                                             
+           @22   PRJCT_CDE  $CHAR3.                                             
+           ;                                                                    
+     /* DECODE PROJECT CODE */                                                  
+     LENGTH KA10_KEY $3;                                                        
+     KA10_KEY = PRJCT_CDE;                                                      
+     INFILE BP13KA10 VSAM KEY = KA10_KEY;                                       
+     INPUT @;                                                                   
+     RC = _IORC_;                                                               
+     IF RC = 0 THEN                                                             
+        DO;                                                                     
+           INPUT @38 PRJCT_NAME $CHAR30.;                                       
+        END;                                                                    
+     ELSE                                                                       
+        DO;                                                                     
+           PRJCT_NAME = 'PROJECT CODE NOT FOUND        ';                       
+        END;                                                                    
+   RUN;                                                                         
+                                                                                
+   PROC SORT DATA=BP13FD38 PRESORTED;                                           
+     BY REGN_NO;                                                                
+   RUN;                                                                         
+                                                                                
+   PROC SORT DATA=BP13FD00 PRESORTED;                                           
+     BY REGN_NO;                                                                
+   RUN;                                                                         
+                                                                                
+ /* MERGE FD38 AND FD00 TO GET PROJECT CODE */                                  
+   DATA FD38PJCT;                                                               
+     MERGE BP13FD38(IN=A) BP13FD00(IN=B);                                       
+        BY REGN_NO;                                                             
+     IF A;                                                                      
+   RUN;                                                                         
+                                                                                
+   PROC SORT DATA=FD38PJCT;                                                     
+     BY PRJCT_NAME;                                                             
+   RUN;                                                                         
+                                                                                
+   DATA FINAL;                                                                  
+    SET FD38PJCT; BY PRJCT_NAME;                                                
+    IF FIRST.PRJCT_NAME THEN DO;                                                
+       TOTAL_LOAN = 0;                                                          
+    END;                                                                        
+                                                                                
+    TOTAL_LOAN + LOAN_NEW;                                                      
+                                                                                
+    IF LAST.PRJCT_NAME THEN DO;                                                 
+       ML_LOAN_NEW = ROUND(TOTAL_LOAN/1000000, .01);                            
+       OUTPUT;                                                                  
+    END;                                                                        
+   RUN;                                                                         
+                                                                                
+ /*---------------------------------------------------------------*/            
+   OPTIONS MISSING=0;                                                           
+   PROC PRINTTO FILE=BP13L038 NEW;                                              
+   PROC TABULATE DATA=FINAL;                                                    
+TITLE1 " ";                                                                     
+TITLE2 " ";                                                                     
+TITLE3 " ";                                                                     
+TITLE4 "BP13L038      HDB3                                 SYSTEM OF COMMITMENT 
+                      DATE : &DATE           ";                                 
+TITLE5 "ACTUAL DBSS LOAN DISBURSEMENTS IN FY &FYR";                             
+                                                                                
+   VAR ML_LOAN_NEW;                                                             
+   CLASS DUE_DATE PRJCT_NAME;                                                   
+                                                                                
+   KEYLABEL N="NO. "                                                            
+            SUM =" "                                                            
+            ALL ="TOTAL";                                                       
+                                                                                
+   TABLE (PRJCT_NAME = " " ALL),                                                
+         (DUE_DATE=" " ALL)*                                                    
+         (ML_LOAN_NEW=" "*(SUM*F=COMMA7.2))                                     
+         /RTS=25 BOX="PROJECT";                                                 
+                                                                                
+

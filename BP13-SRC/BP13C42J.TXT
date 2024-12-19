@@ -1,0 +1,628 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C42J.                                                 
+      *AUTHOR.        KSJ3                                                      
+      *DATE-WRITTEN.  21/01/2016.                                               
+      * ========================================================== *            
+      *                SYSTEM OF COMMITMENT (BP13)                 *            
+      * ========================================================== *            
+      *  OBJECTIVE : PROCESS AG07 VOUCHER RETURN FILE (AG07F225)   *            
+      *              FOR RESALE LEVY LEVY - PREMIUM LEVY CONV.     *            
+      *                                                            *            
+      *    1. IT IS ASSUMED THAT RECORDS IN THE INPUT FILE ARE:    *            
+      *       A. REJECTED: F225-REC(536:2) != SPACES               *            
+      *       B. RESALE LEVY VOUCHERS: F225-REC(150:3) = 'LVY'     *            
+      *       C. HEADER RECORDS: F225-REC(12:2) = '00'             *            
+      *    2. READ BP13KC10. IF FOUND, BACK-UP OLD RECORD AND      *            
+      *       DELETE/CREATE NEW RECORD WITH NEWLY GENERATED VR NO. *            
+      *       PRINT NEW VR AND REJECTION DETAILS IN REPORT.        *            
+      *                                                            *            
+      *  INPUT   :  AG07F225 - AG07 INTERFACE FILE                 *            
+      *                                                            *            
+      *  I-O     :  BP13KC10 - SOC LEVY VOUCHER FILE               *            
+      *                                                            *            
+      *  OUTPUT  :  BP13FC10 - SOC LEVY VOUCHER FILE (SEQ AS BKUP) *            
+      *                                                            *            
+      *  LISTING :  P13L42JA - REJECTED VOUCHERS LIST              *            
+      *          :  P13L42JB - ERROR LIST                          *            
+      *                                                            *            
+      * ========================================================== *            
+      * CHG-NO    BY    DATE    DESCRIPTION                        *            
+      * BP135600  KSJ3  260116  NEW PROGRAM                        *            
+      * ========================================================== *            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT AG07F225 ASSIGN        TO AG07F225.                           
+                                                                                
+           SELECT BP13KC10 ASSIGN        TO BP13KC10                            
+                           ACCESS MODE   IS DYNAMIC                             
+                           ORGANIZATION  IS INDEXED                             
+                           RECORD KEY    IS KC10-KEY-FLD                        
+                           ALTERNATE KEY IS KC10-ALT-KEY1                       
+                           FILE STATUS   IS WS-KC10-STATUS.                     
+                                                                                
+           SELECT BP13FC10 ASSIGN        TO BP13FC10.                           
+           SELECT P13L42JA ASSIGN        TO P13L42JA.                           
+           SELECT P13L42JB ASSIGN        TO P13L42JB.                           
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD  AG07F225                                                             
+           RECORD CONTAINS 600 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+           COPY AG07F225.                                                       
+                                                                                
+       FD  BP13KC10                                                             
+           RECORD CONTAINS 800 CHARACTERS.                                      
+           COPY BP13KC10.                                                       
+                                                                                
+       FD  BP13FC10                                                             
+           RECORD CONTAINS 800 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+           COPY BP13FC10.                                                       
+                                                                                
+       FD  P13L42JA                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+       01  P13L42JA-REC                  PIC X(132).                            
+                                                                                
+       FD  P13L42JB                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+       01  P13L42JB-REC                  PIC X(132).                            
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-FILE-STATUS.                                                      
+           05  WS-KC10-STATUS            PIC X(2)    VALUE SPACES.              
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-CNT-F225-READ          PIC 9(6)   VALUE ZEROES.               
+           05  WS-CNT-F225-SKIP          PIC 9(6)   VALUE ZEROES.               
+           05  WS-CNT-KC10-WRT           PIC 9(6)   VALUE ZEROES.               
+           05  WS-CNT-KC10-DEL           PIC 9(6)   VALUE ZEROES.               
+           05  WS-CNT-FC10-WRT           PIC 9(6)   VALUE ZEROES.               
+           05  WS-CNT-PAGE-A             PIC 9(4)   VALUE ZEROES.               
+           05  WS-CNT-PAGE-B             PIC 9(4)   VALUE ZEROES.               
+           05  WS-CNT-LINE-A             PIC 9(2)   VALUE 60.                   
+           05  WS-CNT-LINE-B             PIC 9(2)   VALUE 60.                   
+           05  WS-CNT-SNO-A              PIC 9(4)   VALUE ZEROES.               
+           05  WS-CNT-SNO-B              PIC 9(4)   VALUE ZEROES.               
+                                                                                
+       01  WS-FLAGS.                                                            
+           05  WS-F225-EOF               PIC X(1)   VALUE 'N'.                  
+           05  WS-KC10-FND               PIC X(1)   VALUE 'N'.                  
+           05  WS-SKIP-REC               PIC X(1)   VALUE 'N'.                  
+                                                                                
+       01  WS-DATE.                                                             
+           05  WS-DTE-FMT8.                                                     
+               10  WS-DTE-FMT8-CCYY      PIC 9(4)   VALUE ZEROES.               
+               10  WS-DTE-FMT8-MM        PIC 9(2)   VALUE ZEROES.               
+               10  WS-DTE-FMT8-DD        PIC 9(2)   VALUE ZEROES.               
+           05  WS-DTE-FMT10.                                                    
+               10  WS-DTE-FMT10-DD       PIC 9(2)   VALUE ZEROES.               
+               10  FILLER                PIC X      VALUE '/'.                  
+               10  WS-DTE-FMT10-MM       PIC 9(2)   VALUE ZEROES.               
+               10  FILLER                PIC X      VALUE '/'.                  
+               10  WS-DTE-FMT10-CCYY.                                           
+                   15  WS-DTE-FMT10-CC   PIC 9(2)   VALUE ZEROES.               
+                   15  WS-DTE-FMT10-YY   PIC 9(2)   VALUE ZEROES.               
+           05  WS-DTE-TMP                PIC 9(8)   VALUE ZEROES.               
+           05  WS-DTE-INT                PIC 9(8)   VALUE ZEROES.               
+           05  WS-DTE-CURR-8             PIC 9(8)   VALUE ZEROES.               
+           05  WS-DTE-CURR-10            PIC X(10)  VALUE SPACES.               
+                                                                                
+       01  WS-OTHERS.                                                           
+           05  WS-NUM-DDD-FILE-REF.                                             
+               10  WS-NUM-REGN           PIC X(8)   VALUE SPACES.               
+               10  FILLER                PIC X(7)   VALUE SPACES.               
+           05  WS-NUM-VR.                                                       
+               10  WS-NUM-DDD            PIC X(3).                              
+               10  WS-NUM-FIN-YEAR       PIC X(2).                              
+               10  WS-NUM-VR-SERIAL      PIC X(6).                              
+           05  WS-BP13KC10-REC-BKUP      PIC X(800) VALUE SPACES.               
+                                                                                
+      *-------------------------------------------------------------            
+      *    P13L42JA REPORT (REJECT LIST)                                        
+      *-------------------------------------------------------------            
+       01  L42JA-HEADER1.                                                       
+           05  FILLER                    PIC X(9)   VALUE 'BP13L42JA'.          
+           05  FILLER                    PIC X(3)   VALUE SPACES.               
+           05  FILLER                    PIC X(8)   VALUE 'HDBCAT 3'.           
+           05  FILLER                    PIC X(28)  VALUE SPACES.               
+           05  FILLER                    PIC X(39)  VALUE                       
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER                    PIC X(17)  VALUE SPACES.               
+           05  FILLER                    PIC X(6)   VALUE 'DATE: '.             
+           05  L42JA-DTE-CURRENT         PIC X(10)  VALUE SPACES.               
+           05  FILLER                    PIC X(8)   VALUE '  PAGE: '.           
+           05  L42JA-CNT-PAGE            PIC ZZZ9.                              
+                                                                                
+       01  L42JA-HEADER2.                                                       
+           05  FILLER                    PIC X(37)  VALUE SPACES.               
+           05  FILLER                    PIC X(48)  VALUE                       
+               'VOUCHER REASSIGNMENT DUE TO ETLSVS DELETION ON '.               
+           05  L42JA-DTE-CURRENT2        PIC X(10)  VALUE SPACES.               
+                                                                                
+       01  L42JA-HEADER3.                                                       
+           05  FILLER                    PIC X(132) VALUE                       
+               'S/NO    REGN        NEW VOUCHER NO    OLD VOUCHER NO            
+      -        'SUBMIT BY    SUBMIT DATE    REJECT REASON'.                     
+                                                                                
+       01  L42JA-HEADER4.                                                       
+           05  FILLER                    PIC X(132) VALUE                       
+               '----    --------    --------------    --------------            
+      -        '---------    -----------    ----------------------------        
+      -        '-------------'.                                                 
+                                                                                
+       01  L42JA-DETAIL.                                                        
+           05  L42JA-SNO                 PIC ZZZ9.                              
+           05  FILLER                    PIC X(4)   VALUE SPACES.               
+           05  L42JA-NUM-REGN            PIC X(8)   VALUE SPACES.               
+           05  FILLER                    PIC X(4)   VALUE SPACES.               
+           05  L42JA-NUM-NEW-VR          PIC X(13)  VALUE SPACES.               
+           05  FILLER                    PIC X(5)   VALUE SPACES.               
+           05  L42JA-NUM-OLD-VR          PIC X(13)  VALUE SPACES.               
+           05  FILLER                    PIC X(5)   VALUE SPACES.               
+           05  L42JA-NUM-SUB-BY          PIC X(8)   VALUE SPACES.               
+           05  FILLER                    PIC X(5)   VALUE SPACES.               
+           05  L42JA-DTE-SUBMITTED       PIC X(10)  VALUE SPACES.               
+           05  FILLER                    PIC X(5)   VALUE SPACES.               
+           05  L42JA-NUM-DESC            PIC X(41)  VALUE SPACES.               
+                                                                                
+      *-------------------------------------------------------------            
+      *    P13L42JB REPORT (EXCEPTION LIST)                                     
+      *-------------------------------------------------------------            
+       01  L42JB-HEADER1.                                                       
+           05  FILLER                    PIC X(9)   VALUE 'BP13L42JB'.          
+           05  FILLER                    PIC X(3)   VALUE SPACES.               
+           05  FILLER                    PIC X(8)   VALUE 'HDBCAT 3'.           
+           05  FILLER                    PIC X(28)  VALUE SPACES.               
+           05  FILLER                    PIC X(39)  VALUE                       
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER                    PIC X(17)  VALUE SPACES.               
+           05  FILLER                    PIC X(6)   VALUE 'DATE: '.             
+           05  L42JB-DTE-CURRENT         PIC X(10)  VALUE SPACES.               
+           05  FILLER                    PIC X(8)   VALUE '  PAGE: '.           
+           05  L42JB-CNT-PAGE            PIC ZZZ9.                              
+                                                                                
+       01  L42JB-HEADER2.                                                       
+           05  FILLER                    PIC X(44)  VALUE SPACES.               
+           05  FILLER                    PIC X(44)  VALUE                       
+               'EXCEPTION REPORT ON RESALE LEVY VOUCHERS'.                      
+                                                                                
+       01  L42JB-HEADER3.                                                       
+                05  FILLER                    PIC X(132) VALUE                  
+               '    S/NO    REGN NO     VOUCHER NO       ERROR DESCRIPTI        
+      -        'ON'.                                                            
+                                                                                
+       01  L42JB-HEADER4.                                                       
+           05  FILLER                    PIC X(132) VALUE                       
+               '    ----    --------    -------------    ---------------        
+      -        '-----------------------------------'.                           
+                                                                                
+       01  L42JB-DETAIL.                                                        
+           05  FILLER                    PIC X(4)   VALUE SPACES.               
+           05  L42JB-SNO                 PIC ZZZ9.                              
+           05  FILLER                    PIC X(4)   VALUE SPACES.               
+           05  L42JB-NUM-REGN            PIC X(8)   VALUE SPACES.               
+           05  FILLER                    PIC X(4)   VALUE SPACES.               
+           05  L42JB-NUM-VR              PIC X(13)  VALUE SPACES.               
+           05  FILLER                    PIC X(4)   VALUE SPACES.               
+           05  L42JB-NUM-DESC            PIC X(50)  VALUE SPACES.               
+                                                                                
+      *-------------------------------------------------------------            
+      *    WS VARIABLES PASSED FROM SUB-PROGRAM "AG07C907"                      
+      *-------------------------------------------------------------            
+       COPY AG7C907C.                                                           
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *=============================================================            
+       0000-CONTROL.                                                            
+      *=============================================================            
+                                                                                
+           PERFORM 1000-OPEN-ROUTINE       THRU 1000-EXIT.                      
+           PERFORM 2000-AG07F225-READ      THRU 2000-EXIT.                      
+           PERFORM 3000-MAIN-ROUTINE       THRU 3000-EXIT                       
+                   UNTIL WS-F225-EOF = 'Y'.                                     
+           PERFORM 9000-CLOSE-ROUTINE      THRU 9000-EXIT.                      
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       1000-OPEN-ROUTINE.                                                       
+      *=============================================================            
+                                                                                
+           OPEN INPUT  AG07F225                                                 
+                I-O    BP13KC10                                                 
+                OUTPUT BP13FC10                                                 
+                       P13L42JA                                                 
+                       P13L42JB.                                                
+                                                                                
+           IF WS-KC10-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'OPENING BP13KC10 ERROR ' WS-KC10-STATUS                  
+              MOVE     WS-KC10-STATUS      TO   RETURN-CODE                     
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+      *-------------------------------------------------------------            
+      *    OPEN VSAM FOR VOUCHER NUMBER GENERATION                              
+      *-------------------------------------------------------------            
+           MOVE 'AG07K960'                 TO   C907-NUM-FILENME.               
+           CALL 'K960OPEN' USING AG07C907-AREA.                                 
+                                                                                
+           IF C907-NUM-FILE-STATUS NOT = '00' AND '97'                          
+              DISPLAY 'OPENING AG07K960 ERROR ' C907-NUM-FILE-STATUS            
+              MOVE     C907-NUM-FILE-STATUS     TO   RETURN-CODE                
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           PERFORM 1100-GET-DATE           THRU 1100-EXIT.                      
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       1100-GET-DATE.                                                           
+      *=============================================================            
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8) TO   WS-DTE-CURR-8.                  
+                                                                                
+           MOVE WS-DTE-CURR-8              TO   WS-DTE-FMT8.                    
+           PERFORM 8100-CONV-DATE-TO-10    THRU 8100-EXIT.                      
+           MOVE WS-DTE-FMT10               TO   WS-DTE-CURR-10.                 
+                                                                                
+       1100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       2000-AG07F225-READ.                                                      
+      *=============================================================            
+                                                                                
+           READ AG07F225 AT END                                                 
+                MOVE 'Y'                   TO   WS-F225-EOF                     
+                GO                         TO   2000-EXIT.                      
+                                                                                
+           ADD 1                           TO   WS-CNT-F225-READ.               
+           MOVE F225-NUM-DDD-FILE-REF      TO   WS-NUM-DDD-FILE-REF.            
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       3000-MAIN-ROUTINE.                                                       
+      *=============================================================            
+                                                                                
+           MOVE SPACES                     TO   L42JB-NUM-DESC.                 
+                                                                                
+           MOVE WS-NUM-REGN                TO   KC10-NUM-REGN.                  
+           PERFORM 3100-BP13KC10-READ      THRU 3100-EXIT.                      
+                                                                                
+           IF WS-KC10-FND = 'Y'                                                 
+              IF F225-NUM-VR = KC10-NUM-VR                                      
+                 PERFORM 4000-GET-NEW-VR   THRU 4000-EXIT                       
+                 PERFORM 4100-PRINT-REJ    THRU 4100-EXIT                       
+                 PERFORM 4200-XFER-LVYVCHR THRU 4200-EXIT                       
+              ELSE                                                              
+                 ADD 1                     TO   WS-CNT-F225-SKIP                
+              END-IF                                                            
+           ELSE                                                                 
+              ADD 1                        TO   WS-CNT-F225-SKIP                
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-AG07F225-READ      THRU 2000-EXIT.                      
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       3100-BP13KC10-READ.                                                      
+      *=============================================================            
+                                                                                
+           READ BP13KC10.                                                       
+                                                                                
+           EVALUATE WS-KC10-STATUS                                              
+           WHEN 00                                                              
+              MOVE 'Y'                     TO   WS-KC10-FND                     
+                                                                                
+           WHEN 10                                                              
+           WHEN 23                                                              
+              MOVE 'N'                     TO   WS-KC10-FND                     
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'READ BP13KC10 ERROR '    WS-KC10-STATUS                  
+              MOVE     WS-KC10-STATUS      TO   RETURN-CODE                     
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       4000-GET-NEW-VR.                                                         
+      *=============================================================            
+                                                                                
+           MOVE 'SS '                      TO   C907-NUM-DDD.                   
+           MOVE 'AG07K960'                 TO   C907-NUM-FILENME.               
+                                                                                
+           CALL 'AG07C907' USING AG07C907-AREA.                                 
+                                                                                
+           IF C907-NUM-FILE-STATUS =  '00'                                      
+              STRING C907-NUM-DDD                                               
+                     C907-NUM-FIN-YR                                            
+                     C907-NUM-VR-SERIAL                                         
+                     DELIMITED BY SIZE INTO WS-NUM-VR                           
+              END-STRING                                                        
+           ELSE                                                                 
+              MOVE C907-NUM-FILE-STATUS    TO   RETURN-CODE                     
+              DISPLAY 'ERROR CALLING AG07C907, STATUS = '                       
+                       C907-NUM-FILE-STATUS                                     
+              PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       4100-PRINT-REJ.                                                          
+      *=============================================================            
+                                                                                
+           IF WS-CNT-LINE-A > 50                                                
+              PERFORM 4110-PRINT-REJ-HDR   THRU 4110-EXIT                       
+           END-IF.                                                              
+                                                                                
+           ADD  1                          TO   WS-CNT-SNO-A                    
+                                                WS-CNT-LINE-A.                  
+           MOVE WS-CNT-SNO-A               TO   L42JA-SNO.                      
+           MOVE WS-NUM-REGN                TO   L42JA-NUM-REGN.                 
+           MOVE WS-NUM-VR                  TO   L42JA-NUM-NEW-VR.               
+           MOVE F225-NUM-VR                TO   L42JA-NUM-OLD-VR.               
+           MOVE KC10-NUM-VR-SEND-BY        TO   L42JA-NUM-SUB-BY.               
+           MOVE KC10-DTE-VR-SEND           TO   L42JA-DTE-SUBMITTED.            
+                                                                                
+           WRITE P13L42JA-REC              FROM L42JA-DETAIL.                   
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       4110-PRINT-REJ-HDR.                                                      
+      *=============================================================            
+                                                                                
+           ADD 1                           TO   WS-CNT-PAGE-A.                  
+           MOVE WS-CNT-PAGE-A              TO   L42JA-CNT-PAGE.                 
+           MOVE WS-DTE-CURR-10             TO   L42JA-DTE-CURRENT               
+                                                L42JA-DTE-CURRENT2.             
+                                                                                
+           WRITE P13L42JA-REC FROM L42JA-HEADER1 AFTER PAGE.                    
+           WRITE P13L42JA-REC FROM L42JA-HEADER2.                               
+           WRITE P13L42JA-REC FROM L42JA-HEADER3 AFTER 2.                       
+           WRITE P13L42JA-REC FROM L42JA-HEADER4.                               
+                                                                                
+           MOVE SPACES                     TO   P13L42JA-REC.                   
+           WRITE P13L42JA-REC.                                                  
+                                                                                
+           MOVE 6                          TO   WS-CNT-LINE-A.                  
+                                                                                
+       4110-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       4200-XFER-LVYVCHR.                                                       
+      *=============================================================            
+                                                                                
+           MOVE BP13KC10-REC               TO   WS-BP13KC10-REC-BKUP.           
+                                                                                
+      *-------------------------------------------------------------            
+      *    BACK-UP BP13KC10 REC TO BP13FC10 AND DELETE FROM BP13KC10            
+      *-------------------------------------------------------------            
+           PERFORM 4210-BP13FC10-WRITE     THRU 4210-EXIT.                      
+           PERFORM 4220-BP13KC10-DELETE    THRU 4220-EXIT.                      
+                                                                                
+      *-------------------------------------------------------------            
+      *    CREATE NEW BP13KC10 REC FROM WS BKUP WITH NEW VR NO                  
+      *-------------------------------------------------------------            
+           MOVE WS-BP13KC10-REC-BKUP       TO   BP13KC10-REC.                   
+           MOVE WS-NUM-VR                  TO   KC10-NUM-VR.                    
+           MOVE SPACES                     TO   KC10-NUM-VR-STATUS              
+                                                KC10-DTE-VR-SEND                
+                                                KC10-NUM-VR-SEND-BY             
+                                                KC10-DTE-VR-FIN.                
+           MOVE 'BP13C42J'                 TO   KC10-NUM-USERID                 
+           MOVE WS-DTE-CURR-8              TO   KC10-DTE-VR-PREPARE             
+                                                KC10-DTE-UPDATE.                
+                                                                                
+           PERFORM 4230-BP13KC10-WRITE     THRU 4230-EXIT.                      
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       4210-BP13FC10-WRITE.                                                     
+      *=============================================================            
+                                                                                
+           MOVE BP13KC10-REC               TO   BP13FC10-REC.                   
+                                                                                
+           WRITE BP13FC10-REC.                                                  
+           ADD 1                           TO   WS-CNT-FC10-WRT.                
+                                                                                
+       4210-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       4220-BP13KC10-DELETE.                                                    
+      *=============================================================            
+                                                                                
+           DELETE BP13KC10.                                                     
+                                                                                
+           EVALUATE WS-KC10-STATUS                                              
+           WHEN 00                                                              
+              ADD 1                        TO   WS-CNT-KC10-DEL                 
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'DELETE BP13KC10 ERROR '  WS-KC10-STATUS                  
+              MOVE     WS-KC10-STATUS      TO   RETURN-CODE                     
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       4220-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       4230-BP13KC10-WRITE.                                                     
+      *=============================================================            
+                                                                                
+           WRITE BP13KC10-REC.                                                  
+                                                                                
+           EVALUATE WS-KC10-STATUS                                              
+           WHEN 00                                                              
+              ADD 1                        TO   WS-CNT-KC10-WRT                 
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'WRITE BP13KC10 ERROR '   WS-KC10-STATUS                  
+              MOVE     WS-KC10-STATUS      TO   RETURN-CODE                     
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       4230-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       8000-CONV-DATE-TO-8.                                                     
+      *=============================================================            
+      *    INPUT  - WS-DTE-FMT10                                                
+      *    OUTPUT - WS-DTE-FMT8                                                 
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE WS-DTE-FMT10-CCYY  TO  WS-DTE-FMT8-CCYY.                        
+           MOVE WS-DTE-FMT10-MM    TO  WS-DTE-FMT8-MM.                          
+           MOVE WS-DTE-FMT10-DD    TO  WS-DTE-FMT8-DD.                          
+                                                                                
+       8000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       8100-CONV-DATE-TO-10.                                                    
+      *=============================================================            
+      *    INPUT  - WS-DTE-FMT8                                                 
+      *    OUTPUT - WS-DTE-FMT10                                                
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE WS-DTE-FMT8-CCYY   TO  WS-DTE-FMT10-CCYY.                       
+           MOVE WS-DTE-FMT8-MM     TO  WS-DTE-FMT10-MM.                         
+           MOVE WS-DTE-FMT8-DD     TO  WS-DTE-FMT10-DD.                         
+                                                                                
+       8100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       8900-PRINT-ERROR.                                                        
+      *=============================================================            
+                                                                                
+           IF WS-CNT-LINE-B > 50                                                
+              PERFORM 8910-PRINT-ERROR-HDR THRU 8910-EXIT                       
+           END-IF.                                                              
+                                                                                
+           ADD  1                          TO   WS-CNT-SNO-B                    
+                                                WS-CNT-LINE-B.                  
+           MOVE WS-CNT-SNO-B               TO   L42JB-SNO.                      
+           MOVE WS-NUM-REGN                TO   L42JB-NUM-REGN.                 
+           MOVE F225-NUM-VR                TO   L42JB-NUM-VR.                   
+                                                                                
+           WRITE P13L42JB-REC             FROM L42JB-DETAIL.                    
+                                                                                
+       8900-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       8910-PRINT-ERROR-HDR.                                                    
+      *=============================================================            
+                                                                                
+           ADD 1                           TO   WS-CNT-PAGE-B.                  
+           MOVE WS-CNT-PAGE-B              TO   L42JB-CNT-PAGE.                 
+           MOVE WS-DTE-CURR-10             TO   L42JB-DTE-CURRENT.              
+                                                                                
+           WRITE P13L42JB-REC FROM L42JB-HEADER1 AFTER PAGE.                    
+           WRITE P13L42JB-REC FROM L42JB-HEADER2.                               
+           WRITE P13L42JB-REC FROM L42JB-HEADER3 AFTER 2.                       
+           WRITE P13L42JB-REC FROM L42JB-HEADER4.                               
+                                                                                
+           MOVE SPACES                     TO   P13L42JB-REC.                   
+           WRITE P13L42JB-REC.                                                  
+                                                                                
+           MOVE 6                          TO   WS-CNT-LINE-B.                  
+                                                                                
+       8910-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *=============================================================            
+       9000-CLOSE-ROUTINE.                                                      
+      *=============================================================            
+                                                                                
+           DISPLAY ' '.                                                         
+           DISPLAY '*------- BP13C42J CONTROL TOTAL -------*'.                  
+           DISPLAY '   '.                                                       
+           DISPLAY ' 1. NO OF AG07F225 READ      : ' WS-CNT-F225-READ.          
+           DISPLAY ' 2. NO OF AG07F225 SKIPPED   : ' WS-CNT-F225-SKIP.          
+           DISPLAY ' 3. NO OF BP13KC10 WRITTEN   : ' WS-CNT-KC10-WRT.           
+           DISPLAY ' 4. NO OF BP13KC10 DELETED   : ' WS-CNT-KC10-DEL.           
+           DISPLAY ' 5. NO OF BP13FC10 WRITTEN   : ' WS-CNT-FC10-WRT.           
+           DISPLAY ' '.                                                         
+                                                                                
+           CLOSE AG07F225                                                       
+                 BP13KC10                                                       
+                 BP13FC10                                                       
+                 P13L42JA                                                       
+                 P13L42JB.                                                      
+                                                                                
+           IF WS-KC10-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'CLOSING BP13KC10 ERROR ' WS-KC10-STATUS                  
+              MOVE     WS-KC10-STATUS      TO   RETURN-CODE                     
+           END-IF.                                                              
+                                                                                
+      *-------------------------------------------------------------            
+      *    CLOSE VSAM FOR VOUCHER NUMBER GENERATION                             
+      *-------------------------------------------------------------            
+           MOVE 'AG07K960'                 TO   C907-NUM-FILENME.               
+           CALL 'K960CLSE' USING AG07C907-AREA.                                 
+                                                                                
+           IF C907-NUM-FILE-STATUS NOT = '00' AND '97'                          
+              DISPLAY 'CLOSING AG07K960 ERROR ' C907-NUM-FILE-STATUS            
+              MOVE     C907-NUM-FILE-STATUS     TO   RETURN-CODE                
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+

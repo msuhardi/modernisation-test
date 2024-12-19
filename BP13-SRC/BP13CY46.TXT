@@ -1,0 +1,246 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CY46.                                                 
+      *AUTHOR.        NOR.                                                      
+      *DATE-WRITTEN.  01/01/2013.                                               
+      ***************************************************************           
+      * SYSTEM OF COMMITMENT (BP13)                                 *           
+      ***************************************************************           
+      * OBJECTIVE : MATCH BP13F595 & BP13F740 BY NRIC,              *           
+      *           : IF FOUND SBF WITH LATEST HOUSEHOLD OR BALLOT    *           
+      *           : HOSUEHOLD AS FT IN SBF, UPDATE BTO WITH 'H' AS  *           
+      *           : HOUSEHOLD.                                      *           
+      *           :                                                 *           
+      *           : IF FOUND SBF WITH LATEST HOUSEHOLD OR BALLOT    *           
+      *           : HOSUEHOLD AS 2T IN SBF, UPDATE BTO WITH 'G' AS  *           
+      *           : HOUSEHOLD.                                      *           
+      *           :                                                 *           
+      * ----------------------------------------------------------- *           
+      * CHG REF  DATE       BY   DESCRIPTION                        *           
+      * -------- ---------- ---- -----------                        *           
+      * BP134780 01/01/2013 LSB1 NEW PRGM                           *           
+      ***************************************************************           
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER.    IBM-3090.                                            
+       OBJECT-COMPUTER.    IBM-3090.                                            
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT BP13F595          ASSIGN BP13F595.                            
+           SELECT BP13F740          ASSIGN BP13F740.                            
+           SELECT P13F595A          ASSIGN P13F595A.                            
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+       FD   BP13F595                RECORD CONTAINS 500 CHARACTERS              
+                                    LABEL RECORDS ARE STANDARD                  
+                                    RECORDING MODE IS F.                        
+       COPY BP13F595.                                                           
+                                                                                
+       FD   BP13F740                RECORD CONTAINS 500 CHARACTERS              
+                                    LABEL RECORDS ARE STANDARD                  
+                                    RECORDING MODE IS F.                        
+       COPY BP13F740.                                                           
+                                                                                
+       FD   P13F595A                                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            RECORDING MODE IS F.                                                
+       01   P13F595A-REC.                                                       
+            05  FILLER                    PIC X(461).                           
+            05  FILLER                    PIC X(01).                            
+            05  F595A-NUM-SBF-HH          PIC X(01).                            
+            05  F595A-NUM-CUTOFF-SBF      PIC X(01).                            
+            05  F595A-NUM-BE-CNT          PIC 9(02).                            
+            05  F595A-NUM-BTO-CNT         PIC 9(02).                            
+            05  F595A-NUM-BK-TAG          PIC X(01).                            
+            05  F595A-NUM-BK-CNT          PIC 9(02).                            
+            05  F595A-NUM-REST-CNT        PIC 9(02).                            
+            05  F595A-NUM-BTO-ADD         PIC X(02).                            
+            05  F595A-NUM-SCH-ACC         PIC X(09).                            
+            05  F595A-NUM-FN-CNT          PIC X(02).                            
+            05  F595A-NUM-STAT-S          PIC X(02).                            
+            05  FILLER                    PIC X(01).                            
+            05  F595A-NUM-AF-QUEUE        PIC X(02).                            
+            05  F595A-NUM-BUY-STATUS      PIC X(01).                            
+            05  F595A-NUM-ALLOC-TAG       PIC X(02).                            
+            05  F595A-NUM-NE-CNT          PIC 9(02).                            
+            05  F595A-NUM-BK-ADD          PIC 9(02).                            
+            05  F595A-NUM-HARDLUCK        PIC 9(02).                            
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+       01  WS-FLAG-N-STATUS.                                                    
+           05  WS-F595-EOF-FLAG             PIC X(01)  VALUE 'N'.               
+               88  WS-F595-EOF              VALUE 'Y'.                          
+           05  WS-F740-EOF-FLAG             PIC X(01)  VALUE 'N'.               
+               88  WS-F740-EOF              VALUE 'Y'.                          
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F595-READ                 PIC 9(05)  VALUE ZEROS.             
+           05  WS-F740-READ                 PIC 9(05)  VALUE ZEROS.             
+           05  WS-F595-UNMATCH              PIC 9(05)  VALUE ZEROS.             
+           05  WS-F740-UNMATCH              PIC 9(05)  VALUE ZEROS.             
+           05  WS-F740-MATCH                PIC 9(05)  VALUE ZEROS.             
+           05  WS-F595A-UPDATE              PIC 9(05)  VALUE ZEROS.             
+           05  WS-F595A-WRTN                PIC 9(05)  VALUE ZEROS.             
+           05  WS-F595-BYPASS-BF            PIC 9(05)  VALUE ZEROS.             
+           05  WS-F595-BYPASS-AF            PIC 9(05)  VALUE ZEROS.             
+           05  WS-FIRST-REC                 PIC X(01)  VALUE 'N'.               
+           05  WS-SBF-HH                    PIC X(01)  VALUE SPACES.            
+           05  WS-SBF-HH-BAL                PIC X(01)  VALUE SPACES.            
+                                                                                
+       01  WS-SYSTEM-DATE.                                                      
+           05  WS-SYS-YY                    PIC X(04)  VALUE SPACES.            
+           05  WS-SYS-MM                    PIC X(02)  VALUE SPACES.            
+           05  WS-SYS-DD                    PIC X(02)  VALUE SPACES.            
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      ***************************                                               
+       0000-MAIN.                                                               
+      ***************************                                               
+           MOVE FUNCTION CURRENT-DATE(1:8)     TO  WS-SYSTEM-DATE.              
+                                                                                
+           PERFORM 1000-OPEN-FILES           THRU  1000-EXIT.                   
+           PERFORM 2000-READ-BP13F595        THRU  2000-EXIT.                   
+           PERFORM 2010-READ-BP13F740        THRU  2010-EXIT.                   
+           PERFORM 3000-PROCESS              THRU  3000-EXIT                    
+             UNTIL WS-F595-EOF AND WS-F740-EOF.                                 
+           PERFORM 9000-CLOSE-FILES          THRU  9000-EXIT.                   
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ***************************                                               
+       1000-OPEN-FILES.                                                         
+      ***************************                                               
+           OPEN INPUT BP13F595                                                  
+                      BP13F740                                                  
+               OUTPUT P13F595A.                                                 
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ***************************                                               
+       2000-READ-BP13F595.                                                      
+      ***************************                                               
+           READ BP13F595                                                        
+             AT END                                                             
+                MOVE 'Y'                    TO  WS-F595-EOF-FLAG                
+                MOVE HIGH-VALUES            TO  F595-NUM-NRIC1                  
+            NOT AT END                                                          
+                ADD   1                     TO  WS-F595-READ                    
+                                                                                
+           END-READ.                                                            
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ***************************                                               
+       2010-READ-BP13F740.                                                      
+      ***************************                                               
+           READ BP13F740                                                        
+             AT END                                                             
+                MOVE 'Y'                    TO  WS-F740-EOF-FLAG                
+                MOVE HIGH-VALUES            TO  F740-NUM-NRIC1                  
+            NOT AT END                                                          
+                ADD  1                      TO  WS-F740-READ                    
+                                                                                
+                                                                                
+           END-READ.                                                            
+                                                                                
+       2010-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ***************************                                               
+       3000-PROCESS.                                                            
+      ***************************                                               
+           IF F595-NUM-NRIC1 = F740-NUM-NRIC1                                   
+              ADD  1                          TO  WS-F740-MATCH                 
+              MOVE 'Y' TO WS-FIRST-REC                                          
+              MOVE SPACES TO WS-SBF-HH                                          
+              MOVE SPACES TO WS-SBF-HH-BAL                                      
+              PERFORM 4000-OUTPUT-RECORDS            THRU 4000-EXIT             
+                 UNTIL F595-NUM-NRIC1 > F740-NUM-NRIC1 OR                       
+                 WS-F595-EOF                                                    
+              PERFORM 2010-READ-BP13F740             THRU  2010-EXIT            
+           ELSE                                                                 
+              IF F595-NUM-NRIC1 > F740-NUM-NRIC1                                
+                 ADD  1                       TO  WS-F595-UNMATCH               
+                 PERFORM 2010-READ-BP13F740          THRU  2010-EXIT            
+              ELSE                                                              
+                 IF F595-NUM-NRIC1 < F740-NUM-NRIC1                             
+                      ADD  1                    TO  WS-F740-UNMATCH             
+                     MOVE BP13F595-REC         TO  P13F595A-REC                 
+                     WRITE P13F595A-REC                                         
+                     ADD  1                     TO  WS-F595A-WRTN               
+                    PERFORM 2000-READ-BP13F595       THRU  2000-EXIT            
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ***************************                                               
+       4000-OUTPUT-RECORDS.                                                     
+      ***************************                                               
+                                                                                
+           IF F595-NUM-NRIC1 = F740-NUM-NRIC1                                   
+                                                                                
+              MOVE BP13F595-REC         TO  P13F595A-REC                        
+              MOVE SPACES               TO  P13F595A-REC(462:3)                 
+              IF WS-FIRST-REC = 'Y'                                             
+                IF F595-DTE-REQUEST < F740-DTE-REQUEST                          
+                   PERFORM 4100-PROCESS-FIRST-RECORD THRU 4100-EXIT             
+                ELSE                                                            
+                   WRITE P13F595A-REC                                           
+                END-IF                                                          
+              ELSE                                                              
+                  WRITE P13F595A-REC                                            
+           END-IF.                                                              
+                                                                                
+           MOVE 'N' TO WS-FIRST-REC.                                            
+           PERFORM 2000-READ-BP13F595        THRU  2000-EXIT.                   
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4100-PROCESS-FIRST-RECORD.                                               
+                                                                                
+           IF F740-CDE-BALLOT-HOUSEHOLD = SPACES                                
+               ADD 1 TO WS-F595A-UPDATE                                         
+               MOVE F740-CDE-HOUSEHOLD        TO F595A-NUM-SBF-HH               
+           ELSE                                                                 
+               ADD 1 TO WS-F595A-UPDATE                                         
+               MOVE F740-CDE-BALLOT-HOUSEHOLD TO F595A-NUM-SBF-HH               
+           END-IF.                                                              
+                                                                                
+           WRITE P13F595A-REC.                                                  
+           ADD  1                     TO  WS-F595A-WRTN.                        
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ***************************                                               
+       9000-CLOSE-FILES.                                                        
+      ***************************                                               
+           DISPLAY SPACES.                                                      
+           DISPLAY 'RUN DATE : ' WS-SYS-DD '/' WS-SYS-MM '/' WS-SYS-YY.         
+           DISPLAY '**************** BP13CY46************************'.         
+           DISPLAY ' RECORDS READ    IN BP13F595 : ' WS-F595-READ.              
+           DISPLAY ' RECORDS READ    IN BP13F740 : ' WS-F740-READ.              
+           DISPLAY ' RECORDS WRITTEN IN P13F595A : ' WS-F595A-WRTN.             
+           DISPLAY SPACES.                                                      
+           DISPLAY ' F595 NOT MATHCED IN F740 : ' WS-F595-UNMATCH.              
+           DISPLAY ' F740 NOT MATHCED IN F595 : ' WS-F740-UNMATCH.              
+           DISPLAY ' F595 UPDATE HOUSEHOLD    : ' WS-F595A-UPDATE.              
+           DISPLAY ' F740 MATCHED WITH F595   : ' WS-F740-MATCH.                
+           DISPLAY '**************** -------- ************************'.        
+                                                                                
+           CLOSE BP13F740                                                       
+                 BP13F595                                                       
+                 P13F595A.                                                      
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

@@ -1,0 +1,536 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C078.                                                 
+      *AUTHOR.        BALAKRISHNAN S.                                           
+      *DATE-WRITTEN.  01/03/2000.                                               
+      ******************************************************************        
+      *                   SYSTEM OF COMMITMENT (BP13)                  *        
+      *================================================================*        
+      * OBJECTIVES : AFTER MATCHING WITH MAMS(BC03), IF                *        
+      *              MATCHED, UPDATE HOUSEHOLD TYPE, 5-YEAR TIME BAR   *        
+      *              TO BP13F520 BALLOT FILE.                          *        
+      *                                                                *        
+      *              IF DP FLAT>5 YR ==> HHTY = G (SUBJECT TO 5YR CHK) *        
+      *              IF DP FLAT<5 YR ==> HHTY = H (SUBJECT TO 5YR CHK) *        
+      *                                                                *        
+      *              IF FT=< 02, SALES-TYPE=2B, SUBJECT TO 5-YEAR TIME *        
+      *              BAR.                                              *        
+      *================================================================*        
+      * FILE DESCRIPTION :-                                            *        
+      *                                                                *        
+      * DD NAME   I/O/E ACCESSMODE  RECLEN KEY          REMARKS        *        
+      *----------------------------------------------------------------*        
+      * BP13F520  I     SEQUENTIAL   500                               *        
+      * BP13F558  I     SEQUENTIAL   400                               *        
+      * P13F520A  O     SEQUENTIAL   500                               *        
+      * BP13L078  O     SEQUENTIAL   132                REPORT         *        
+      *================================================================*        
+      * MODIFICATIONS :                                                *        
+      * CHGE REF   DATE     AUTHOR              REMARKS                *        
+      *----------------------------------------------------------------*        
+      * BP130706 02/11/2000 SB - NEW PROGRAM                           *        
+      * BP130925 03/07/2001 ANC1 ADD CHECKING OF SALES TYPE 2 AND PASIR*        
+      *                          RIS ACCT TO DETERMIN HOUSEHOLD TYPE.  *        
+      *                          ADD TAGGING OF TWO ROOMER.            *        
+      * BP130925 17/07/2001 ANC1 (MTH=000) = (MTH>120) TREATMENT       *        
+      * BP132210 14/09/2002 ANC1 WRITE ALL RECORDS IN BP13F520         *        
+      * BP132603 28/10/2004 JF4  CHANGE 10-YR TIMEBAR TO 5-YR          *        
+      * BP139518 28/02/2023 EAA2 TO INCLUDE 6 SALES TYPE CODE IN       *        
+      *                          HOUSEHOLD DETERMINATION               *        
+      *                          (8L/8M/8N/8R/8S/8T)                   *        
+      ******************************************************************        
+       ENVIRONMENT DIVISION.                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+                                                                                
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F520 ASSIGN TO BP13F520.                                  
+                                                                                
+           SELECT BP13F558 ASSIGN TO BP13F558.                                  
+                                                                                
+           SELECT P13F520A ASSIGN TO P13F520A.                                  
+                                                                                
+           SELECT BP13L078 ASSIGN TO BP13L078.                                  
+                                                                                
+      ****************************************************************          
+       DATA DIVISION.                                                           
+      ****************************************************************          
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F520     BLOCK CONTAINS 0 RECORDS                               
+                         RECORD CONTAINS 500 CHARACTERS                         
+                         LABEL RECORDS ARE STANDARD                             
+                         RECORDING MODE IS F.                                   
+       COPY BP13F520.                                                           
+                                                                                
+       FD   BP13F558     BLOCK CONTAINS 0 RECORDS                               
+                         RECORD CONTAINS 600 CHARACTERS                         
+                         LABEL RECORDS ARE STANDARD                             
+                         RECORDING MODE IS F.                                   
+       COPY BP13F558.                                                           
+                                                                                
+       FD   P13F520A     BLOCK CONTAINS 0 RECORDS                               
+                         RECORD CONTAINS 500 CHARACTERS                         
+                         LABEL RECORDS ARE STANDARD                             
+                         RECORDING MODE IS F.                                   
+       01  P13F520A-REC                   PIC X(500).                           
+                                                                                
+       FD   BP13L078     RECORD CONTAINS 132 CHARACTERS                         
+                         LABEL RECORDS ARE STANDARD                             
+                         RECORDING MODE IS F.                                   
+       01  BP13L078-REC                   PIC X(132).                           
+                                                                                
+      ****************************************************************          
+       WORKING-STORAGE SECTION.                                                 
+      ****************************************************************          
+                                                                                
+       01  WS-CUR-DATE.                                                         
+           05 WS-CCYY                     PIC 9(04).                            
+           05 WS-MM                       PIC 9(02).                            
+           05 WS-DD                       PIC 9(02).                            
+                                                                                
+       01  WS-EDT-DATE.                                                         
+           05 WS-EDT-DD                   PIC 9(02).                            
+           05 FILLER                      PIC X(01) VALUE '/'.                  
+           05 WS-EDT-MM                   PIC 9(02).                            
+           05 FILLER                      PIC X(01) VALUE '/'.                  
+           05 WS-EDT-CCYY                 PIC 9(04).                            
+                                                                                
+       01  WS-FILE-COUNTERS.                                                    
+           05  BP13F520-READ              PIC 9(08) VALUE ZEROES.               
+           05  BP13F558-READ              PIC 9(08) VALUE ZEROES.               
+           05  P13F520A-WRITE             PIC 9(08) VALUE ZEROES.               
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-CNT-MATCHED             PIC 9(05) VALUE ZEROES.               
+                                                                                
+       01  WS-OTHERS.                                                           
+           05  WS-EDT-VAR                 PIC ZZ,ZZZ,ZZ9.                       
+           05  WS-F558-NRIC               PIC X(09) VALUE ZEROES.               
+           05  WS-F558-MTH                PIC 9(03) VALUE ZEROES.               
+           05  WS-F558-HH                 PIC X(01) VALUE SPACES.               
+           05  WS-F558-FT                 PIC X(02) VALUE SPACES.               
+           05  WS-F558-SALES-TYPE         PIC X(02) VALUE SPACES.               
+           05  WS-F558-HDB-REF-MAM        PIC X(11) VALUE SPACES.               
+           05  WS-F520-MTH                PIC 9(03) VALUE ZEROES.               
+           05  WS-F520-HH                 PIC X(01) VALUE SPACES.               
+           05  WS-F520-YR5                PIC X(01) VALUE SPACES.               
+           05  WS-UPDATE-YR5              PIC X(01) VALUE SPACES.               
+           05  WS-UPDATE-HH               PIC X(01) VALUE SPACES.               
+           05  WS-UPDATE-MTH              PIC X(01) VALUE SPACES.               
+           05  WS-F558-ALLOC-SCH          PIC X(03) VALUE SPACES.               
+           05  WS-TWO-ROOMER              PIC X(01) VALUE SPACES.               
+                                                                                
+       01  HDB-REF-MAM-FLAG               PIC X(01) VALUE SPACES.               
+           88  HDB-REF-MAM                          VALUE 'Y'.                  
+                                                                                
+       01  UPDATE-PRINT-FLAG              PIC X(01) VALUE SPACES.               
+           88  UPDATE-PRINT                         VALUE 'Y'.                  
+                                                                                
+      ****************************************************************          
+      * BP13L078 VARIABLES.                                          *          
+      ****************************************************************          
+                                                                                
+       01  L078-COUNTERS.                                                       
+           05  WS-CNT-LINE                PIC 9(05) VALUE 60.                   
+           05  WS-CNT-SNO                 PIC 9(05) VALUE ZEROES.               
+           05  WS-CNT-PAGE                PIC 9(05) VALUE ZEROES.               
+                                                                                
+       01  L078-HEADER1.                                                        
+           05  FILLER                     PIC X(08) VALUE 'BP13L078'.           
+           05  FILLER                     PIC X(10) VALUE '      HDB3'.         
+           05  FILLER                     PIC X(27) VALUE SPACES.               
+           05  FILLER                     PIC X(39) VALUE                       
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER                     PIC X(14) VALUE SPACES.               
+           05  FILLER                     PIC X(07) VALUE 'DATE : '.            
+           05  L078-DTE-CURRENT           PIC X(10) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE SPACES.               
+           05  FILLER                     PIC X(07) VALUE 'PAGE : '.            
+           05  L078-PAGE                  PIC ZZZZ9.                            
+                                                                                
+       01  L078-HEADER2.                                                        
+           05  FILLER                     PIC X(48) VALUE SPACES.               
+           05  FILLER                     PIC X(26) VALUE                       
+                         'UPDATE HH, 5YR CHECK FOR  '.                          
+           05  L078-SYSTEM                PIC X(06) VALUE 'MAMS '.              
+           05  FILLER                     PIC X(42) VALUE SPACES.               
+                                                                                
+       01  L078-CAPTION.                                                        
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(05) VALUE 'S/NO'.               
+           05  FILLER                     PIC X(04) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE 'REGN'.               
+           05  FILLER                     PIC X(06) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE 'NRIC'.               
+           05  FILLER                     PIC X(08) VALUE SPACES.               
+           05  FILLER                     PIC X(07) VALUE 'HDB-REF'.            
+           05  FILLER                     PIC X(05) VALUE SPACES.               
+           05  FILLER                     PIC X(05) VALUE 'BF-HH'.              
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(05) VALUE 'AF-HH'.              
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(11) VALUE 'NRIC-MTH   '.        
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(11) VALUE 'OVERALL-BF '.        
+           05  FILLER                     PIC X(01) VALUE SPACES.               
+           05  FILLER                     PIC X(11) VALUE 'OVERALL-AF '.        
+           05  FILLER                     PIC X(01) VALUE SPACES.               
+           05  FILLER                     PIC X(07) VALUE 'BF-5YR '.            
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(07) VALUE 'AF-5YR '.            
+           05  FILLER                     PIC X(01) VALUE SPACES.               
+           05  FILLER                     PIC X(03) VALUE 'FT'.                 
+                                                                                
+       01  L078-DETAILS.                                                        
+           05  L078-CNT-SNO               PIC ZZZZ9 VALUE ZEROES.               
+           05  FILLER                     PIC X(04) VALUE SPACES.               
+           05  L078-REGN                  PIC X(08) VALUE SPACES.               
+           05  FILLER                     PIC X(02) VALUE SPACES.               
+           05  L078-NRIC                  PIC X(09) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE SPACES.               
+           05  L078-HDB-REF               PIC X(11) VALUE SPACES.               
+           05  FILLER                     PIC X(04) VALUE SPACES.               
+           05  L078-BF-HH                 PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(05) VALUE SPACES.               
+           05  L078-AF-HH                 PIC X(02) VALUE SPACES.               
+           05  FILLER                     PIC X(07) VALUE SPACES.               
+           05  L078-NRIC-MTH              PIC ZZ9   VALUE ZEROES.               
+           05  FILLER                     PIC X(09) VALUE SPACES.               
+           05  L078-BF-MTH                PIC X(3)  VALUE SPACES.               
+           05  FILLER                     PIC X(09) VALUE SPACES.               
+           05  L078-AF-MTH                PIC X(3)  VALUE SPACES.               
+           05  FILLER                     PIC X(08) VALUE SPACES.               
+           05  L078-BF-5YR                PIC X     VALUE SPACES.               
+           05  FILLER                     PIC X(08) VALUE SPACES.               
+           05  L078-AF-5YR                PIC X     VALUE SPACES.               
+           05  FILLER                     PIC X(06) VALUE SPACES.               
+           05  L078-FT                    PIC X(2)  VALUE SPACES.               
+                                                                                
+      ****************************************************************          
+       PROCEDURE DIVISION.                                                      
+      ****************************************************************          
+                                                                                
+      *==============================================================*          
+       0000-MAIN.                                                               
+      *==============================================================*          
+                                                                                
+           PERFORM 1000-OPEN-FILES        THRU 1000-EXIT.                       
+           PERFORM 2500-READ-BP13F520     THRU 2500-EXIT.                       
+           PERFORM 2550-READ-BP13F558     THRU 2550-EXIT.                       
+                                                                                
+           PERFORM 6010-PRINT-HEADER      THRU 6010-EXIT.                       
+           MOVE 5                         TO WS-CNT-LINE.                       
+           PERFORM 2000-MAIN-ROUTINE      THRU 2000-EXIT                        
+                UNTIL F520-NUM-REGN = HIGH-VALUES AND                           
+                      F558-NUM-REGN = HIGH-VALUES.                              
+           PERFORM 9000-CLOSE-FILES       THRU 9000-EXIT.                       
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       1000-OPEN-FILES.                                                         
+      *==============================================================*          
+                                                                                
+           OPEN INPUT  BP13F558                                                 
+                       BP13F520                                                 
+               OUTPUT  P13F520A                                                 
+                       BP13L078.                                                
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8) TO WS-CUR-DATE.                      
+                                                                                
+           MOVE WS-CCYY     TO WS-EDT-CCYY.                                     
+           MOVE WS-MM       TO WS-EDT-MM.                                       
+           MOVE WS-DD       TO WS-EDT-DD.                                       
+                                                                                
+           MOVE WS-EDT-DATE TO L078-DTE-CURRENT.                                
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       2000-MAIN-ROUTINE.                                                       
+                                                                                
+      *--------------------------------------------------------------*          
+      * MATCH BY REGN; DETERMINE MTH,5YR FOR MATCHED RECORDS.        *          
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE ZEROS  TO WS-F520-MTH.                                          
+           MOVE SPACES TO WS-F520-HH.                                           
+           MOVE SPACES TO WS-F520-YR5.                                          
+           MOVE SPACES TO WS-UPDATE-YR5, WS-UPDATE-HH, WS-UPDATE-MTH.           
+           MOVE ZEROS  TO WS-F558-MTH.                                          
+                                                                                
+           IF F520-NUM-REGN = F558-NUM-REGN                                     
+              ADD 1 TO WS-CNT-MATCHED                                           
+                                                                                
+              PERFORM 4000-GET-SMALLEST-MTH  THRU 4000-EXIT                     
+                       UNTIL F558-NUM-REGN NOT = F520-NUM-REGN                  
+                                                                                
+              PERFORM 4100-PROCESS-UPDATE    THRU 4100-EXIT                     
+           ELSE                                                                 
+              IF F520-NUM-REGN < F558-NUM-REGN                                  
+                 WRITE P13F520A-REC FROM BP13F520-REC                           
+                 ADD 1 TO P13F520A-WRITE                                        
+                 PERFORM 2500-READ-BP13F520  THRU 2500-EXIT                     
+              ELSE                                                              
+                 PERFORM 2550-READ-BP13F558  THRU 2550-EXIT                     
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       2500-READ-BP13F520.                                                      
+      *==============================================================*          
+                                                                                
+           READ BP13F520 AT END                                                 
+                MOVE HIGH-VALUES TO F520-NUM-REGN                               
+                GO TO 2500-EXIT.                                                
+                                                                                
+           ADD  1 TO BP13F520-READ.                                             
+                                                                                
+       2500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       2550-READ-BP13F558.                                                      
+      *==============================================================*          
+                                                                                
+           READ BP13F558 AT END                                                 
+                MOVE HIGH-VALUES TO F558-NUM-REGN                               
+                GO TO 2550-EXIT.                                                
+                                                                                
+           ADD 1 TO BP13F558-READ.                                              
+                                                                                
+       2550-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       4000-GET-SMALLEST-MTH.                                                   
+      *==============================================================*          
+      *--------------------------------------------------------------*          
+      * GET SMALLEST MTH-RESIDE RECORD FROM MULTIPLE BP13F558 RECORDS*          
+      *--------------------------------------------------------------*          
+                                                                                
+           MOVE SPACES TO WS-F558-SALES-TYPE WS-F558-FT.                        
+                                                                                
+           IF F558-NUM-MTH-RESIDE IS NOT NUMERIC                                
+              MOVE ZEROES               TO F558-NUM-MTH-RESIDE                  
+           END-IF.                                                              
+                                                                                
+           IF F558-NUM-REGN  = F520-NUM-REGN                                    
+             IF F558-NUM-MTH-RESIDE > ZEROS                                     
+               IF F558-NUM-MTH-RESIDE < WS-F558-MTH OR                          
+                  WS-F558-MTH = ZEROS                                           
+                 MOVE F558-CDE-HOUSEHOLD   TO WS-F558-HH                        
+                 MOVE F558-NUM-NRIC        TO WS-F558-NRIC                      
+                 MOVE F558-NUM-MTH-RESIDE  TO WS-F558-MTH                       
+                 MOVE F558-NUM-HDB-REF-MAM TO WS-F558-HDB-REF-MAM               
+                 MOVE F558-CDE-FLAT-TYPE-MAM TO WS-F558-FT                      
+                 MOVE F558-NUM-SALES-TYPE-MAM TO WS-F558-SALES-TYPE             
+                 MOVE F558-NUM-ALLO-SCH-MAM   TO WS-F558-ALLOC-SCH              
+                 IF (F558-CDE-FLAT-TYPE-MAM = '01' OR '02')                     
+                    MOVE 'Y'    TO F558-NUM-TWO-ROOMER                          
+                 END-IF                                                         
+               END-IF                                                           
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+           PERFORM 2550-READ-BP13F558        THRU 2550-EXIT.                    
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       4100-PROCESS-UPDATE.                                                     
+      *==============================================================*          
+                                                                                
+           IF F520-NUM-MTH-RESIDE IS  NOT NUMERIC                               
+              MOVE ZEROS TO F520-NUM-MTH-RESIDE                                 
+           END-IF.                                                              
+                                                                                
+      *@   **UPDATE HOUSEHOLD.                                                  
+                                                                                
+           IF WS-F558-MTH >= 060                                                
+              IF F520-CDE-HOUSEHOLD = 'G'                                       
+                 CONTINUE                                                       
+              ELSE                                                              
+                 IF (WS-F558-FT = '01' OR '02')                                 
+                    IF (WS-F558-SALES-TYPE = '7 ' OR '7J' OR '8A' OR            
+                                             '7C' OR '8B' OR '8E' OR            
+                                             '8L' OR '8M' OR '8N' OR            
+                                             '8R' OR '8S' OR '8T' ) OR          
+                       (WS-F558-ALLOC-SCH = 'OM ' OR 'PPO' OR 'AOM' OR          
+                                            'ROM' OR 'PPR' OR 'SPR')            
+                       MOVE 'H' TO WS-F520-HH                                   
+                       MOVE 'Y' TO WS-UPDATE-HH                                 
+                    ELSE                                                        
+                       IF (WS-F558-ALLOC-SCH = 'STD' OR 'RP ') OR               
+                          (WS-F558-HDB-REF-MAM >= '85750245901' AND             
+                                               <= '85750375015')                
+                          MOVE 'G' TO WS-F520-HH                                
+                          MOVE 'Y' TO WS-UPDATE-HH                              
+                       ELSE                                                     
+                          MOVE 'H' TO WS-F520-HH                                
+                          MOVE 'Y' TO WS-UPDATE-HH                              
+                       END-IF                                                   
+                    END-IF                                                      
+                 ELSE                                                           
+                    MOVE 'G' TO WS-F520-HH                                      
+                    MOVE 'Y' TO WS-UPDATE-HH                                    
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-F558-MTH > ZEROS                                               
+             IF WS-F558-MTH < F520-NUM-MTH-RESIDE OR                            
+                F520-NUM-MTH-RESIDE = ZEROS                                     
+                MOVE WS-F558-MTH         TO WS-F520-MTH                         
+                MOVE 'Y'                 TO WS-UPDATE-MTH                       
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+      *@   **UPDATE 5-YEAR OCCUPATION.                                          
+                                                                                
+           IF F520-NUM-5YR-OCCUPN = 'Y'                                         
+              IF WS-F520-MTH > 000 AND < 060                                    
+                 MOVE 'N'                 TO WS-F520-YR5                        
+                 MOVE 'Y'                 TO WS-UPDATE-YR5                      
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-UPDATE-HH  = 'Y' OR                                            
+              WS-UPDATE-MTH = 'Y' OR                                            
+              WS-UPDATE-YR5 = 'Y'                                               
+              PERFORM 6000-PRINT-BP13L078    THRU 6000-EXIT                     
+           END-IF.                                                              
+                                                                                
+           PERFORM 4200-WRITE-BP13F520    THRU 4200-EXIT.                       
+           PERFORM 2500-READ-BP13F520     THRU 2500-EXIT.                       
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       4200-WRITE-BP13F520.                                                     
+      *==============================================================*          
+      *--------------------------------------------------------------*          
+      * UPDATE MTH-RESIDE, HH, 5YR FROM SMALLEST MTH-RSD F558-REC.   *          
+      *--------------------------------------------------------------*          
+                                                                                
+           IF WS-UPDATE-HH  = 'Y'                                               
+              MOVE WS-F520-HH             TO F520-CDE-HOUSEHOLD                 
+           END-IF.                                                              
+                                                                                
+           IF WS-UPDATE-MTH = 'Y'                                               
+                MOVE WS-F520-MTH          TO F520-NUM-MTH-RESIDE                
+           END-IF.                                                              
+                                                                                
+           IF WS-UPDATE-YR5 = 'Y'                                               
+                MOVE WS-F520-YR5        TO F520-NUM-5YR-OCCUPN                  
+           END-IF.                                                              
+                                                                                
+           MOVE WS-TWO-ROOMER           TO F520-NUM-TWO-ROOMER.                 
+                                                                                
+           WRITE P13F520A-REC FROM BP13F520-REC.                                
+           ADD 1 TO P13F520A-WRITE.                                             
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       6000-PRINT-BP13L078.                                                     
+      *==============================================================*          
+      *--------------------------------------------------------------*          
+      * PRINT THE BEFORE AND AFTER IMAGES OF UPDATED INFO IN REPORT  *          
+      *--------------------------------------------------------------*          
+           IF WS-CNT-LINE > 56                                                  
+             PERFORM 6010-PRINT-HEADER        THRU 6010-EXIT.                   
+                                                                                
+           INITIALIZE L078-DETAILS.                                             
+                                                                                
+           ADD 1 TO WS-CNT-SNO.                                                 
+           MOVE WS-CNT-SNO                  TO L078-CNT-SNO.                    
+           MOVE F520-NUM-REGN               TO L078-REGN.                       
+           MOVE WS-F558-NRIC                TO L078-NRIC.                       
+                                                                                
+           MOVE WS-F558-HDB-REF-MAM      TO L078-HDB-REF                        
+                                                                                
+           MOVE WS-F558-MTH               TO L078-NRIC-MTH.                     
+           MOVE F520-CDE-HOUSEHOLD        TO L078-BF-HH.                        
+           MOVE F520-NUM-MTH-RESIDE       TO L078-BF-MTH.                       
+           MOVE F520-NUM-5YR-OCCUPN       TO L078-BF-5YR.                       
+                                                                                
+           IF WS-UPDATE-HH  = 'Y'                                               
+              MOVE WS-F520-HH             TO L078-AF-HH                         
+           END-IF.                                                              
+           IF WS-UPDATE-MTH = 'Y'                                               
+              MOVE WS-F520-MTH            TO L078-AF-MTH                        
+           END-IF.                                                              
+           IF WS-UPDATE-YR5 = 'Y'                                               
+              MOVE WS-F520-YR5            TO L078-AF-5YR                        
+           END-IF.                                                              
+           MOVE WS-F558-FT                TO L078-FT.                           
+                                                                                
+           WRITE BP13L078-REC FROM L078-DETAILS.                                
+           ADD 1 TO WS-CNT-LINE.                                                
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       6010-PRINT-HEADER.                                                       
+      *==============================================================*          
+      **@  **PRINT HEADER AND CAPTION.                                          
+           ADD 1 TO WS-CNT-PAGE.                                                
+           MOVE WS-CNT-PAGE    TO L078-PAGE.                                    
+           WRITE BP13L078-REC  FROM L078-HEADER1 AFTER PAGE.                    
+           WRITE BP13L078-REC  FROM L078-HEADER2.                               
+           MOVE SPACES         TO BP13L078-REC.                                 
+           WRITE BP13L078-REC.                                                  
+           WRITE BP13L078-REC  FROM L078-CAPTION.                               
+           MOVE SPACES         TO BP13L078-REC.                                 
+           WRITE BP13L078-REC.                                                  
+           MOVE 5              TO WS-CNT-LINE.                                  
+                                                                                
+       6010-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==============================================================*          
+       9000-CLOSE-FILES.                                                        
+      *==============================================================*          
+                                                                                
+           DISPLAY '================================================='          
+           DISPLAY ' PROGRAM-ID : BP13C078         DATE : ' WS-EDT-DATE.        
+           DISPLAY '================================================='          
+           DISPLAY ' '.                                                         
+           MOVE BP13F520-READ   TO WS-EDT-VAR.                                  
+           DISPLAY 'NO OF RECORDS READ FROM BP13F520 : ' WS-EDT-VAR.            
+           MOVE BP13F558-READ   TO WS-EDT-VAR.                                  
+           DISPLAY 'NO OF RECORDS READ FROM BP13F558 : ' WS-EDT-VAR.            
+           MOVE WS-CNT-MATCHED  TO WS-EDT-VAR.                                  
+           DISPLAY 'NO OF RECORDS MATCHED            : ' WS-EDT-VAR.            
+           MOVE P13F520A-WRITE  TO WS-EDT-VAR.                                  
+           DISPLAY 'NO OF RECORDS WRITE  IN P13F520A : ' WS-EDT-VAR.            
+           DISPLAY '================================================='          
+                                                                                
+           CLOSE BP13F558                                                       
+                 BP13F520                                                       
+                 P13F520A                                                       
+                 BP13L078.                                                      
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+

@@ -1,0 +1,994 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C11G.                                                 
+      *AUTHOR.        KSJ3                                                      
+      *DATE-WRITTEN.  27/08/2015.                                               
+      * ========================================================== *            
+      *  SYSTEM OF COMMITMENT (BP13)                               *            
+      * ========================================================== *            
+      *  OBJECTIVE :                                               *            
+      *    1. TO PROCESS COLLECTION FOR RESALE LEVY.               *            
+      *    2. VALID RECORDS ARE WRITTEN TO BP13F120 AND INVALID    *            
+      *       RECORDS ARE WRITTEN TO BP13F140.                     *            
+      *                                                            *            
+      *  INPUT   :  BB24F590 - BB24 LEVY COLLECTION FILE           *            
+      *             BP13F162 - SOC LEVY TAG FILE                   *            
+      *             BB24K500 - RESALE HISTORY FILE                 *            
+      *                                                            *            
+      *  I-O     :  BP13K162 - SOC LEVY TAG FILE                   *            
+      *             BP13KH80 - SOC LEVY PAYT STATUS FILE           *            
+      *                                                            *            
+      *  OUTPUT  :  BP13F120 - VALID CASES FOR UPDATE              *            
+      *             BP13F140 - INVALID CASES FOR KIV               *            
+      *                                                            *            
+      *  LISTING :  P13L11GA - ERROR LIST                          *            
+      *             P13L11GB - ERROR LIST                          *            
+      *                                                            *            
+      * ========================================================== *            
+      * CHG-NO    BY    DATE    DESCRIPTION                        *            
+      * BP136058  KSJ3  270815  NEW PROGRAM                        *            
+      * BP135858  KSJ3  170216  CHANGE BP13L11G TO P13L11GB        *            
+      *                         ADD NEW RPT P13L11GA               *            
+      * BP138339  KR13  260620  TO RMVE AFTER PAGE IN REPORT       *            
+      * ========================================================== *            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BB24F590 ASSIGN       TO BB24F590.                            
+                                                                                
+           SELECT BP13F162 ASSIGN       TO BP13F162.                            
+                                                                                
+           SELECT BB24K500 ASSIGN       TO BB24K500                             
+                           ACCESS MODE  IS DYNAMIC                              
+                           ORGANIZATION IS INDEXED                              
+                           RECORD KEY   IS K500-KEY-FLD                         
+                           FILE STATUS  IS WS-K500-STATUS.                      
+                                                                                
+           SELECT BP13K162 ASSIGN       TO BP13K162                             
+                           ACCESS MODE  IS DYNAMIC                              
+                           ORGANIZATION IS INDEXED                              
+                           RECORD KEY   IS K162-KEY-FLD                         
+                           FILE STATUS  IS WS-K162-STATUS.                      
+                                                                                
+           SELECT BP13KH80 ASSIGN       TO BP13KH80                             
+                           ACCESS MODE  IS DYNAMIC                              
+                           ORGANIZATION IS INDEXED                              
+                           RECORD KEY   IS KH80-KEY-FLD                         
+                           FILE STATUS  IS WS-KH80-STATUS.                      
+                                                                                
+           SELECT BP13F120 ASSIGN       TO BP13F120.                            
+                                                                                
+           SELECT BP13F140 ASSIGN       TO BP13F140.                            
+                                                                                
+           SELECT P13L11GA ASSIGN       TO P13L11GA.                            
+           SELECT P13L11GB ASSIGN       TO P13L11GB.                            
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD  BB24F590                                                             
+           RECORD CONTAINS 350 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+           COPY BB24F590.                                                       
+                                                                                
+       FD  BP13F162                                                             
+           RECORD CONTAINS 600 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+           COPY BP13F162.                                                       
+                                                                                
+       FD  BB24K500                                                             
+           RECORD CONTAINS 1700 CHARACTERS.                                     
+           COPY BB24K500.                                                       
+                                                                                
+       FD  BP13K162                                                             
+           RECORD CONTAINS 600 CHARACTERS.                                      
+           COPY BP13K162.                                                       
+                                                                                
+       FD  BP13KH80                                                             
+           RECORD CONTAINS 300 CHARACTERS.                                      
+           COPY BP13KH80.                                                       
+                                                                                
+       FD  BP13F120                                                             
+           RECORD CONTAINS 150 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+           COPY BP13F120.                                                       
+                                                                                
+       FD  BP13F140                                                             
+           RECORD CONTAINS 150 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+           COPY BP13F140.                                                       
+                                                                                
+       FD  P13L11GA                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+       01  P13L11GA-REC                  PIC X(132).                            
+                                                                                
+       FD  P13L11GB                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+       01  P13L11GB-REC                  PIC X(132).                            
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-FILE-STATUS.                                                      
+           05  WS-K500-STATUS            PIC X(2)    VALUE SPACES.              
+           05  WS-K162-STATUS            PIC X(2)    VALUE SPACES.              
+           05  WS-KH80-STATUS            PIC X(2)    VALUE SPACES.              
+                                                                                
+       01  WS-COUNT.                                                            
+           05  WS-CNT-F590-READ          PIC 9(5)    VALUE ZEROS.               
+           05  WS-CNT-F162-READ          PIC 9(5)    VALUE ZEROS.               
+           05  WS-CNT-K500-READ          PIC 9(5)    VALUE ZEROS.               
+           05  WS-CNT-K162-UPD           PIC 9(5)    VALUE ZEROS.               
+           05  WS-CNT-KH80-WRITE         PIC 9(5)    VALUE ZEROS.               
+           05  WS-CNT-F120-WRITE         PIC 9(5)    VALUE ZEROS.               
+           05  WS-CNT-F140-WRITE         PIC 9(5)    VALUE ZEROS.               
+           05  WS-LINE-CNT-A             PIC 99      VALUE 66.                  
+           05  WS-LINE-CNT-B             PIC 99      VALUE 66.                  
+           05  WS-PAGE-CNT-A             PIC 9(5)    VALUE ZERO.                
+           05  WS-PAGE-CNT-B             PIC 9(5)    VALUE ZERO.                
+           05  WS-CNT-KIV-CASES          PIC 9(4)    VALUE ZERO.                
+           05  WS-CNT-HIST               PIC 9(2)    VALUE ZERO.                
+                                                                                
+       01  WS-FLAGS.                                                            
+           05  WS-F590-EOF               PIC X       VALUE 'N'.                 
+           05  WS-F162-EOF               PIC X       VALUE 'N'.                 
+           05  WS-F162-FND               PIC X       VALUE 'N'.                 
+           05  WS-K500-EOF               PIC X       VALUE 'N'.                 
+           05  WS-K500-FND               PIC X       VALUE 'N'.                 
+           05  WS-KH80-FND               PIC X       VALUE 'N'.                 
+           05  WS-CDE-ERROR              PIC X       VALUE SPACES.              
+           05  WS-SKIP-REC               PIC X       VALUE 'N'.                 
+                                                                                
+       01  WS-OTHERS.                                                           
+           05  WS-AMT-KIV-TOTAL          PIC 9(9)V99 VALUE ZEROES.              
+           05  WS-DTE-APPROVAL           PIC X(8)    VALUE ZEROES.              
+           05  WS-NUM-SELLER-INFO.                                              
+               10  FILLER OCCURS 4 TIMES.                                       
+                   15  WS-NUM-SEL        PIC X(01)   VALUE SPACES.              
+                   15  WS-NUM-NRIC       PIC X(09)   VALUE SPACES.              
+                   15  WS-NUM-OLD-RSL-STAT                                      
+                                         PIC X(03)   VALUE SPACES.              
+                   15  WS-NUM-NEW-RSL-STAT                                      
+                                         PIC X(03)   VALUE SPACES.              
+           05  WS-IDX                    PIC 9(01)   VALUE ZEROES.              
+                                                                                
+       01  WS-DATES.                                                            
+           05  WS-TRANS-DATE.                                                   
+               10  WS-TRANS-YYYY         PIC 9(4).                              
+               10  WS-TRANS-MM           PIC 9(2).                              
+               10  WS-TRANS-DD           PIC 9(2).                              
+           05  WS-DTE-CUR.                                                      
+               10  WS-CC                 PIC 99.                                
+               10  WS-YY                 PIC 99.                                
+               10  WS-MM                 PIC 99.                                
+               10  WS-DD                 PIC 99.                                
+                                                                                
+      *-------------------------------------------------------------            
+      *    SUCCESSFUL RECORDS REPORT DETAILS                                    
+      *-------------------------------------------------------------            
+       01  L11GA-HEAD-01.                                                       
+           05  FILLER                    PIC X(9)    VALUE 'BP13L11GA'.         
+           05  FILLER                    PIC X(3)    VALUE SPACES.              
+           05  FILLER                    PIC X(8)    VALUE 'HDBCAT 3'.          
+           05  FILLER                    PIC X(24)   VALUE SPACES.              
+           05  FILLER                    PIC X(20)   VALUE                      
+                                    'S Y S T E M   O F   '.                     
+           05  FILLER                    PIC X(19)   VALUE                      
+                                    'C O M M I T M E N T'.                      
+           05  FILLER                    PIC X(15)   VALUE SPACES.              
+           05  FILLER                    PIC X(7)    VALUE 'DATE :'.            
+           05  L11GA-DATE                PIC X(10)   VALUE SPACES.              
+           05  FILLER                    PIC X(4)    VALUE SPACES.              
+           05  FILLER                    PIC X(7)    VALUE 'PAGE : '.           
+           05  L11GA-PAGENO              PIC ZZZZ9.                             
+                                                                                
+       01  L11GA-HEAD-02.                                                       
+           05  FILLER                    PIC X(46)   VALUE SPACES .             
+           05  FILLER                    PIC X(40)   VALUE                      
+               'COLLECTED RESALE LEVY FOR STATUS UPDATE'.                       
+                                                                                
+       01  L11GA-HEAD-03.                                                       
+           05  FILLER                    PIC X(132)  VALUE                      
+              '  S/NO    SCH-ACCNT NO    REGN NO     AMOUNT       RECEIP        
+      -       'T NO    DATE POST     PAY TYPE    RECEIPT NO'.                   
+                                                                                
+       01  L11GA-DETAILS.                                                       
+           05  L11GA-SNO                 PIC ZZZZZ9 .                           
+           05  FILLER                    PIC X(04)   VALUE SPACES.              
+           05  L11GA-NUM-SCHACCNT        PIC X(11).                             
+           05  FILLER                    PIC X(05)   VALUE SPACES.              
+           05  L11GA-ORIG-REG-NO         PIC X(08).                             
+           05  FILLER                    PIC X(04)   VALUE SPACES.              
+           05  L11GA-AMT                 PIC $$$$$$9.99DB.                      
+           05  FILLER                    PIC X(01)   VALUE SPACES.              
+           05  L11GA-NUM-RECEIPT         PIC X(05).                             
+           05  FILLER                    PIC X(09)   VALUE SPACES.              
+           05  L11GA-DTE-POST.                                                  
+               10  L11GA-POST-DD         PIC X(2)    VALUE SPACES.              
+               10  L11GA-POST-FIL1       PIC X       VALUE '/'.                 
+               10  L11GA-POST-MM         PIC X(2)    VALUE SPACES.              
+               10  L11GA-POST-FIL2       PIC X       VALUE '/'.                 
+               10  L11GA-POST-YYYY       PIC X(4)    VALUE SPACES.              
+           05  FILLER                    PIC X(04)   VALUE SPACES .             
+           05  L11GA-PAYMENT-TYPE        PIC X(03).                             
+           05  FILLER                    PIC X(09)   VALUE SPACES .             
+           05  L11GA-REMARK              PIC X(35).                             
+                                                                                
+      *-------------------------------------------------------------            
+      *    ERROR REPORT DETAILS                                                 
+      *-------------------------------------------------------------            
+       01  L11GB-HEAD-01.                                                       
+           05  FILLER                    PIC X(9)    VALUE 'BP13L11GB'.         
+           05  FILLER                    PIC X(3)    VALUE SPACES.              
+           05  FILLER                    PIC X(8)    VALUE 'HDBCAT 3'.          
+           05  FILLER                    PIC X(24)   VALUE SPACES.              
+           05  FILLER                    PIC X(20)   VALUE                      
+                                    'S Y S T E M   O F   '.                     
+           05  FILLER                    PIC X(19)   VALUE                      
+                                    'C O M M I T M E N T'.                      
+           05  FILLER                    PIC X(15)   VALUE SPACES.              
+           05  FILLER                    PIC X(7)    VALUE 'DATE :'.            
+           05  L11GB-DATE                PIC X(10)   VALUE SPACES.              
+           05  FILLER                    PIC X(4)    VALUE SPACES.              
+           05  FILLER                    PIC X(7)    VALUE 'PAGE : '.           
+           05  L11GB-PAGENO              PIC ZZZZ9.                             
+                                                                                
+       01  L11GB-HEAD-02.                                                       
+           05  FILLER                    PIC X(39)   VALUE SPACES .             
+           05  FILLER                    PIC X(51)   VALUE                      
+               ' ERROR LIST OF TRANSACTIONS IN THE RESALE LEVY COLL'.           
+           05  FILLER                    PIC X(40)   VALUE                      
+               'ECTION FILE'.                                                   
+                                                                                
+       01  L11GB-HEAD-03.                                                       
+           05  FILLER                    PIC X(132)  VALUE                      
+              '  S/NO    SCH-ACCNT NO    REGN NO     AMOUNT       RECEIP        
+      -       'T NO    DATE POST     PAY TYPE    REMARK                         
+      -       '             H-CNT'.                                             
+                                                                                
+       01  L11GB-DETAILS.                                                       
+           05  L11GB-SNO                 PIC ZZZZZ9 .                           
+           05  FILLER                    PIC X(04)   VALUE SPACES.              
+           05  L11GB-NUM-SCHACCNT        PIC X(11).                             
+           05  FILLER                    PIC X(05)   VALUE SPACES.              
+           05  L11GB-ORIG-REG-NO         PIC X(08).                             
+           05  FILLER                    PIC X(04)   VALUE SPACES.              
+           05  L11GB-AMT                 PIC $$$$$$9.99DB.                      
+           05  FILLER                    PIC X(01)   VALUE SPACES.              
+           05  L11GB-NUM-RECEIPT         PIC X(05).                             
+           05  FILLER                    PIC X(09)   VALUE SPACES.              
+           05  L11GB-DTE-POST.                                                  
+               10  L11GB-POST-DD         PIC X(2)    VALUE SPACES.              
+               10  L11GB-POST-FIL1       PIC X       VALUE '/'.                 
+               10  L11GB-POST-MM         PIC X(2)    VALUE SPACES.              
+               10  L11GB-POST-FIL2       PIC X       VALUE '/'.                 
+               10  L11GB-POST-YYYY       PIC X(4)    VALUE SPACES.              
+           05  FILLER                    PIC X(04)   VALUE SPACES .             
+           05  L11GB-PAYMENT-TYPE        PIC X(03).                             
+           05  FILLER                    PIC X(09)   VALUE SPACES .             
+           05  L11GB-REMARK              PIC X(35).                             
+           05  FILLER                    PIC X(3)    VALUE SPACES.              
+           05  L11GB-CDE-HIST            PIC X(1)    VALUE SPACES.              
+           05  L11GB-CNT-HIST            PIC X(2)    VALUE SPACES.              
+                                                                                
+       01  L11GB-CONTROL-LINE.                                                  
+           05  FILLER                    PIC X(19)   VALUE SPACES.              
+           05  L11GB-CNTL-ITEM           PIC X(30)   VALUE SPACES.              
+           05  L11GB-CNTL-CNT            PIC ZZZZ9.                             
+           05  FILLER                    PIC X(58)   VALUE SPACES.              
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-CONTROL.                                                            
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM 1000-OPEN-ROUTINE       THRU 1000-EXIT.                      
+           PERFORM 2000-READ-BB24F590      THRU 2000-EXIT.                      
+           PERFORM 2100-READ-BP13F162      THRU 2100-EXIT.                      
+           PERFORM 3000-MAIN-PROCESS       THRU 3000-EXIT                       
+                   UNTIL WS-F590-EOF = 'Y'                                      
+                   OR    WS-F162-EOF = 'Y'.                                     
+           PERFORM 6000-PROC-F590-EOF      THRU 6000-EXIT.                      
+           PERFORM 9000-CLOSE-ROUTINE      THRU 9000-EXIT.                      
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       1000-OPEN-ROUTINE.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           OPEN INPUT  BB24F590                                                 
+                       BP13F162                                                 
+                       BB24K500                                                 
+                I-O    BP13K162                                                 
+                       BP13KH80                                                 
+                OUTPUT BP13F120                                                 
+                       BP13F140                                                 
+                       P13L11GA                                                 
+                       P13L11GB.                                                
+                                                                                
+           IF WS-K500-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'OPENING BB24K500 ERROR ' WS-K500-STATUS                  
+              MOVE     WS-K500-STATUS      TO   RETURN-CODE                     
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF WS-K162-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'OPENING BP13K162 ERROR ' WS-K162-STATUS                  
+              MOVE     WS-K162-STATUS      TO   RETURN-CODE                     
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF WS-KH80-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'OPENING BP13KH80 ERROR ' WS-KH80-STATUS                  
+              MOVE     WS-KH80-STATUS      TO   RETURN-CODE                     
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE      TO   WS-DTE-CUR.                     
+           STRING WS-DD '/' WS-MM '/' WS-CC WS-YY                               
+                  DELIMITED BY SIZE        INTO L11GB-DATE.                     
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2000-READ-BB24F590.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BB24F590                                                        
+               AT END MOVE HIGH-VALUE      TO   BB24F590-REC                    
+               MOVE 'Y'                    TO   WS-F590-EOF                     
+               GO TO 2000-EXIT.                                                 
+                                                                                
+           ADD 1                           TO   WS-CNT-F590-READ.               
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2100-READ-BP13F162.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13F162                                                        
+               AT END MOVE HIGH-VALUE      TO   BP13F162-REC                    
+               MOVE 'Y'                    TO   WS-F162-EOF                     
+               GO TO 2100-EXIT.                                                 
+                                                                                
+           ADD 1                           TO   WS-CNT-F162-READ.               
+                                                                                
+       2100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3000-MAIN-PROCESS.                                                       
+      *-------------------------------------------------------------            
+      *  MATCH RECORDS WITH THE SAME SCH-ACCT-NO. PROCESSING OF                 
+      *  MATCHED RECORDS AND PRINTING & WRITING OF ERROR RECORDS.               
+      *                                                                         
+      *  AFTER A MATCH, NEED TO READ NEXT COLLN RECORD. READ NEXT F162          
+      *  RECORD ONLY IF COLLN RECORD KEY > F162 RECORD KEY. THIS IS TO          
+      *  ALLOW FOR MORE THAN 1 COLLN RECORD TO BE POSTED FOR 1 F162             
+      *  RECORD.                                                                
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE 'N'                        TO   WS-SKIP-REC.                    
+                                                                                
+           IF F590-NUM-HDB-REF = F162-NUM-EXIST-HDBREF AND                      
+              F590-NUM-UIN     = F162-NUM-NRIC                                  
+              MOVE 'Y'                     TO   WS-F162-FND                     
+                                                                                
+              IF F590-CDE-RCPT NOT = '0518C'                                    
+                 PERFORM 3100-CHECK-LEVY-STAT   THRU 3100-EXIT                  
+              END-IF                                                            
+                                                                                
+              PERFORM 3200-CHECK-RSL-HIST  THRU 3200-EXIT                       
+                                                                                
+              IF WS-SKIP-REC NOT = 'Y'                                          
+                 PERFORM 4000-PROC-MATCH   THRU 4000-EXIT                       
+              ELSE                                                              
+                 PERFORM 5000-PROC-ERROR   THRU 5000-EXIT                       
+              END-IF                                                            
+                                                                                
+              PERFORM 2000-READ-BB24F590   THRU 2000-EXIT                       
+           ELSE                                                                 
+              IF (F590-NUM-HDB-REF < F162-NUM-EXIST-HDBREF) OR                  
+                 (F590-NUM-HDB-REF = F162-NUM-EXIST-HDBREF  AND                 
+                  F590-NUM-UIN     < F162-NUM-NRIC)                             
+      *          MOVE 'N'                  TO   WS-F162-FND                     
+      *          PERFORM 5000-PROC-ERROR   THRU 5000-EXIT                       
+                 PERFORM 2000-READ-BB24F590     THRU 2000-EXIT                  
+              ELSE                                                              
+                 PERFORM 2100-READ-BP13F162     THRU 2100-EXIT                  
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3100-CHECK-LEVY-STAT.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES                     TO   BP13KH80-REC.                   
+           MOVE F162-NUM-REGNO             TO   KH80-NUM-REGN.                  
+           MOVE F162-NUM-NRIC              TO   KH80-NUM-NRIC.                  
+                                                                                
+           PERFORM 3110-READ-BP13KH80      THRU 3110-EXIT.                      
+                                                                                
+           IF WS-KH80-FND = 'Y'                                                 
+              MOVE 'Y'                     TO   WS-SKIP-REC                     
+           END-IF.                                                              
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3110-READ-BP13KH80.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13KH80.                                                       
+                                                                                
+           EVALUATE WS-KH80-STATUS                                              
+           WHEN 00                                                              
+              MOVE 'Y'                     TO   WS-KH80-FND                     
+                                                                                
+           WHEN 10                                                              
+           WHEN 23                                                              
+              MOVE 'N'                     TO   WS-KH80-FND                     
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'READ BP13KH80 ERROR '    WS-KH80-STATUS                  
+              MOVE    WS-KH80-STATUS       TO   RETURN-CODE                     
+              PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       3110-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3200-CHECK-RSL-HIST.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE 'N'                        TO   WS-K500-EOF                     
+                                                WS-K500-FND.                    
+                                                                                
+           MOVE SPACES                     TO   BB24K500-REC.                   
+           MOVE F162-NUM-EXIST-HDBREF      TO   K500-NUM-HDB-REF.               
+                                                                                
+           PERFORM 3210-START-BB24K500     THRU 3210-EXIT.                      
+           PERFORM 3220-READNEXT-BB24K500  THRU 3220-EXIT                       
+                   UNTIL WS-K500-EOF = 'Y'.                                     
+                                                                                
+           IF WS-K500-FND = 'Y'                                                 
+              PERFORM VARYING WS-IDX FROM 1 BY 1 UNTIL WS-IDX > 4               
+                 IF WS-NUM-NRIC(WS-IDX) = SPACES OR LOW-VALUES OR               
+                                          ZEROES                                
+                    MOVE SPACES            TO   WS-NUM-NRIC(WS-IDX)             
+                                           WS-NUM-OLD-RSL-STAT(WS-IDX)          
+                 END-IF                                                         
+              END-PERFORM                                                       
+           ELSE                                                                 
+              MOVE 'Y'                     TO   WS-SKIP-REC                     
+           END-IF.                                                              
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3210-START-BB24K500.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           START BB24K500 KEY >= K500-KEY-FLD.                                  
+                                                                                
+           EVALUATE WS-K500-STATUS                                              
+           WHEN 00                                                              
+              CONTINUE                                                          
+                                                                                
+           WHEN 10                                                              
+           WHEN 23                                                              
+              MOVE 'Y'                     TO   WS-K500-EOF                     
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'START BB24K500 ERROR '   WS-K500-STATUS                  
+              MOVE    WS-K500-STATUS       TO   RETURN-CODE                     
+              PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       3210-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3220-READNEXT-BB24K500.                                                  
+      *-------------------------------------------------------------            
+                                                                                
+           READ BB24K500 NEXT RECORD.                                           
+                                                                                
+           EVALUATE WS-K500-STATUS                                              
+           WHEN 00                                                              
+              IF K500-NUM-HDB-REF NOT = F162-NUM-EXIST-HDBREF                   
+                 MOVE 'Y'                  TO   WS-K500-EOF                     
+              ELSE                                                              
+                 MOVE 'Y'                  TO   WS-K500-FND                     
+                 MOVE K500-DTE-APPROVAL    TO   WS-DTE-APPROVAL                 
+                 MOVE K500-NUM-UIN-SELLER1 TO   WS-NUM-NRIC(1)                  
+                 MOVE K500-NUM-UIN-SELLER2 TO   WS-NUM-NRIC(2)                  
+                 MOVE K500-NUM-UIN-SELLER3 TO   WS-NUM-NRIC(3)                  
+                 MOVE K500-NUM-UIN-SELLER4 TO   WS-NUM-NRIC(4)                  
+                 MOVE K500-CDE-RESALE-STATUS                                    
+                                           TO   WS-NUM-OLD-RSL-STAT(1)          
+                 MOVE K500-CDE-RESALE-STATUS2                                   
+                                           TO   WS-NUM-OLD-RSL-STAT(2)          
+                 MOVE SPACES               TO   WS-NUM-OLD-RSL-STAT(3)          
+                                                WS-NUM-OLD-RSL-STAT(4)          
+              END-IF                                                            
+                                                                                
+           WHEN 10                                                              
+           WHEN 23                                                              
+              MOVE 'Y'                     TO   WS-K500-EOF                     
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'READNEXT BB24K500 ERROR ' WS-K500-STATUS                 
+              MOVE    WS-K500-STATUS       TO   RETURN-CODE                     
+              PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       3220-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4000-PROC-MATCH.                                                         
+      *-------------------------------------------------------------            
+                                                                                
+           IF F590-CDE-RCPT NOT = '0518C'                                       
+              PERFORM 4100-WRITE-BP13KH80       THRU 4100-EXIT                  
+              PERFORM 4200-REWRITE-BP13K162     THRU 4200-EXIT                  
+              PERFORM 4400-WRITE-RPT            THRU 4400-EXIT                  
+           END-IF.                                                              
+                                                                                
+           PERFORM 4300-WRITE-BP13F120     THRU 4300-EXIT.                      
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4100-WRITE-BP13KH80.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES                     TO   BP13KH80-REC.                   
+           MOVE F162-NUM-REGNO             TO   KH80-NUM-REGN                   
+                                                KH80-NUM-REGN1                  
+                                                KH80-NUM-REGN2.                 
+           MOVE F162-NUM-NRIC              TO   KH80-NUM-NRIC                   
+                                                KH80-NUM-NRIC1                  
+                                                KH80-NUM-NRIC2.                 
+           MOVE F590-DTE-SEND              TO   KH80-DTE-PAYT1                  
+                                                KH80-DTE-PAYT2.                 
+                                                                                
+           MOVE F162-NUM-EXIST-HDBREF      TO   KH80-NUM-EXIST-HDBREF.          
+           MOVE WS-DTE-APPROVAL            TO   KH80-DTE-APPROVAL.              
+           MOVE F590-AMT-RCPT              TO   KH80-AMT-LVY-PAID.              
+                                                                                
+           MOVE WS-NUM-SELLER-INFO         TO   KH80-NUM-SELLER-INFO.           
+                                                                                
+           MOVE 'AC28'                     TO   KH80-SYS-COLLECTED.             
+           MOVE 'BP13C11G'                 TO   KH80-NUM-USERID.                
+           MOVE WS-DTE-CUR                 TO   KH80-DTE-COLLECTED              
+                                                KH80-DTE-UPDATE.                
+                                                                                
+           WRITE BP13KH80-REC.                                                  
+                                                                                
+           EVALUATE WS-KH80-STATUS                                              
+           WHEN 00                                                              
+              ADD 1                        TO   WS-CNT-KH80-WRITE               
+                                                                                
+           WHEN 02                                                              
+              PERFORM 5000-PROC-ERROR      THRU 5000-EXIT                       
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'WRITE BP13KH80 ERROR '   WS-K162-STATUS                  
+              MOVE     WS-K162-STATUS      TO   RETURN-CODE                     
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4200-REWRITE-BP13K162.                                                   
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE BP13F162-REC               TO   BP13K162-REC.                   
+           MOVE F590-CDE-RCPT              TO   K162-NUM-RECPT.                 
+           MOVE F590-NUM-RCPT              TO   K162-NUM-RECPT-JRNO.            
+           MOVE F590-DTE-SEND              TO   K162-DTE-PAYT.                  
+           MOVE 'AC28'                     TO   K162-SYS-COLLECTED.             
+           MOVE 'BP13C11G'                 TO   K162-NUM-USERID.                
+           MOVE WS-DTE-CUR                 TO   K162-DTE-COLLECTED              
+                                                K162-DTE-UPDATE.                
+                                                                                
+           REWRITE BP13K162-REC.                                                
+                                                                                
+           EVALUATE WS-K162-STATUS                                              
+           WHEN 00                                                              
+              ADD 1                        TO   WS-CNT-K162-UPD                 
+                                                                                
+           WHEN OTHER                                                           
+              DISPLAY 'REWRITE BP13K162 ERROR ' WS-K162-STATUS                  
+              MOVE     WS-K162-STATUS      TO   RETURN-CODE                     
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-EVALUATE.                                                        
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4300-WRITE-BP13F120.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES                     TO   BP13F120-CASHTRAN.              
+           MOVE '11'                       TO   F120-CDE-TRANS-TYPE.            
+           MOVE F162-NUM-REGNO             TO   F120-NUM-REGN.                  
+           MOVE WS-DTE-CUR                 TO   F120-DTE-POST.                  
+           MOVE '000'                      TO   F120-COUNT-HISTORY.             
+           MOVE F162-NUM-NRIC              TO   F120-NUM-NRIC.                  
+           MOVE F590-NUM-RCPT              TO   F120-NUM-RECPT-JRNO.            
+           MOVE F590-AMT-RCPT              TO   F120-AMT-RECEIPT.               
+           MOVE F590-DTE-SEND              TO   F120-DTE-TRANS.                 
+           MOVE F162-NUM-EXIST-HDBREF      TO   F120-NUM-SCH-ACCT.              
+                                                                                
+           EVALUATE F590-CDE-RCPT                                               
+           WHEN '0518C'                                                         
+              MOVE 'INT'                   TO   F120-CDE-PAYMENT-TYPE           
+           WHEN '0900E'                                                         
+              MOVE 'L02'                   TO   F120-CDE-PAYMENT-TYPE           
+           WHEN '0901G'                                                         
+              MOVE 'LEC'                   TO   F120-CDE-PAYMENT-TYPE           
+           WHEN '0905D'                                                         
+              MOVE 'L03'                   TO   F120-CDE-PAYMENT-TYPE           
+           WHEN '0910Z'                                                         
+              MOVE 'L04'                   TO   F120-CDE-PAYMENT-TYPE           
+           WHEN '0915I'                                                         
+              MOVE 'L05'                   TO   F120-CDE-PAYMENT-TYPE           
+           WHEN '0920D'                                                         
+              MOVE 'LEX'                   TO   F120-CDE-PAYMENT-TYPE           
+           END-EVALUATE.                                                        
+                                                                                
+           WRITE BP13F120-CASHTRAN.                                             
+                                                                                
+           ADD 1                           TO   WS-CNT-F120-WRITE.              
+                                                                                
+       4300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4400-WRITE-RPT.                                                          
+      *-------------------------------------------------------------            
+                                                                                
+           IF WS-LINE-CNT-A > 46                                                
+              MOVE 1                       TO   WS-LINE-CNT-A                   
+              PERFORM 4410-RPT-HEADING     THRU 4410-EXIT                       
+           ELSE                                                                 
+               ADD  1 TO WS-LINE-CNT-A                                          
+           END-IF.                                                              
+                                                                                
+           ADD F590-AMT-RCPT               TO   WS-AMT-KIV-TOTAL.               
+           ADD 1                           TO   WS-CNT-KIV-CASES.               
+                                                                                
+           MOVE WS-CNT-KIV-CASES           TO   L11GA-SNO.                      
+           MOVE F590-NUM-HDB-REF           TO   L11GA-NUM-SCHACCNT.             
+           MOVE F590-AMT-RCPT              TO   L11GA-AMT.                      
+                                                                                
+           EVALUATE F590-CDE-RCPT                                               
+           WHEN '0518C'                                                         
+              MOVE 'INT'                   TO   L11GA-PAYMENT-TYPE              
+           WHEN '0900E'                                                         
+              MOVE 'L02'                   TO   L11GA-PAYMENT-TYPE              
+           WHEN '0901G'                                                         
+              MOVE 'LEC'                   TO   L11GA-PAYMENT-TYPE              
+           WHEN '0905D'                                                         
+              MOVE 'L03'                   TO   L11GA-PAYMENT-TYPE              
+           WHEN '0910Z'                                                         
+              MOVE 'L04'                   TO   L11GA-PAYMENT-TYPE              
+           WHEN '0915I'                                                         
+              MOVE 'L05'                   TO   L11GA-PAYMENT-TYPE              
+           WHEN '0920D'                                                         
+              MOVE 'LEX'                   TO   L11GA-PAYMENT-TYPE              
+           END-EVALUATE.                                                        
+                                                                                
+           MOVE F590-DTE-SEND(1:4)         TO   L11GA-POST-YYYY.                
+           MOVE F590-DTE-SEND(5:2)         TO   L11GA-POST-MM.                  
+           MOVE F590-DTE-SEND(7:2)         TO   L11GA-POST-DD.                  
+           MOVE F590-CDE-RCPT              TO   L11GA-NUM-RECEIPT.              
+           MOVE F590-NUM-RCPT              TO   L11GA-REMARK.                   
+           WRITE P13L11GA-REC              FROM L11GA-DETAILS.                  
+                                                                                
+           MOVE SPACES                     TO   L11GA-DETAILS.                  
+           MOVE '/'                        TO   L11GA-POST-FIL1                 
+                                                L11GA-POST-FIL2.                
+                                                                                
+       4400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4410-RPT-HEADING.                                                        
+      *-------------------------------------------------------------            
+                                                                                
+            ADD 1                          TO   WS-PAGE-CNT-A.                  
+            MOVE WS-PAGE-CNT-A             TO   L11GA-PAGENO.                   
+            MOVE SPACES                    TO   P13L11GA-REC.                   
+                                                                                
+            WRITE P13L11GA-REC FROM L11GA-HEAD-01 AFTER PAGE.                   
+            WRITE P13L11GA-REC FROM L11GA-HEAD-02 AFTER 2.                      
+            WRITE P13L11GA-REC FROM L11GA-HEAD-03 AFTER 2.                      
+                                                                                
+            INSPECT P13L11GA-REC REPLACING ALL SPACES BY LOW-VALUES.            
+            INSPECT P13L11GA-REC REPLACING CHARACTERS BY '-'.                   
+            INSPECT P13L11GA-REC REPLACING ALL LOW-VALUES BY SPACES.            
+                                                                                
+            WRITE P13L11GA-REC.                                                 
+                                                                                
+            MOVE SPACES                    TO   P13L11GA-REC.                   
+            WRITE P13L11GA-REC AFTER 2.                                         
+                                                                                
+       4410-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       5000-PROC-ERROR.                                                         
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE 'A'                        TO   WS-CDE-ERROR.                   
+           PERFORM 5100-WRITE-BP13F140     THRU 5100-EXIT.                      
+           PERFORM 5200-WRITE-ERROR-RPT    THRU 5200-EXIT.                      
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       5100-WRITE-BP13F140.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+                                                                                
+           MOVE SPACES                     TO   BP13F140-KIVTRAN.               
+           ADD 1                           TO   WS-CNT-HIST.                    
+                                                                                
+           IF WS-F162-FND = 'N'                                                 
+              MOVE F590-NUM-HDB-REF        TO   F140-NUM-REGN                   
+              MOVE SPACES                  TO   F140-NUM-NRIC                   
+           ELSE                                                                 
+              MOVE F162-NUM-REGNO          TO   F140-NUM-REGN                   
+              MOVE F162-NUM-NRIC           TO   F140-NUM-NRIC                   
+           END-IF.                                                              
+                                                                                
+           MOVE '11'                       TO   F140-CDE-TRANS-TYPE.            
+           MOVE WS-DTE-CUR                 TO   F140-DTE-POST.                  
+           MOVE 'S'                        TO   F140-COUNT-HIST-CHAR.           
+           MOVE WS-CNT-HIST                TO   F140-COUNT-HIST-NUM.            
+           MOVE F590-CDE-RCPT              TO   F140-NUM-RECPT-JRNO.            
+           MOVE F590-AMT-RCPT              TO   F140-AMT-RECEIPT.               
+           MOVE F590-DTE-SEND              TO   F140-DTE-TRANS.                 
+           MOVE F590-NUM-HDB-REF           TO   F140-NUM-SCH-ACCT.              
+           MOVE WS-CDE-ERROR               TO   F140-CDE-ERROR.                 
+                                                                                
+           EVALUATE F590-CDE-RCPT                                               
+           WHEN '0518C'                                                         
+              MOVE 'INT'                   TO   F140-CDE-PAYMENT-TYPE           
+           WHEN '0900E'                                                         
+              MOVE 'L02'                   TO   F140-CDE-PAYMENT-TYPE           
+           WHEN '0901G'                                                         
+              MOVE 'LEC'                   TO   F140-CDE-PAYMENT-TYPE           
+           WHEN '0905D'                                                         
+              MOVE 'L03'                   TO   F140-CDE-PAYMENT-TYPE           
+           WHEN '0910Z'                                                         
+              MOVE 'L04'                   TO   F140-CDE-PAYMENT-TYPE           
+           WHEN '0915I'                                                         
+              MOVE 'L05'                   TO   F140-CDE-PAYMENT-TYPE           
+           WHEN '0920D'                                                         
+              MOVE 'LEX'                   TO   F140-CDE-PAYMENT-TYPE           
+           END-EVALUATE.                                                        
+                                                                                
+           WRITE BP13F140-KIVTRAN.                                              
+                                                                                
+           ADD 1                           TO   WS-CNT-F140-WRITE.              
+                                                                                
+       5100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       5200-WRITE-ERROR-RPT.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           IF WS-LINE-CNT-B > 46                                                
+              MOVE 1                       TO   WS-LINE-CNT-B                   
+              PERFORM 5210-RPT-HEADING     THRU 5210-EXIT                       
+           ELSE                                                                 
+               ADD  1 TO WS-LINE-CNT-B                                          
+           END-IF.                                                              
+                                                                                
+           ADD F590-AMT-RCPT               TO   WS-AMT-KIV-TOTAL.               
+           ADD 1                           TO   WS-CNT-KIV-CASES.               
+                                                                                
+           MOVE WS-CNT-KIV-CASES           TO   L11GB-SNO.                      
+           MOVE F590-NUM-HDB-REF           TO   L11GB-NUM-SCHACCNT.             
+           MOVE 'S'                        TO   L11GB-CDE-HIST.                 
+           MOVE WS-CNT-HIST                TO   L11GB-CNT-HIST.                 
+           MOVE F590-AMT-RCPT              TO   L11GB-AMT.                      
+                                                                                
+           EVALUATE F590-CDE-RCPT                                               
+           WHEN '0518C'                                                         
+              MOVE 'INT'                   TO   L11GB-PAYMENT-TYPE              
+           WHEN '0900E'                                                         
+              MOVE 'L02'                   TO   L11GB-PAYMENT-TYPE              
+           WHEN '0901G'                                                         
+              MOVE 'LEC'                   TO   L11GB-PAYMENT-TYPE              
+           WHEN '0905D'                                                         
+              MOVE 'L03'                   TO   L11GB-PAYMENT-TYPE              
+           WHEN '0910Z'                                                         
+              MOVE 'L04'                   TO   L11GB-PAYMENT-TYPE              
+           WHEN '0915I'                                                         
+              MOVE 'L05'                   TO   L11GB-PAYMENT-TYPE              
+           WHEN '0920D'                                                         
+              MOVE 'LEX'                   TO   L11GB-PAYMENT-TYPE              
+           END-EVALUATE.                                                        
+                                                                                
+           MOVE F590-DTE-SEND(1:4)         TO   L11GB-POST-YYYY.                
+           MOVE F590-DTE-SEND(5:2)         TO   L11GB-POST-MM.                  
+           MOVE F590-DTE-SEND(7:2)         TO   L11GB-POST-DD.                  
+           MOVE F590-CDE-RCPT              TO   L11GB-NUM-RECEIPT.              
+           MOVE F590-NUM-RCPT              TO   L11GB-REMARK.                   
+           WRITE P13L11GB-REC              FROM L11GB-DETAILS.                  
+                                                                                
+           MOVE SPACES                     TO   L11GB-DETAILS.                  
+           MOVE '/'                        TO   L11GB-POST-FIL1                 
+                                                L11GB-POST-FIL2.                
+                                                                                
+       5200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       5210-RPT-HEADING.                                                        
+      *-------------------------------------------------------------            
+                                                                                
+            ADD 1                          TO   WS-PAGE-CNT-B.                  
+            MOVE WS-PAGE-CNT-B             TO   L11GB-PAGENO.                   
+            MOVE SPACES                    TO   P13L11GB-REC.                   
+                                                                                
+            WRITE P13L11GB-REC FROM L11GB-HEAD-01 AFTER PAGE.                   
+            WRITE P13L11GB-REC FROM L11GB-HEAD-02 AFTER 2.                      
+            WRITE P13L11GB-REC FROM L11GB-HEAD-03 AFTER 2.                      
+                                                                                
+            INSPECT P13L11GB-REC REPLACING ALL SPACES BY LOW-VALUES.            
+            INSPECT P13L11GB-REC REPLACING CHARACTERS BY '-'.                   
+            INSPECT P13L11GB-REC REPLACING ALL LOW-VALUES BY SPACES.            
+                                                                                
+            WRITE P13L11GB-REC.                                                 
+                                                                                
+            MOVE SPACES                    TO   P13L11GB-REC.                   
+            WRITE P13L11GB-REC AFTER 2.                                         
+                                                                                
+       5210-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       6000-PROC-F590-EOF.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           IF WS-F590-EOF NOT = 'Y'                                             
+              PERFORM UNTIL WS-F590-EOF = 'Y'                                   
+                 PERFORM 5000-PROC-ERROR        THRU 5000-EXIT                  
+                 PERFORM 2000-READ-BB24F590     THRU 2000-EXIT                  
+              END-PERFORM                                                       
+           END-IF.                                                              
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       9000-CLOSE-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES                     TO P13L11GB-REC.                     
+           WRITE P13L11GB-REC.                                                  
+                                                                                
+           MOVE 'NO OF COLLN RECS READ  (F590): ' TO L11GB-CNTL-ITEM.           
+           MOVE  WS-CNT-F590-READ                 TO L11GB-CNTL-CNT.            
+           WRITE P13L11GB-REC FROM L11GB-CONTROL-LINE AFTER 3.                  
+                                                                                
+           MOVE 'NO OF SOC LEVY READ    (F162): ' TO L11GB-CNTL-ITEM.           
+           MOVE  WS-CNT-F162-READ                 TO L11GB-CNTL-CNT.            
+           WRITE P13L11GB-REC FROM L11GB-CONTROL-LINE.                          
+                                                                                
+           MOVE 'NO OF SOC LEVY UPDATED (K162): ' TO L11GB-CNTL-ITEM.           
+           MOVE  WS-CNT-K162-UPD                  TO L11GB-CNTL-CNT.            
+           WRITE P13L11GB-REC FROM L11GB-CONTROL-LINE.                          
+                                                                                
+           MOVE 'NO OF LEVY STAT WRITE  (KH80): ' TO L11GB-CNTL-ITEM.           
+           MOVE  WS-CNT-KH80-WRITE                TO L11GB-CNTL-CNT.            
+           WRITE P13L11GB-REC FROM L11GB-CONTROL-LINE.                          
+                                                                                
+           MOVE 'NO OF COLLN RECS WRITE (F120): ' TO L11GB-CNTL-ITEM.           
+           MOVE  WS-CNT-F120-WRITE                TO L11GB-CNTL-CNT.            
+           WRITE P13L11GB-REC FROM L11GB-CONTROL-LINE.                          
+                                                                                
+           MOVE 'NO OF KIV RECS WRITE   (F140): ' TO L11GB-CNTL-ITEM.           
+           MOVE  WS-CNT-F140-WRITE                TO L11GB-CNTL-CNT.            
+           WRITE P13L11GB-REC FROM L11GB-CONTROL-LINE.                          
+                                                                                
+           MOVE SPACES                            TO L11GB-DETAILS.             
+           MOVE WS-AMT-KIV-TOTAL                  TO L11GB-AMT.                 
+           MOVE 'TOTAL :'                         TO L11GB-ORIG-REG-NO.         
+           WRITE P13L11GB-REC FROM L11GB-DETAILS AFTER 2.                       
+                                                                                
+           DISPLAY '******  BP13C11G *************'.                            
+           DISPLAY 'NO OF COLLN REC READ (F590) : ' WS-CNT-F590-READ.           
+           DISPLAY 'NO OF SOC LEVY READ  (F162) : ' WS-CNT-F162-READ.           
+           DISPLAY 'NO OF SOC LEVY UPD   (K162) : ' WS-CNT-K162-UPD.            
+           DISPLAY 'NO OF LEVY STAT WRITE(KH80) : ' WS-CNT-KH80-WRITE.          
+           DISPLAY 'NO OF F120 WRITE     (F120) : ' WS-CNT-F120-WRITE.          
+           DISPLAY 'NO OF F140 WRITE     (F140) : ' WS-CNT-F140-WRITE.          
+                                                                                
+           CLOSE BB24F590                                                       
+                 BP13F162                                                       
+                 BB24K500                                                       
+                 BP13K162                                                       
+                 BP13KH80                                                       
+                 BP13F120                                                       
+                 BP13F140                                                       
+                 P13L11GA                                                       
+                 P13L11GB.                                                      
+                                                                                
+           IF WS-K500-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'CLOSING BB24K500 ERROR ' WS-K500-STATUS                  
+              MOVE     WS-K500-STATUS      TO   RETURN-CODE                     
+           END-IF.                                                              
+                                                                                
+           IF WS-K162-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'CLOSING BP13K162 ERROR ' WS-K162-STATUS                  
+              MOVE     WS-K162-STATUS      TO   RETURN-CODE                     
+           END-IF.                                                              
+                                                                                
+           IF WS-KH80-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'CLOSING BP13KH80 ERROR ' WS-KH80-STATUS                  
+              MOVE     WS-KH80-STATUS      TO   RETURN-CODE                     
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+

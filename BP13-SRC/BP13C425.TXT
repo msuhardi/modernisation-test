@@ -1,0 +1,388 @@
+      ***************************                                               
+       IDENTIFICATION DIVISION.                                                 
+      ***************************                                               
+       PROGRAM-ID.    BP13C425.                                                 
+       AUTHOR.        TMK.                                                      
+      *DATE-WRITTEN.  18/11/89.                                                 
+                                                                                
+      **********************************************************                
+      *    SYSTEM NAME :  SYSTEM OF COMMITMENT                 *                
+      *    SYSTEM ID   :  BP13                                 *                
+      *                                                        *                
+      *    OBJECTIVE   :                                       *                
+      *        1.  DELETE PREP LIST RECORD AFTER SALES         *                
+      *            ORDER HAS BEEN RAISED FOR SALES TYPE        *                
+      *            '01', '02', '03', '5B' AND '5C'.            *                
+      *                                                        *                
+      *    INPUT FILES :                                       *                
+      *       1. BP13F410  -  KIV SO FILE                      *                
+      *                                                        *                
+      *    I-O   FILES :                                       *                
+      *       1. BP13K800  -  SOC APPLICATION MASTER FILE      *                
+      *       2. BP13KD05  -  SOC GRANT FILE                   *                
+      *                                                        *                
+      *                                                        *                
+      * CHG REQ    DATE     BY   DESCRIPTION                   *                
+      * -------   --------  ---  ----------------------------  *                
+      * C         20/11/92  RAZ  REMOVE BM06K901 LOG FILE      *                
+      * SOC-PH8   21/07/93  JEP  RENAME P10K020  TO  BP13K800  *                
+      * SOC-PH8   03/05/94  TON  REMOVE BM06K010               *                
+      * BP130418  08/06/98  RHB  Y2K                           *                
+      * BP132842  07/06/06  TRS  UPDATE KD05-AMT-AHG-USED      *                
+      * BP133233  11/02/08  TRS  SKIP UPDATING OF BP13KD05 IF  *                
+      *                          RECORD NOT FOUND              *                
+      * BP134641  03/08/12  MDT2 CHANGE LRECL OF BP13KD05 FROM *                
+      *                          300 TO 500 IN FD              *                
+      * BP135833  27/04/16  KSJ3 TO ADD UT SIGNED IN K800 UPD  *                
+      **********************************************************                
+                                                                                
+                                                                                
+      ************************                                                  
+       ENVIRONMENT DIVISION.                                                    
+      ************************                                                  
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F410  ASSIGN               TO  BP13F410.                  
+                                                                                
+           SELECT BP13K800  ASSIGN               TO  BP13K800                   
+                            ACCESS MODE          IS  RANDOM                     
+                            ORGANIZATION         IS  INDEXED                    
+                            RECORD KEY           IS  K800-NUM-REGN              
+                            FILE STATUS          IS  BP13K800-STATUS.           
+                                                                                
+           SELECT BP13KD05  ASSIGN               TO  BP13KD05                   
+                            ACCESS MODE          IS  RANDOM                     
+                            ORGANIZATION         IS  INDEXED                    
+                            RECORD KEY           IS  KD05-KEY-FLD               
+                            FILE STATUS          IS  BP13KD05-STATUS.           
+                                                                                
+      *****************                                                         
+       DATA DIVISION.                                                           
+      *****************                                                         
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F410                                                            
+            BLOCK  CONTAINS 0    RECORDS                                        
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            LABEL  RECORDS  ARE  STANDARD.                                      
+       COPY BP13F410.                                                           
+                                                                                
+       FD   BP13K800                                                            
+            BLOCK  CONTAINS 0   RECORDS                                         
+            RECORD CONTAINS 2000 CHARACTERS                                     
+            LABEL  RECORDS  ARE STANDARD.                                       
+       COPY BP13K800.                                                           
+                                                                                
+       FD   BP13KD05                                                            
+            BLOCK  CONTAINS 0   RECORDS                                         
+            RECORD CONTAINS 500 CHARACTERS                                      
+            LABEL  RECORDS  ARE STANDARD.                                       
+       COPY BP13KD05.                                                           
+                                                                                
+                                                                                
+      *------------------------*                                                
+       WORKING-STORAGE SECTION.                                                 
+      *------------------------*                                                
+                                                                                
+       01  FILE-STATUS.                                                         
+           05  BP13K800-STATUS          PIC 9(2)    VALUE 00.                   
+           05  BP13KD05-STATUS          PIC 9(2)    VALUE 00.                   
+                                                                                
+       01  WS-INDICATORS.                                                       
+           05  WS-EOF-F410-IND          PIC X       VALUE SPACE.                
+               88  WS-EOF-F410                      VALUE 'Y'.                  
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-CNT-F410-READ         PIC 9(5)    VALUE ZEROS.                
+           05  WS-CNT-K800-UPDATED      PIC 9(5)    VALUE ZEROS.                
+           05  WS-CNT-KD05-UPDATED      PIC 9(5)    VALUE ZEROS.                
+           05  WS-CTR                   PIC 9       VALUE ZEROS.                
+                                                                                
+       01  WS-CURRENT-DATE.                                                     
+           05  WS-CURRENT-CC            PIC 99.                                 
+           05  WS-CURRENT-YYMMDD.                                               
+               10  WS-CURRENT-YY        PIC 99.                                 
+               10  WS-CURRENT-MM        PIC 99.                                 
+               10  WS-CURRENT-DD        PIC 99.                                 
+                                                                                
+       01  WS-GRANT-VARIABLES.                                                  
+           05 WS-NRIC                   PIC X(9)     VALUE SPACES.              
+           05 WS-TOT-USED-GR            PIC S9(7)V99 VALUE +0.                  
+                                                                                
+      **********************                                                    
+       PROCEDURE DIVISION.                                                      
+      **********************                                                    
+                                                                                
+      ******************************************************************        
+      *    MAIN LOGIC PROCESS SECTION                                  *        
+      ******************************************************************        
+      *------------------------*                                                
+       000-MAIN-ROUTINE.                                                        
+      *------------------------*                                                
+           PERFORM  100-OPEN-ROUTINE      THRU   100-EXIT.                      
+           PERFORM  200-READ-BP13F410     THRU   200-EXIT.                      
+           PERFORM  300-PROCESS-INDATA    THRU   300-EXIT                       
+                        UNTIL WS-EOF-F410.                                      
+           PERFORM  900-CLOSE-ROUTINE     THRU   900-EXIT.                      
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    OPENING FILES SECTION                                       *        
+      ******************************************************************        
+      *------------------------*                                                
+       100-OPEN-ROUTINE.                                                        
+      *------------------------*                                                
+           OPEN INPUT BP13F410                                                  
+                I-O   BP13K800                                                  
+                      BP13KD05.                                                 
+                                                                                
+           IF BP13K800-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'OPENING ERROR, BP13K800-STATUS ' BP13K800-STATUS         
+              MOVE BP13K800-STATUS TO RETURN-CODE                               
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+           IF BP13KD05-STATUS NOT = 00 AND 97                                   
+              DISPLAY 'OPENING ERROR, BP13KD05-STATUS ' BP13KD05-STATUS         
+              MOVE BP13KD05-STATUS TO RETURN-CODE                               
+              PERFORM 900-CLOSE-ROUTINE.                                        
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    READ SEQUENTIAL FILE BP13F410 AT END SET EOF-IND TO 'Y'     *        
+      ******************************************************************        
+      *------------------------*                                                
+       200-READ-BP13F410.                                                       
+      *------------------------*                                                
+           READ BP13F410  AT END                                                
+                          MOVE 'Y' TO WS-EOF-F410-IND                           
+                          GO TO 200-EXIT.                                       
+                                                                                
+           ADD  1  TO  WS-CNT-F410-READ.                                        
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    - CHECK IF F410-NUM-SCH-ACC = K800-NUM-SCH-ACC THEN         *        
+      *    - PERFORM UPDATING OF BP13K800                              *        
+      ******************************************************************        
+      *------------------------*                                                
+       300-PROCESS-INDATA.                                                      
+      *------------------------*                                                
+           MOVE F410-NUM-REGN TO K800-NUM-REGN.                                 
+           READ BP13K800.                                                       
+                                                                                
+           IF  F410-NUM-SCH-ACC   =  K800-NUM-SCH-ACC                           
+               PERFORM 400-UPDATE-BP13K800   THRU  400-EXIT.                    
+                                                                                
+           PERFORM 200-READ-BP13F410   THRU 200-EXIT.                           
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    CHECK STATUS OF BP13K800                                    *        
+      ******************************************************************        
+      *------------------------*                                                
+       400-UPDATE-BP13K800.                                                     
+      *------------------------*                                                
+           IF BP13K800-STATUS = 00                                              
+              PERFORM 410-REWRITE-BP13K800-REC THRU 410-EXIT                    
+              IF F410-AMT-AHG-CPF1 > 0 OR                                       
+                 F410-AMT-AHG-CPF2 > 0 OR                                       
+                 F410-AMT-AHG-CPF3 > 0 OR                                       
+                 F410-AMT-AHG-CPF4 > 0                                          
+                 PERFORM 420-UPD-AHG-USED      THRU 420-EXIT                    
+                   VARYING WS-CTR FROM 1 BY 1 UNTIL WS-CTR > 4                  
+              END-IF                                                            
+           ELSE                                                                 
+              IF BP13K800-STATUS = 23                                           
+                 DISPLAY 'REC NOT FND IN BP13K800, STATUS = '                   
+                                         BP13K800-STATUS                        
+                 DISPLAY '               K800-REGN-NO ' K800-NUM-REGN           
+              ELSE                                                              
+                 DISPLAY 'ERROR READING  BP13K800, STATUS = '                   
+                                         BP13K800-STATUS                        
+                 DISPLAY '               K800-REGN-NO ' K800-NUM-REGN.          
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    REWRITE BP13K800 RECORD USING F410-NUM-REGN AS A KEY        *        
+      ******************************************************************        
+      *------------------------*                                                
+       410-REWRITE-BP13K800-REC.                                                
+      *------------------------*                                                
+           MOVE FUNCTION CURRENT-DATE TO WS-CURRENT-DATE.                       
+           MOVE   WS-CURRENT-DATE TO   K800-DTE-UPDATE.                         
+           MOVE   'KI'            TO   K800-NUM-ALLOC-TAG.                      
+           MOVE F410-CDE-UT-SIGNED                                              
+                                  TO   K800-CDE-UT-SIGNED.                      
+                                                                                
+           REWRITE BP13K800-MASTER.                                             
+                                                                                
+           IF BP13K800-STATUS = 00                                              
+              ADD  1  TO WS-CNT-K800-UPDATED                                    
+           ELSE                                                                 
+              DISPLAY 'ERROR REWRITE BP13K800, STATUS ' BP13K800-STATUS         
+              DISPLAY '      F410-REGN-NO    ' F410-NUM-REGN.                   
+                                                                                
+       410-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    VALIDATE IF GRANT USED > 0. IF YES, COMPUTE TOTAL USED GRANT*        
+      ******************************************************************        
+      *------------------------*                                                
+       420-UPD-AHG-USED.                                                        
+      *------------------------*                                                
+           EVALUATE WS-CTR                                                      
+              WHEN '1'                                                          
+                 IF F410-AMT-AHG-CPF1 > 0                                       
+                    MOVE F410-NRIC1          TO   WS-NRIC                       
+                    PERFORM 430-READ-BP13KD05 THRU 430-EXIT                     
+                    IF BP13KD05-STATUS = 00                                     
+                       COMPUTE WS-TOT-USED-GR = KD05-AMT-AHG-USED +             
+                                                F410-AMT-AHG-CPF1               
+                       PERFORM 440-UPDATE-BP13KD05 THRU 440-EXIT                
+                    END-IF                                                      
+                 END-IF                                                         
+              WHEN '2'                                                          
+                 IF F410-NRIC2 NOT = SPACES AND LOW-VALUES                      
+                    IF F410-AMT-AHG-CPF2 > 0                                    
+                       MOVE F410-NRIC2          TO   WS-NRIC                    
+                       PERFORM 430-READ-BP13KD05 THRU 430-EXIT                  
+                       IF BP13KD05-STATUS = 00                                  
+                          COMPUTE WS-TOT-USED-GR = KD05-AMT-AHG-USED +          
+                                                   F410-AMT-AHG-CPF2            
+                          PERFORM 440-UPDATE-BP13KD05 THRU 440-EXIT             
+                       END-IF                                                   
+                    END-IF                                                      
+                 END-IF                                                         
+              WHEN '3'                                                          
+                 IF F410-NRIC3 NOT = SPACES AND LOW-VALUES                      
+                    IF F410-AMT-AHG-CPF3 > 0                                    
+                       MOVE F410-NRIC3          TO   WS-NRIC                    
+                       PERFORM 430-READ-BP13KD05 THRU 430-EXIT                  
+                       IF BP13KD05-STATUS = 00                                  
+                          COMPUTE WS-TOT-USED-GR = KD05-AMT-AHG-USED +          
+                                                   F410-AMT-AHG-CPF3            
+                          PERFORM 440-UPDATE-BP13KD05 THRU 440-EXIT             
+                       END-IF                                                   
+                    END-IF                                                      
+                 END-IF                                                         
+              WHEN '4'                                                          
+                 IF F410-NRIC4 NOT = SPACES AND LOW-VALUES                      
+                    IF F410-AMT-AHG-CPF4 > 0                                    
+                       MOVE F410-NRIC4          TO   WS-NRIC                    
+                       PERFORM 430-READ-BP13KD05 THRU 430-EXIT                  
+                       IF BP13KD05-STATUS = 00                                  
+                          COMPUTE WS-TOT-USED-GR = KD05-AMT-AHG-USED +          
+                                                   F410-AMT-AHG-CPF4            
+                          PERFORM 440-UPDATE-BP13KD05 THRU 440-EXIT             
+                       END-IF                                                   
+                    END-IF                                                      
+                 END-IF                                                         
+           END-EVALUATE.                                                        
+                                                                                
+       420-EXIT.   EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       430-READ-BP13KD05.                                                       
+      ******************************************************************        
+           MOVE F410-NUM-REGN            TO KD05-NUM-REGN.                      
+           MOVE WS-NRIC                  TO KD05-NUM-NRIC.                      
+                                                                                
+           READ BP13KD05.                                                       
+                                                                                
+           IF BP13KD05-STATUS = 23                                              
+              DISPLAY 'NO RECORD FOUND IN BP13KD05 ' KD05-KEY-FLD               
+           ELSE                                                                 
+              IF BP13KD05-STATUS NOT EQUAL 0                                    
+                 DISPLAY 'ERROR READING BP13KD05, STATUS '                      
+                 DISPLAY BP13KD05-STATUS                                        
+                 DISPLAY '      KD05-KEY-FLD    ' KD05-KEY-FLD                  
+                 MOVE BP13KD05-STATUS TO RETURN-CODE                            
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       430-EXIT.   EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       440-UPDATE-BP13KD05.                                                     
+      ******************************************************************        
+           MOVE WS-TOT-USED-GR             TO KD05-AMT-AHG-USED.                
+           MOVE 'P13C425'                  TO KD05-NUM-USERID.                  
+           MOVE FUNCTION CURRENT-DATE(1:8) TO KD05-DTE-UPDATE.                  
+           MOVE FUNCTION CURRENT-DATE(9:8) TO KD05-TME-UPDATE.                  
+                                                                                
+           REWRITE BP13KD05-REC.                                                
+                                                                                
+           IF BP13KD05-STATUS = 00                                              
+              ADD 1    TO WS-CNT-KD05-UPDATED                                   
+           ELSE                                                                 
+              DISPLAY 'ERROR REWRITE BP13KD05, STATUS ' BP13KD05-STATUS         
+              DISPLAY '      KD05-KEY-FLD    ' KD05-KEY-FLD                     
+              MOVE BP13KD05-STATUS TO RETURN-CODE.                              
+                                                                                
+           MOVE SPACES TO WS-NRIC.                                              
+           INITIALIZE     WS-TOT-USED-GR.                                       
+                                                                                
+       440-EXIT.   EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+      *    CLOSE ALL FILES   AND   STOP RUN                            *        
+      ******************************************************************        
+      *------------------------*                                                
+       900-CLOSE-ROUTINE.                                                       
+      *------------------------*                                                
+           CLOSE BP13F410                                                       
+                 BP13K800                                                       
+                 BP13KD05.                                                      
+                                                                                
+           IF BP13K800-STATUS NOT = 00                                          
+              DISPLAY 'CLOSING ERROR, BP13K800-STATUS ' BP13K800-STATUS         
+              MOVE BP13K800-STATUS TO RETURN-CODE.                              
+                                                                                
+           IF BP13KD05-STATUS NOT = 00                                          
+              DISPLAY 'CLOSING ERROR, BP13KD05-STATUS ' BP13KD05-STATUS         
+              MOVE BP13KD05-STATUS TO RETURN-CODE.                              
+                                                                                
+           DISPLAY SPACES.                                                      
+           DISPLAY ' ****** BP13C425 CONTROL TOTAL ******'.                     
+           DISPLAY SPACES.                                                      
+           DISPLAY ' NO. OF RECORDS READ    FROM BP13F410 : '                   
+                     WS-CNT-F410-READ.                                          
+           DISPLAY ' NO. OF RECORDS UPDATED   IN BP13K800 : '                   
+                     WS-CNT-K800-UPDATED.                                       
+           DISPLAY ' NO. OF RECORDS UPDATED   IN BP13KD05 : '                   
+                     WS-CNT-KD05-UPDATED.                                       
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+*******************  END OF SOURCE PROGRAM  ****************************        
+

@@ -1,0 +1,634 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CC79.                                                 
+      *AUTHOR.        SHARON DUMDUM.                                            
+      *DATE-WRITTEN.  27/04/2007.                                               
+      * ========================================================== *            
+      * SYSTEM OF COMMITMENT (BP13)                                *            
+      * ========================================================== *            
+      *  OBJECTIVE :                                               *            
+      *                                                            *            
+      *    INFORM DEVELOPER ON THE PROGRESS PAYMENT CHEQUES        *            
+      *    RELEASED ON DUE DATE                                    *            
+      *                                                            *            
+      *  INPUT     :  1. BP13FD10                                  *            
+      *               2. SY02F001                                  *            
+      *  OUTPUT    :  1. BP13MAIL                                  *            
+      *                                                            *            
+      * ---------------------------------------------------------- *            
+      * CHG REF  DATE     BY    DESCRIPTION                        *            
+      * -------- -------- ----- -----------                        *            
+      * BP133051 20070427 SD10  NEW PROGRAM                        *            
+      * BP133052 20070524 SD10  PRINT BODY FOOTER ONLY IF REC > 0  *            
+      * BP133114 20080430 ED1   CHANGED DEVELOPER NAME & GET CREDIT*            
+      *                         TAG FROM BP13KD30                  *            
+      * BP133340 20080613 ED1   GET DEVNAME FROM FD10-NME-DEVELOPER*            
+      * BP133353 20080808 ED1   PRINT HEADER                       *            
+      * BP133535 20090216 JB8   CHANGE 'noor7' TO 'yc1'            *            
+      * BP133489 20090318 JB8   TO CATER FOR IBG                   *            
+      * BP133389 20090320 JB8   TO RECTIFY OUTPUT PROBLEM          *            
+      * BP133572 20090406 JB8   TO RECTIFY OUTPUT PROBLEM          *            
+      * BP133398 20090518 JB8   EXPAND KD10 LENGTH FR 450  TO 1400 *            
+      * BP133638 20090629 JB8   ADD 'hbb1'                         *            
+      * BP134033 20101026 JB8   To print SNO for developer         *            
+      * BP134744 20130312 RJE1  REMOVED NCK1, TGM1, YC1, HBB1      *            
+      *                         ADDED LJL1 AND NST1                *            
+      * BP134955 20130701 RJE1  REMOVED LJL1 AND NST1              *            
+      * ========================================================== *            
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+      *-------------------------------------------------------------            
+           SELECT BP13FD10 ASSIGN       TO BP13FD10.                            
+           SELECT BP13MAIL ASSIGN       TO BP13MAIL.                            
+           SELECT SY02F001 ASSIGN       TO SY02F001.                            
+                                                                                
+           SELECT BP13KD30 ASSIGN TO BP13KD30                                   
+                ORGANIZATION IS INDEXED                                         
+                ACCESS MODE IS RANDOM                                           
+                RECORD KEY IS KD30-KEY-FLD                                      
+                FILE STATUS IS KD30-STATUS.                                     
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD   BP13FD10                                                            
+            RECORDING MODE IS F                                                 
+            RECORD CONTAINS 1400 CHARACTERS.                                    
+       COPY BP13FD10.                                                           
+                                                                                
+       FD  BP13MAIL                                                             
+           RECORD CONTAINS 80 CHARACTERS                                        
+           RECORDING  MODE  IS F.                                               
+       01  MAIL-PRTREC                       PIC X(80).                         
+                                                                                
+       COPY SY02F001.                                                           
+                                                                                
+       FD  BP13KD30                                                             
+           RECORD CONTAINS 2000 CHARACTERS.                                     
+       COPY BP13KD30.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-EOF-BP13FD10          PIC X      VALUE SPACES.                    
+       01  WS-FD10-EMPTY            PIC X      VALUE SPACES.                    
+                                                                                
+       01  WS-IDX                   PIC 9(2)   VALUE ZEROES.                    
+       01  KD30-STATUS              PIC 9(2)   VALUE ZEROES.                    
+       01  WS-SNO                   PIC 9(4)   VALUE ZEROES.                    
+       01  WS-FD10-READ             PIC 9(4)   VALUE ZEROES.                    
+       01  WS-BYPASS-CURR-DTE       PIC 9(4)   VALUE ZEROES.                    
+       01  WS-BYPASS-NO-CHEQUE      PIC 9(4)   VALUE ZEROES.                    
+       01  WS-PROCESSED             PIC X(1)   VALUE 'N'.                       
+       01  WS-PROJECT-CNT           PIC 9      VALUE 0.                         
+       01  WS-NO-CHEQUE             PIC 9(04)  VALUE 0.                         
+       01  WS-NO-IBG                PIC 9(04)  VALUE 0.                         
+       01  WS-TOTAL-REC             PIC 9(04)  VALUE 0.                         
+       01  CNT-DEV-SNO              PIC 9(03)  VALUE 0.                         
+       01  WS-PREV-PAYMOD           PIC X(01)  VALUE SPACE.                     
+                                                                                
+       01  WS-PP                     PIC XX.                                    
+       01  WS-PP-NUM REDEFINES WS-PP PIC 99.                                    
+                                                                                
+       01  WS-LS-REQ                 PIC 9(6)V99 VALUE ZEROS.                   
+                                                                                
+       01  WS-CURRENT-DATE.                                                     
+           05  WS-DATE              PIC X(8)   VALUE SPACES.                    
+                                                                                
+      *-------------------------------------------------------------            
+      * LAYOUT BP13MAIL  -  DATASET FOR EMAIL                                   
+      *-------------------------------------------------------------            
+       01  MAIL-HDR1.                                                           
+           05  FILLER          PIC X(12)  VALUE 'HELO SGPHDB1'.                 
+           05  FILLER          PIC X(68)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-HDR2.                                                           
+           05  FILLER          PIC X(11)  VALUE 'MAIL FROM:<'.                  
+           05  MAIL-SENDID     PIC X(04)  VALUE 'OPCP'.                         
+           05  FILLER          PIC X(09)  VALUE '@SGPHDB1>'.                    
+           05  FILLER          PIC X(56)  VALUE SPACES.                         
+                                                                                
+      *  for testing purpose -------                                            
+      *01  MAIL-HDR1.                                                           
+      *    05  FILLER          PIC X(12)  VALUE 'HELO SGPHDB3'.                 
+      *    05  FILLER          PIC X(68)  VALUE SPACES.                         
+      *                                                                         
+      *01  MAIL-HDR2.                                                           
+      *    05  FILLER          PIC X(11)  VALUE 'MAIL FROM:<'.                  
+      *    05  MAIL-SENDID     PIC X(07)  VALUE 'CS23534'.                      
+      *    05  FILLER          PIC X(09)  VALUE '@SGPHDB3>'.                    
+      *    05  FILLER          PIC X(53)  VALUE SPACES.                         
+                                                                                
+      *BP134744 - REMOVED                                                       
+      *01  MAIL-DTL1A.                                                          
+      *    05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+      *    05  MAIL-TOMAILID1  PIC X(20)  VALUE                                 
+      *        'nck1@hdb.gov.sg>'.                                              
+      *    05  FILLER          PIC X(49)  VALUE SPACES.                         
+      *                                                                         
+      *01  MAIL-DTL1B.                                                          
+      *    05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+      *    05  MAIL-TOMAILID2  PIC X(20)  VALUE                                 
+      *        'tgm1@hdb.gov.sg>'.                                              
+      *    05  FILLER          PIC X(49)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL1C.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  MAIL-TOMAILID3  PIC X(20)  VALUE                                 
+               'KCH1@hdb.gov.sg>'.                                              
+           05  FILLER          PIC X(49)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL1D.                                                          
+           05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+           05  MAIL-TOMAILID4  PIC X(20)  VALUE                                 
+               'GSH2@hdb.gov.sg>'.                                              
+           05  FILLER          PIC X(49)  VALUE SPACES.                         
+                                                                                
+      *BP13XXXX - REMOVED LJL1 AND NST1                                         
+      *BP134744 - REMOVED and replaced                                          
+      *01  MAIL-DTL1E.                                                          
+      *    05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+      *    05  MAIL-TOMAILID5  PIC X(15)  VALUE                                 
+      *        'yc1@hdb.gov.sg>'.                                               
+      *    05  MAIL-TOMAILID5  PIC X(16)  VALUE                                 
+      *        'ljl1@hdb.gov.sg>'.                                              
+      *    05  FILLER          PIC X(49)  VALUE SPACES.                         
+                                                                                
+      *01  MAIL-DTL1F.                                                          
+      *    05  FILLER          PIC X(09)  VALUE 'RCPT TO:<'.                    
+      *    05  MAIL-TOMAILID5  PIC X(20)  VALUE                                 
+      *        'hbb1@hdb.gov.sg>'.                                              
+      *        'nst1@hdb.gov.sg>'.                                              
+      *    05  FILLER          PIC X(49)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL3.                                                           
+           05  FILLER          PIC X(04)  VALUE 'DATA'.                         
+           05  FILLER          PIC X(76)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL4.                                                           
+           05  FILLER          PIC X(05)  VALUE 'FROM:'.                        
+           05  MAIL-SENDMAILID PIC X(26)  VALUE                                 
+               'SOC System - Email Alert'.                                      
+           05  FILLER          PIC X(49)  VALUE SPACES.                         
+                                                                                
+      *BP134744 - REMOVED                                                       
+      *01  MAIL-DTL5A.                                                          
+      *    05  FILLER          PIC X(4)   VALUE 'TO:<'.                         
+      *    05  MAIL-TOMAILID1  PIC X(20)  VALUE                                 
+      *        'nck1@hdb.gov.sg>'.                                              
+      *    05  FILLER          PIC X(56)  VALUE SPACES.                         
+      *                                                                         
+      *01  MAIL-DTL5B.                                                          
+      *    05  FILLER          PIC X(4)   VALUE 'TO:<'.                         
+      *    05  MAIL-TOMAILID2  PIC X(20)  VALUE                                 
+      *        'tgm1@hdb.gov.sg>'.                                              
+      *    05  FILLER          PIC X(56)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL5C.                                                          
+           05  FILLER          PIC X(4)   VALUE 'TO:<'.                         
+           05  MAIL-TOMAILID3  PIC X(20)  VALUE                                 
+               'KCH1@hdb.gov.sg>'.                                              
+           05  FILLER          PIC X(56)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL5D.                                                          
+           05  FILLER          PIC X(4)   VALUE 'TO:<'.                         
+           05  MAIL-TOMAILID4  PIC X(20)  VALUE                                 
+               'GSH2@hdb.gov.sg>'.                                              
+           05  FILLER          PIC X(56)  VALUE SPACES.                         
+                                                                                
+      *BP13XXXX - REMOVED LJL1 AND NST1                                         
+      *BP134744 - REMOVED and replaced                                          
+      *01  MAIL-DTL5E.                                                          
+      *    05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+      *    05  MAIL-TOMAILID5  PIC X(15)  VALUE                                 
+      *        'yc1@hdb.gov.sg>'.                                               
+      *    05  MAIL-TOMAILID5  PIC X(16)  VALUE                                 
+      *        'ljl1@hdb.gov.sg>'.                                              
+      *    05  FILLER          PIC X(56)  VALUE SPACES.                         
+                                                                                
+      *01  MAIL-DTL5F.                                                          
+      *    05  FILLER          PIC X(4)   VALUE 'CC:<'.                         
+      *    05  MAIL-TOMAILID5  PIC X(20)  VALUE                                 
+      *        'hbb1@hdb.gov.sg>'.                                              
+      *        'nst1@hdb.gov.sg>'.                                              
+      *    05  FILLER          PIC X(56)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL7.                                                           
+           05  FILLER          PIC X(10)  VALUE 'SUBJECT : '.                   
+           05  FILLER          PIC X(17)  VALUE 'PROGRESS PAYMENT '.            
+           05  FILLER          PIC X(14)  VALUE 'CHQ/IBG TO BE '.               
+           05  FILLER          PIC X(12)  VALUE 'RELEASED ON '.                 
+           05  MAIL-DUE-DTE    PIC X(10)  VALUE SPACES.                         
+                                                                                
+       01  MAIL-DTL8.                                                           
+           05 FILLER                   PIC X(6)   VALUE 'DATE: '.               
+           05 MAIL-DATE                PIC X(10)  VALUE SPACES.                 
+                                                                                
+       01  MAIL-BODY01.                                                         
+           05 FILLER                   PIC X(02)  VALUE SPACES.                 
+           05 MAIL-DEV-SNO             PIC ZZ9   VALUE ZEROES.                  
+           05 FILLER                   PIC X(02)  VALUE ') '.                   
+           05 FILLER                   PIC X(12)  VALUE                         
+              'DEVELOPER : '.                                                   
+           05 DEVELOPER-NAME           PIC X(30)  VALUE SPACES.                 
+           05 FILLER                   PIC X(24)  VALUE SPACES.                 
+                                                                                
+       01  MAIL-BODY02A.                                                        
+           05 FILLER                   PIC X(1) VALUE SPACES.                   
+           05 FILLER                  PIC X(15) VALUE 'PAYMENT MODE : '.        
+           05 MAIL-PAYMENT-TYPE        PIC X(6) VALUE SPACES.                   
+                                                                                
+       01  MAIL-BODY02.                                                         
+           05 FILLER                   PIC X(1)   VALUE SPACES.                 
+           05 FILLER                   PIC X(4)   VALUE 'S/NO'.                 
+           05 FILLER                   PIC X(3)   VALUE SPACES.                 
+           05 FILLER                   PIC X(08)  VALUE 'PP SCHDL'.             
+           05 FILLER                   PIC X(03)  VALUE SPACES.                 
+           05 FILLER                   PIC X(8)   VALUE 'REGN NO.'.             
+           05 FILLER                   PIC X(3)   VALUE SPACES.                 
+           05 MAIL-PAYMOD-TITLE        PIC X(14)  VALUE 'CHEQUE NO.   '.        
+           05 FILLER                   PIC X(5)   VALUE SPACES.                 
+           05 FILLER                   PIC X(6)   VALUE 'AMOUNT'.               
+           05 FILLER                   PIC X(04)  VALUE SPACES.                 
+           05 FILLER                   PIC X(14) VALUE '$ NOT CREDITED'.        
+                                                                                
+       01  MAIL-BODY03.                                                         
+           05 FILLER                   PIC X      VALUE SPACES.                 
+           05 FILLER                   PIC X(4)   VALUE ALL '-'.                
+           05 FILLER                   PIC X(3)   VALUE SPACES.                 
+           05 FILLER                   PIC X(08)  VALUE ALL '-'.                
+           05 FILLER                   PIC X(3)   VALUE SPACES.                 
+           05 FILLER                   PIC X(8)   VALUE ALL '-'.                
+           05 FILLER                   PIC X(3)   VALUE SPACES.                 
+           05 FILLER                   PIC X(12)  VALUE ALL '-'.                
+           05 FILLER                   PIC X(3)   VALUE SPACES.                 
+           05 FILLER                   PIC X(10)  VALUE ALL '-'.                
+           05 FILLER                   PIC X(04)  VALUE SPACES.                 
+           05 FILLER                   PIC X(14)  VALUE ALL '-'.                
+                                                                                
+       01  MAIL-DETAIL.                                                         
+           05 FILLER                   PIC X(1)   VALUE SPACES.                 
+           05 MAIL-SNO                 PIC ZZZ9   VALUE ZEROS.                  
+           05 FILLER                   PIC X(6)   VALUE SPACES.                 
+           05 MAIL-PP                  PIC X(02)  VALUE ZEROES.                 
+           05 FILLER                   PIC X(6)   VALUE SPACES.                 
+           05 MAIL-NUM-REGN            PIC X(8)   VALUE SPACES.                 
+           05 FILLER                   PIC X(3)   VALUE SPACES.                 
+           05 MAIL-CHEQUE-NO           PIC X(12)  VALUE SPACES.                 
+           05 FILLER                   PIC X(3)   VALUE SPACES.                 
+           05 MAIL-AMOUNT              PIC ZZZ,ZZ9.99.                          
+           05 FILLER                   PIC X(11)  VALUE SPACES.                 
+           05 CREDIT-TAG               PIC X(01).                               
+                                                                                
+       01  MAIL-BODY04.                                                         
+           05 FILLER                   PIC X(41)  VALUE                         
+              'TOTAL NUMBER OF CHEQUES TO BE RELEASED : '.                      
+           05 MAIL-NO-CHEQUES          PIC ZZZ9   VALUE ZEROS.                  
+           05 FILLER                   PIC X(26)  VALUE SPACES.                 
+           05 FILLER                   PIC X(10)  VALUE SPACES.                 
+                                                                                
+       01  MAIL-BODY05.                                                         
+           05 FILLER                   PIC X(41)  VALUE                         
+              'TOTAL NUMBER OF IBGS    TO BE RELEASED : '.                      
+           05 MAIL-NO-IBG              PIC ZZZ9   VALUE ZEROS.                  
+           05 FILLER                   PIC X(26)  VALUE SPACES.                 
+           05 FILLER                   PIC X(10)  VALUE SPACES.                 
+                                                                                
+       01  MAIL-END.                                                            
+           05 FILLER                   PIC X      VALUE '.'.                    
+                                                                                
+       01  MAIL-SPACES.                                                         
+           05 FILLER                   PIC X(80)  VALUE SPACES.                 
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       0000-MAIN-ROUTINE.                                                       
+      *-------------------------------------------------------------            
+            PERFORM 1000-OPEN-ROUTINE         THRU  1000-EXIT.                  
+            PERFORM 3000-PROCESS-DETAIL       THRU  3000-EXIT                   
+                    UNTIL WS-EOF-BP13FD10 = 'Y'.                                
+            PERFORM 4200-PRINT-EMAIL-FOOTER   THRU  4200-EXIT.                  
+            PERFORM 9000-CLOSE-ROUTINE        THRU  9000-EXIT.                  
+                                                                                
+       0000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       1000-OPEN-ROUTINE.                                                       
+      *-------------------------------------------------------------            
+            OPEN INPUT  BP13FD10                                                
+                        SY02F001                                                
+                        BP13KD30                                                
+                 OUTPUT BP13MAIL.                                               
+                                                                                
+           IF KD30-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'BP13KD30 - OPEN ERROR, STATUS: ' KD30-STATUS             
+              MOVE KD30-STATUS TO RETURN-CODE                                   
+              PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           READ SY02F001.                                                       
+           MOVE F001-DTE-CURRENT   TO WS-CURRENT-DATE.                          
+           STRING WS-DATE(7:2) '/' WS-DATE(5:2) '/' WS-DATE(1:4)                
+                   DELIMITED BY SIZE INTO MAIL-DATE.                            
+           MOVE MAIL-DATE          TO MAIL-DUE-DTE.                             
+           MOVE ZEROES             TO WS-FD10-READ                              
+                                      WS-SNO.                                   
+                                                                                
+      *-----------------------------                                            
+      *  INITIAL READ OF INPUT FILES                                            
+      *-----------------------------                                            
+           READ BP13FD10                                                        
+                AT END                                                          
+                   MOVE 'Y' TO WS-EOF-BP13FD10                                  
+                   MOVE 'Y' TO WS-FD10-EMPTY                                    
+                   DISPLAY ' *** '                                              
+                   DISPLAY ' *** NO RECORDS FOUND IN VOUCHER FILE'              
+                   DISPLAY ' *** '                                              
+                GO TO  1000-EXIT.                                               
+           ADD 1 TO WS-FD10-READ.                                               
+                                                                                
+       1000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       2000-READ-BP13FD10.                                                      
+      *-------------------------------------------------------------            
+           READ BP13FD10                                                        
+                AT END MOVE 'Y' TO WS-EOF-BP13FD10                              
+                GO TO  2000-EXIT.                                               
+                                                                                
+           ADD 1 TO WS-FD10-READ.                                               
+                                                                                
+       2000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       3000-PROCESS-DETAIL.                                                     
+      *-------------------------------------------------------------            
+           MOVE SPACES TO MAIL-DETAIL.                                          
+                                                                                
+           IF FD10-DTE-DUE-PP = F001-DTE-CURRENT                                
+              IF DEVELOPER-NAME = SPACES OR LOW-VALUES                          
+                 MOVE FD10-NME-DEVELOPER TO DEVELOPER-NAME                      
+              END-IF                                                            
+                                                                                
+              IF DEVELOPER-NAME NOT = FD10-NME-DEVELOPER                        
+                 MOVE SPACES                      TO DEVELOPER-NAME             
+                 PERFORM 4200-PRINT-EMAIL-FOOTER THRU 4200-EXIT                 
+                 MOVE FD10-NME-DEVELOPER          TO DEVELOPER-NAME             
+                 PERFORM 4300-PRINT-MAIL-DEVELOPER THRU 4300-EXIT               
+                 MOVE ZEROS                       TO WS-SNO                     
+                                                        WS-NO-CHEQUE            
+                                                        WS-NO-IBG               
+              END-IF                                                            
+                                                                                
+              PERFORM 4000-PRINT-DETAIL             THRU 4000-EXIT              
+           ELSE                                                                 
+              ADD 1       TO WS-BYPASS-CURR-DTE                                 
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-READ-BP13FD10    THRU 2000-EXIT.                        
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4000-PRINT-DETAIL.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           ADD 1                            TO WS-SNO.                          
+                                                                                
+           IF WS-SNO = 1                                                        
+              ADD 1 TO WS-PROJECT-CNT                                           
+              IF WS-PROJECT-CNT = 1                                             
+                 PERFORM 4100-PRINT-EMAIL-HEADER   THRU 4100-EXIT               
+                 PERFORM 4300-PRINT-MAIL-DEVELOPER THRU 4300-EXIT               
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-PREV-PAYMOD NOT = FD10-NUM-PAYMENT-MODE                        
+              PERFORM 4200-PRINT-EMAIL-FOOTER      THRU 4200-EXIT               
+              MOVE ZEROES                   TO WS-NO-CHEQUE WS-NO-IBG           
+              MOVE 1                        TO WS-SNO                           
+           END-IF.                                                              
+                                                                                
+           IF WS-SNO = 1                                                        
+              PERFORM 4150-PRINT-OTHER-PROJECT     THRU 4150-EXIT               
+           END-IF.                                                              
+                                                                                
+           MOVE FD10-NUM-PAYMENT-MODE       TO WS-PREV-PAYMOD.                  
+           MOVE WS-SNO                      TO MAIL-SNO.                        
+           MOVE FD10-NUM-REGN               TO MAIL-NUM-REGN.                   
+           MOVE FD10-TXT-IBG-SERIAL         TO MAIL-CHEQUE-NO.                  
+           MOVE FD10-AMT-PAYMENT-DEVELOPER  TO MAIL-AMOUNT.                     
+           MOVE FD10-NUM-PP                 TO MAIL-PP.                         
+           IF FD10-NUM-PAYMENT-MODE = 'C'                                       
+              ADD 1 TO WS-NO-CHEQUE                                             
+           ELSE                                                                 
+              IF FD10-NUM-PAYMENT-MODE = 'G'                                    
+                 ADD 1 TO WS-NO-IBG                                             
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 5000-GET-CREDIT-TAG  THRU 5000-EXIT.                         
+                                                                                
+           WRITE MAIL-PRTREC FROM MAIL-DETAIL.                                  
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4100-PRINT-EMAIL-HEADER.                                                 
+      *-------------------------------------------------------------            
+           WRITE MAIL-PRTREC FROM MAIL-HDR1                                     
+           WRITE MAIL-PRTREC FROM MAIL-HDR2.                                    
+      *    WRITE MAIL-PRTREC FROM MAIL-DTL1A.                                   
+      *    WRITE MAIL-PRTREC FROM MAIL-DTL1B.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL1C.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL1D.                                   
+      *    WRITE MAIL-PRTREC FROM MAIL-DTL1E.                                   
+      *    WRITE MAIL-PRTREC FROM MAIL-DTL1F.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL3.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL4.                                    
+      *    WRITE MAIL-PRTREC FROM MAIL-DTL5A.                                   
+      *    WRITE MAIL-PRTREC FROM MAIL-DTL5B.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL5C.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL5D.                                   
+      *    WRITE MAIL-PRTREC FROM MAIL-DTL5E.                                   
+      *    WRITE MAIL-PRTREC FROM MAIL-DTL5F.                                   
+           WRITE MAIL-PRTREC FROM MAIL-DTL7.                                    
+           WRITE MAIL-PRTREC FROM MAIL-DTL8.                                    
+                                                                                
+       4100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       4150-PRINT-OTHER-PROJECT.                                                
+      *--------------------------------------------------------------           
+                                                                                
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           IF FD10-NUM-PAYMENT-MODE = 'C'                                       
+              MOVE 'CHEQUE NO.    '   TO MAIL-PAYMOD-TITLE                      
+              MOVE 'CHEQUE'           TO MAIL-PAYMENT-TYPE                      
+           ELSE                                                                 
+              IF FD10-NUM-PAYMENT-MODE = 'G'                                    
+                 MOVE 'IBG NO.       ' TO MAIL-PAYMOD-TITLE                     
+                 MOVE 'IBG   '         TO MAIL-PAYMENT-TYPE                     
+              END-IF                                                            
+           END-IF.                                                              
+           WRITE MAIL-PRTREC FROM MAIL-BODY02A.                                 
+           WRITE MAIL-PRTREC FROM MAIL-BODY02.                                  
+           WRITE MAIL-PRTREC FROM MAIL-BODY03.                                  
+                                                                                
+       4150-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+       4200-PRINT-EMAIL-FOOTER.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+           IF WS-FD10-EMPTY = 'Y'                                               
+              GO TO 4200-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           IF WS-SNO = ZEROES                                                   
+              DISPLAY ' *** '                                                   
+              DISPLAY ' *** NO RECORDS IN BP13FD10 WITH '                       
+              DISPLAY ' *** FD10-DTE-DUE-PP = F001-DTE-CURRENT'                 
+              DISPLAY ' *** '                                                   
+              GO TO 4200-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+                                                                                
+           MOVE WS-NO-CHEQUE TO MAIL-NO-CHEQUES.                                
+           MOVE WS-NO-IBG    TO MAIL-NO-IBG.                                    
+           ADD WS-NO-CHEQUE  TO WS-TOTAL-REC.                                   
+           ADD WS-NO-IBG     TO WS-TOTAL-REC.                                   
+                                                                                
+           IF WS-NO-CHEQUE NOT = ZEROES                                         
+              WRITE MAIL-PRTREC FROM MAIL-BODY04                                
+           END-IF                                                               
+           IF WS-NO-IBG NOT = ZEROES                                            
+              WRITE MAIL-PRTREC FROM MAIL-BODY05                                
+           END-IF                                                               
+                                                                                
+           IF WS-EOF-BP13FD10 = 'Y'                                             
+              WRITE MAIL-PRTREC FROM MAIL-END                                   
+           END-IF.                                                              
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4300-PRINT-MAIL-DEVELOPER.                                               
+      *-------------------------------------------------------------            
+                                                                                
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           WRITE MAIL-PRTREC FROM MAIL-SPACES.                                  
+           ADD 1               TO CNT-DEV-SNO                                   
+           MOVE CNT-DEV-SNO    TO MAIL-DEV-SNO.                                 
+           WRITE MAIL-PRTREC FROM MAIL-BODY01.                                  
+                                                                                
+       4300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       5000-GET-CREDIT-TAG.                                                     
+      *-------------------------------------------------------------            
+            MOVE ZEROS   TO WS-PP-NUM.                                          
+            MOVE ZEROS   TO WS-LS-REQ.                                          
+            MOVE SPACES  TO CREDIT-TAG.                                         
+                                                                                
+            IF FD10-NUM-PP = SPACES OR LOW-VALUES                               
+               MOVE ZEROS TO FD10-NUM-PP                                        
+            END-IF.                                                             
+                                                                                
+            MOVE FD10-NUM-PP TO WS-PP.                                          
+            IF WS-PP-NUM = ZEROS                                                
+               GO TO 5000-EXIT                                                  
+            END-IF.                                                             
+                                                                                
+            MOVE 'N'           TO WS-PROCESSED.                                 
+            MOVE FD10-NUM-REGN TO KD30-NUM-REGN.                                
+            READ BP13KD30.                                                      
+            EVALUATE KD30-STATUS                                                
+            WHEN 00                                                             
+                 PERFORM 5100-CHECK-REC THRU                                    
+                         5100-EXIT VARYING WS-IDX                               
+                         FROM 1 BY 1 UNTIL WS-IDX > 15 OR                       
+                                   WS-PROCESSED = 'Y'                           
+            WHEN 23                                                             
+                 DISPLAY 'BP13KD30 - REC NOT FND, KEY: '                        
+                          KD30-KEY-FLD                                          
+            WHEN OTHER                                                          
+                 DISPLAY 'BP13KD30 - ERROR READ, STATUS: '                      
+                          KD30-STATUS                                           
+            END-EVALUATE.                                                       
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       5100-CHECK-REC.                                                          
+      *-------------------------------------------------------------            
+            IF KD30-NUM-PP-SCHDL(WS-IDX) NOT = FD10-NUM-PP                      
+               GO TO 5100-EXIT                                                  
+            END-IF.                                                             
+            IF KD30-AMT-PP-LOAN(WS-IDX) IS NOT NUMERIC                          
+               MOVE ZEROS TO KD30-AMT-PP-LOAN(WS-IDX)                           
+            END-IF.                                                             
+            IF KD30-AMT-PP-REQ(WS-IDX)    IS NOT NUMERIC                        
+               MOVE ZEROS TO KD30-AMT-PP-REQ(WS-IDX)                            
+            END-IF.                                                             
+            IF KD30-AMT-PP-PAID(WS-IDX)    IS NOT NUMERIC                       
+               MOVE ZEROS TO KD30-AMT-PP-PAID(WS-IDX)                           
+            END-IF.                                                             
+                                                                                
+            COMPUTE WS-LS-REQ = KD30-AMT-PP-REQ(WS-IDX)                         
+                              - KD30-AMT-PP-LOAN(WS-IDX).                       
+                                                                                
+            IF WS-LS-REQ NOT = KD30-AMT-PP-PAID(WS-IDX)                         
+               MOVE 'N' TO CREDIT-TAG                                           
+            END-IF.                                                             
+                                                                                
+            MOVE    'Y' TO WS-PROCESSED.                                        
+                                                                                
+       5100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       9000-CLOSE-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+            DISPLAY ' '.                                                        
+            DISPLAY ' - BP13CC79 CONTROL TOTALS -----'.                         
+            DISPLAY ' '.                                                        
+            DISPLAY '  NO. OF BP13FD10 RECS READ     = ' WS-FD10-READ.          
+            DISPLAY '  NO. OF RECS WRITTEN IN REPORT = ' WS-TOTAL-REC.          
+            DISPLAY '  NO. OF RECS BYPASSED: '                                  
+            DISPLAY '      A. IBG TXT IS SPACES      = '                        
+                              WS-BYPASS-NO-CHEQUE.                              
+            DISPLAY '      B. NOT EQUAL TO CURR DTE  = '                        
+                              WS-BYPASS-CURR-DTE.                               
+            DISPLAY ' '.                                                        
+                                                                                
+            CLOSE BP13FD10                                                      
+                  BP13KD30                                                      
+                  SY02F001                                                      
+                  BP13MAIL.                                                     
+                                                                                
+           IF KD30-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'BP13KD30 - CLOSE ERROR, STATUS: ' KD30-STATUS            
+              MOVE KD30-STATUS TO RETURN-CODE                                   
+           END-IF.                                                              
+                                                                                
+                                                                                
+            STOP RUN.                                                           
+                                                                                
+       9000-EXIT.                                                               
+            EXIT.                                                               
+

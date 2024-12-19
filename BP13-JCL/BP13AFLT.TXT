@@ -1,0 +1,154 @@
+//BP13AFLT JOB (BP13P),'BP13AFLT',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//        NOTIFY=CSD0071                                                        
+//JOBLIB  DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                    
+//**************************************************************                
+//* 1) RE-EXTRACT FROM BP13K800, BYPASS 10YR=NO, EC-TAG=C                       
+//*    STEP1A-STEP1D, SAME AS BP13A537                                          
+//* 2) ADD BALANCE FLAT SUPPLY, DISTRIBUTE TO PRIORITY GROUP                    
+//* 3) COMPUTE FLAT QUOTA FOR NHH/UPG                                           
+//**************************************************************                
+//*BP130642 LSB 990615 - INCLUDE A9904 CASES, INCLIDE E45 CASES TO              
+//*                      BALLOT FILE                                            
+//*BP130721 LSB 990818 - DO NOT INCLUDE BP13.F520.JBE45.YES IN BP13K520         
+//*BP130652 SRA 991012 - EXPAND F500,F510 & F520 RECL FROM 300 TO 500           
+//*BP130832 LSB 000412 - ADD BALANCE FLAT BF SHORTLISTING, DUSTR TO             
+//*                      PRIORITY IN BP13C735 INSTEAD OF JUST ADD PA            
+//*                      DELETE STEP ON JB-E45                                  
+//*BP130871 SSS 000608 - LISTING TO EAALSS                                      
+//*BP131042 LSB 010709 - ONLY ALLOW NN/NE APPLN FOR RFS BALLOTING               
+//*BP132293 SK  030210 - READ BP13K703 FOR BP13C705                             
+//*BP132317 ROM 030306 - TO REMOVE STEP0A UNTIL STEP9C                          
+//*BP132546 YCH 110604 - INCLUDE STORCLAS(PRODRLS) & LOG(NONE)                  
+//*BP132596 PGS 17092004 TO CHANGE ROOM-TYPE TO 3,4,5 INSTEAD 4,5,E             
+//*BP134861 EAA1 23042013 EXPAND BP13K010 TO 600                                
+//*BP135458 SMR2 04082014 EXPAND BP13K712 TO 350                                
+//**********************************************************************        
+//**************************************************************                
+//*  TO SEND DYNAMIC JOB DESCRIPTOR ENTRIES AHEAD OF THE PRINT                  
+//*  DATASET, SINGLE COPY                                                       
+//**************************************************************                
+//PRT01    EXEC PGM=IEBGENER                                                    
+//SYSUT1   DD *                                                                 
+$DJDE$ JDE=BP13D,JDL=BP13,END;                                                  
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EAALSS1A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID)                                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//**************************************************************                
+//*  TO SEND DYNAMIC JOB DESCRIPTOR ENTRIES AHEAD OF THE PRINT                  
+//*  DATASET, WITH DUPLICATE COPIES                                             
+//**************************************************************                
+//PRT02    EXEC PGM=IEBGENER                                                    
+//SYSUT1   DD *                                                                 
+$DJDE$ JDE=13C510,JDL=BP13,END;                                                 
+//FORMID   OUTPUT FORMS=1WD2,GROUPID=EAALSS2A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID)                                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//**************************************************************                
+//*      VERIFY FILES BEFORE JOB RUN                                            
+//**************************************************************                
+//STEP0A  EXEC PGM=IDCAMS,COND=(0,NE)                                           
+//INPUT1   DD DSN=BP13.K712.FLATNHUG,DISP=OLD                                   
+//INPUT2   DD DSN=BP13.K520.BALLOT,DISP=OLD                                     
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN   DD *                                                                  
+          VFY FILE(INPUT1)                                                      
+          VFY FILE(INPUT2)                                                      
+//*---------------------------------------------------------------------        
+//* CREATE/DEFINE BP13K712 FLAT NHH/UPG FILE                                    
+//*---------------------------------------------------------------------        
+//STEP10   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.BLANK.CHAR350,DISP=OLD                                   
+//SYSIN    DD  *                                                                
+          DEL (BP13.K712.FLATNHUG) CL PURGE                                     
+          DEF CLUSTER                                -                          
+              (NAME(BP13.K712.FLATNHUG)              -                          
+              CYL(1 1)                               -                          
+              UNIQUE                                 -                          
+              STORCLAS(PRODRLS)                      -                          
+              LOG(NONE)                              -                          
+              SHR(2 3))                              -                          
+              DATA                                   -                          
+              (NAME(BP13.K712.FLATNHUG.DATA)         -                          
+              KEYS(10 0)                             -                          
+              RECSZ(350 350)                         -                          
+              CISZ(4096)                             -                          
+              FSPC(10 10))                           -                          
+              INDEX                                  -                          
+              (NAME(BP13.K712.FLATNHUG.INDEX))                                  
+      IF MAXCC = 0  THEN                             -                          
+         REPRO IFILE(INPUT1)                         -                          
+              ODS(BP13.K712.FLATNHUG)                                           
+//*---------------------------------------------------------------------        
+//* SORT THE BALLOT FILE, OMIT PA SCHEME                                        
+//*---------------------------------------------------------------------        
+//STEP11   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K520.BALLOT,DISP=SHR,                                    
+//            AMP=('BUFND=23')                                                  
+//SORTOUT  DD DSN=&&BP13F520,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(130,15),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(78,2,A,211,2,A,213,3,A),FORMAT=CH                                
+  OMIT COND=(213,3,CH,EQ,C'PA ')                                                
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* COMPUTE NO OF TOTAL REQUESTS FOR NHH/UPG FOR PRIORITY SCHEME ONLY           
+//* DO NOT COMPUTE FOR CCC AND PA SCHEME                                        
+//*---------------------------------------------------------------------        
+//STEP12   EXEC PGM=BP13C544,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.PRIO,DISP=SHR                                
+//BP13F520 DD DSN=&&BP13F520,DISP=(OLD,PASS)                                    
+//BP13K712 DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* COMPUTE NO OF UNITS SET ASIDE FOR NHH/UPG FOR PRIORITY SCHEME               
+//* DO NOT COMPUTE FOR CCC AND PA SCHEME                                        
+//*---------------------------------------------------------------------        
+//STEP13   EXEC PGM=BP13C545,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.PRIO,DISP=SHR                                
+//BP13K010 DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//BP13K712 DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* PRINT REPORT ON REQUEST/FLAT FOR NHH/UPG FOR EACH COHORT                    
+//*---------------------------------------------------------------------        
+//STEP14   EXEC PGM=BP13C552,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.PRIO,DISP=SHR                                
+//BP13K712 DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//BP13L552 DD SYSOUT=2,OUTPUT=(*.PRT02.FORMID)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT OUT 3,4,5 FLATS TO PRINT FLAT SUPPLY BEFORE PIGEONHOLING               
+//*---------------------------------------------------------------------        
+//STEP15   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//SORTOUT  DD DSN=&&P13K010N,DISP=(,PASS),                                      
+//            UNIT=(SYSDA,1),SPACE=(CYL,(5,3),RLSE),                            
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=0)                                
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,5,A),FORMAT=CH                                                
+   INCLUDE COND=(4,2,CH,EQ,C'3 ',OR,                                            
+       4,2,CH,EQ,C'4 ',OR,                                                      
+       4,2,CH,EQ,C'5 ')                                                         
+//*---------------------------------------------------------------------        
+//* PRINT TENDER PROGRAM SUMMARY REPORT BEFORE PIGEON-HOLING                    
+//*---------------------------------------------------------------------        
+//STEP16    EXEC PGM=BP13C524,COND=(0,NE)                                       
+//SYSPRINT  DD SYSOUT=*                                                         
+//BP13F010  DD DSN=&&P13K010N,DISP=(OLD,PASS)                                   
+//BP13F713  DD DSN=BP13.BLANK.CHAR20,DISP=SHR                                   
+//BP13L524  DD SYSOUT=2,OUTPUT=(*.PRT02.FORMID)                                 
+//SYSDBG    DD SYSOUT=*                                                         
+//SYSDBOUT  DD SYSOUT=*                                                         
+//SYSOUT    DD SYSOUT=*                                                         
+/*                                                                              
+

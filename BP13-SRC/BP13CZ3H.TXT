@@ -1,0 +1,939 @@
+      *************************                                                 
+       IDENTIFICATION DIVISION.                                                 
+      *************************                                                 
+       PROGRAM-ID.    BP13CZ3H.                                                 
+      *AUTHOR.        GURU..                                                    
+      *DATE-WRITTEN.  08/07/19.                                                 
+      *****************************************************************         
+      *OBJECTIVE - MATCH NRIC IN RDN TENANT AND MOBILITY WITH STAY >  *         
+      *            24 MONTHS                                          *         
+      *          - READ BP13K757 TO GET REQUEST FOR TPS TAG           *         
+      *            DETERMIE ELIGIBLE OR NOT ELIGIBLE BASED ON DTE-BAL *         
+      *            AGAIN MOVE-IN-DATE                                 *         
+      *          - IF CASES DID NOT REQUEST FOR TPS, IF FOUND AS ELIG *         
+      *            ALSO TAG ALLOC-SCH=TPS.                            *         
+      *                                                               *         
+      *     INPUT  FILE : 1. BP13F716  - TENANT CASES                 *         
+      *                   2. BP13K730  - CHECK BYPASS CODE            *         
+      *                   3. BP13K757  - GET TPS REQUEST              *         
+      *     OUTPUT FILE : 1. BP13LZ3H  - IN-ELIGIBLE + TPS RQSTD      *         
+      *                   2. P13LZ3HA  - ELIGIBLE    + TPS RQSTD      *         
+      *                   3. P13LZ3HB  - ELIGIBLE    + TPS NOT RQSTD  *         
+      *---------------------------------------------------------------*         
+      * REF NO      DATE     BY   AMENDMENTS/ENHANCEMENTS             *         
+      * --------  --------  ----  -----------------------             *         
+      * BP137896  08/07/19  KR13  NEW PGM                             *         
+      * BP137896  20/10/20  KR13  UPDT K730-ALLO-SCH AS PA FOR INELIG.*         
+      * BP138591  03/02/21  KR13  MATCH F716 WITH F730.               *         
+      * BP139290  10/05/22  KR13  K813-DTE-CLO BTO IF NO MOVE-OUT DTE *         
+      * BP139673  05/06/23  AM25  REPORT CONVERSION                   *         
+      *           15/09/23  AM25  CATER FOR HFE SUBMISSION DATE       *         
+      *                           CLEAN-UP CONDITIONS IN PARA 4100-   *         
+      * BP139280  30/10/23  EAA2  EXPAND BP13K757 FROM 3000 TO 4000   *         
+      * BP139780  22/11/23  AM25  CATER FOR HFE MOVE-OUT DATE         *         
+      *                           REMOVE BP13K813                     *         
+      *                           REMOVE LOW-VALUES IN REPORT         *         
+      *****************************************************************         
+                                                                                
+      **********************                                                    
+       ENVIRONMENT DIVISION.                                                    
+      **********************                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F716  ASSIGN  TO  BP13F716.                               
+                                                                                
+           SELECT BP13F730  ASSIGN  TO  BP13F730.                               
+                                                                                
+           SELECT BP13K730  ASSIGN  TO  BP13K730                                
+                      ORGANIZATION  IS  INDEXED                                 
+                       ACCESS MODE  IS  RANDOM                                  
+                        RECORD KEY  IS  K730-KEY-NEW                            
+                       FILE STATUS  IS  K730-STATUS.                            
+                                                                                
+           SELECT BP13K757  ASSIGN  TO  BP13K757                                
+                       ORGANIZATION IS  INDEXED                                 
+                        ACCESS MODE IS  RANDOM                                  
+                         RECORD KEY IS  K757-KEY-FLD                            
+                        FILE STATUS IS  K757-STATUS.                            
+                                                                                
+           SELECT BP13LZ3H  ASSIGN  TO  BP13LZ3H.                               
+                                                                                
+           SELECT P13LZ3HA  ASSIGN  TO  P13LZ3HA.                               
+                                                                                
+           SELECT P13LZ3HB  ASSIGN  TO  P13LZ3HB.                               
+                                                                                
+      ***************                                                           
+       DATA DIVISION.                                                           
+      ***************                                                           
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13F716.                                                           
+       COPY BP13F716.                                                           
+                                                                                
+       FD   BP13F730                                                            
+            RECORD CONTAINS 500 CHARACTERS                                      
+            LABEL RECORDS ARE STANDARD                                          
+            RECORDING MODE IS F.                                                
+       COPY BP13F730.                                                           
+                                                                                
+       FD  BP13LZ3H                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+       01  BP13LZ3H-REC  PIC X(132).                                            
+                                                                                
+       FD  P13LZ3HA                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+       01  P13LZ3HA-REC  PIC X(132).                                            
+                                                                                
+       FD  P13LZ3HB                                                             
+           RECORD CONTAINS 132 CHARACTERS                                       
+           RECORDING MODE IS F.                                                 
+       01  P13LZ3HB-REC  PIC X(132).                                            
+                                                                                
+       FD  BP13K730                                                             
+           RECORD CONTAINS 500 CHARACTERS.                                      
+       COPY BP13K730.                                                           
+                                                                                
+       FD  BP13K757                                                             
+           RECORD CONTAINS 4000 CHARACTERS.                                     
+       COPY BP13K757.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      ******************************************************************        
+      *                   WORKING-STORAGE AREA                         *        
+      ******************************************************************        
+       01  FILE-VARIABLES.                                                      
+           05  WS-F716-EOF                  PIC X(01) VALUE 'N'.                
+           05  WS-F730-EOF                  PIC X(01) VALUE 'N'.                
+           05  WS-K730-EOF                  PIC X(01) VALUE 'N'.                
+           05  WS-REQ-TPS                   PIC X(01) VALUE 'N'.                
+           05  WS-K730-IC-MTCH              PIC X(01) VALUE 'N'.                
+           05  WS-SKIP-DT-CHK               PIC X(01) VALUE 'Y'.                
+           05  WS-WRITTEN                   PIC X(01) VALUE 'N'.                
+           05  WS-BTO-SBF                   PIC X(01) VALUE 'N'.                
+           05  K730-STATUS                  PIC 9(02) VALUE ZEROES.             
+           05  K757-STATUS                  PIC 9(02) VALUE ZEROES.             
+           05  WS-K730-REGN-COND            PIC X(01) VALUE SPACES.             
+           05  WS-K730-DT-CND               PIC X(01) VALUE SPACES.             
+           05  WS-WRITE-REGN                PIC X(08) VALUE SPACES.             
+           05  WS-PREV-REGN                 PIC X(08) VALUE SPACES.             
+           05  WS-PREV-NRIC                 PIC X(09) VALUE SPACES.             
+           05  WS-PREV-MOVE-IN              PIC X(08) VALUE SPACES.             
+           05  LZ3H-NELIG-REC               PIC X(100) VALUE SPACES.            
+                                                                                
+           05  WS-TEMP-MONTH                PIC 9(02) VALUE ZEROES.             
+           05  WS-TEMP-YEAR                 PIC 9(04) VALUE ZEROES.             
+           05  WS-QUOTIENT                  PIC 9(04) VALUE ZEROES.             
+           05  WS-REMAINDER                 PIC 9(04) VALUE ZEROES.             
+           05  WS-REM-DAYS                  PIC 9(04) VALUE ZEROES.             
+                                                                                
+       01  WS-CALENDAR-DAYS.                                                    
+            05  WS-NUM-DAYS                  PIC X(24)  VALUE                   
+                '312831303130313130313031'.                                     
+            05  FILLER REDEFINES WS-NUM-DAYS.                                   
+                10  WS-MTH-DAY               PIC 9(2) OCCURS 12 TIMES.          
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F716-READ                 PIC 9(07) VALUE ZEROES.             
+           05  WS-F730-READ                 PIC 9(07) VALUE ZEROES.             
+           05  WS-K757-READ                 PIC 9(07) VALUE ZEROES.             
+           05  WS-K730-READ                 PIC 9(07) VALUE ZEROES.             
+           05  WS-K730-NFND                 PIC 9(07) VALUE ZEROES.             
+           05  WS-K730-IC-NMTCH             PIC 9(07) VALUE ZEROES.             
+           05  WS-K757-TPS                  PIC 9(07) VALUE ZEROES.             
+           05  WS-K757-NT-FND               PIC 9(07) VALUE ZEROES.             
+           05  WS-LZ3H-WRITE                PIC 9(07) VALUE ZEROES.             
+           05  WS-LZ3HA-WRITE               PIC 9(07) VALUE ZEROES.             
+           05  WS-LZ3HB-WRITE               PIC 9(07) VALUE ZEROES.             
+           05  WS-K730-REWRITE              PIC 9(07) VALUE ZEROES.             
+           05  WS-BYPASS-PA                 PIC 9(07) VALUE ZEROES.             
+           05  WS-ELIG-REQ                  PIC 9(07) VALUE ZEROES.             
+           05  WS-ELIG-NREQ                 PIC 9(07) VALUE ZEROES.             
+           05  WS-NELIG-REQ                 PIC 9(07) VALUE ZEROES.             
+           05  WS-NELIG-NREQ                PIC 9(07) VALUE ZEROES.             
+           05  WS-F730-F716-M               PIC 9(07) VALUE ZEROES.             
+           05  WS-F730-F716-NM              PIC 9(07) VALUE ZEROES.             
+           05  WS-TOT-NELIG                 PIC 9(07) VALUE ZEROES.             
+           05  WS-TOT-DIFF                  PIC 9(07) VALUE ZEROES.             
+           05  WS-LESS-24-MNTHS             PIC 9(07) VALUE ZEROES.             
+           05  WS-DISP-MNTH                 PIC -9999  VALUE ZEROES.            
+           05  CUR-DTE                      PIC 9(06) VALUE ZEROES.             
+           05  WS-MNTH-DIFF                 PIC 9(06) VALUE ZEROES.             
+           05  WS-MNTH-DIFF1                PIC S9(06) VALUE ZEROES.            
+           05  WS-DISP-DIFF1                PIC S9(06) VALUE ZEROES.            
+           05  WS-IN-DATE.                                                      
+               10  WS-IN-YY                 PIC 9(04) VALUE ZEROES.             
+               10  WS-IN-MM                 PIC 9(02) VALUE ZEROES.             
+               10  WS-IN-DD                 PIC 9(02) VALUE ZEROES.             
+           05  WS-OUT-DATE.                                                     
+               10  WS-OUT-YY                PIC 9(04) VALUE ZEROES.             
+               10  WS-OUT-MM                PIC 9(02) VALUE ZEROES.             
+               10  WS-OUT-DD                PIC 9(02) VALUE ZEROES.             
+           05  WS-LZ3H-PAGE-CNT             PIC 9(4)  VALUE ZEROES.             
+           05  WS-LZ3H-LINE-CNT             PIC 9(2)  VALUE 60.                 
+           05  WS-LZ3HA-PAGE-CNT            PIC 9(4)  VALUE ZEROES.             
+           05  WS-LZ3HA-LINE-CNT            PIC 9(2)  VALUE 60.                 
+           05  WS-LZ3HB-PAGE-CNT            PIC 9(4)  VALUE ZEROES.             
+           05  WS-LZ3HB-LINE-CNT            PIC 9(2)  VALUE 60.                 
+                                                                                
+       01  WS-TIME-DATES.                                                       
+           05  WS-SYSTEM-DATE.                                                  
+               10  WS-SYS-CCYY.                                                 
+                   15  WS-SYS-CC            PIC 9(02).                          
+                   15  WS-SYS-YY            PIC 9(02).                          
+               10  WS-SYS-MM                PIC 9(02).                          
+               10  WS-SYS-DD                PIC 9(02).                          
+                                                                                
+      **************************************************************            
+      *            BP13LZ3H - R E P O R T   L A Y O U T            *            
+      **************************************************************            
+       01  LZ3H-HEADING-01.                                                     
+           05  FILLER              PIC X(08)     VALUE 'BP13LZ3H'.              
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  FILLER              PIC X(05)     VALUE 'HDB3'.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE 'DATE :'.                
+           05  LZ3H-RUN-DATE       PIC X(10).                                   
+           05  FILLER              PIC X(7)      VALUE ' PAGE: '.               
+           05  LZ3H-PAGE           PIC Z,ZZ9.                                   
+                                                                                
+       01  LZ3H-HEADING-01A.                                                    
+           05  FILLER              PIC X(08)     VALUE 'P13LZ3HA'.              
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  FILLER              PIC X(05)     VALUE 'HDB3'.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE 'DATE :'.                
+           05  LZ3HA-RUN-DATE      PIC X(10).                                   
+           05  FILLER              PIC X(7)      VALUE ' PAGE: '.               
+           05  LZ3HA-PAGE          PIC Z,ZZ9.                                   
+                                                                                
+       01  LZ3H-HEADING-01B.                                                    
+           05  FILLER              PIC X(08)     VALUE 'P13LZ3HB'.              
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  FILLER              PIC X(05)     VALUE 'HDB3'.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(39)     VALUE                          
+               'S Y S T E M   O F   C O M M I T M E N T'.                       
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(07)     VALUE 'DATE :'.                
+           05  LZ3HB-RUN-DATE      PIC X(10).                                   
+           05  FILLER              PIC X(7)      VALUE ' PAGE: '.               
+           05  LZ3HB-PAGE          PIC Z,ZZ9.                                   
+                                                                                
+       01  LZ3H-HEADING-02.                                                     
+           05  FILLER              PIC X(25)     VALUE SPACES.                  
+           05  FILLER              PIC X(32)     VALUE                          
+               'TPS INELIGIBLE CASES REPORT'.                                   
+                                                                                
+       01  LZ3H-HEADING-02A.                                                    
+           05  FILLER              PIC X(20)     VALUE SPACES.                  
+           05  FILLER              PIC X(37)     VALUE                          
+               'TPS REQUESTED & ELIGIBLE CASES REPORT'.                         
+                                                                                
+       01  LZ3H-HEADING-02B.                                                    
+           05  FILLER              PIC X(18)     VALUE SPACES.                  
+           05  FILLER              PIC X(41)     VALUE                          
+               'TPS NOT-REQUESTED & ELIGIBLE CASES REPORT'.                     
+                                                                                
+       01  LZ3H-HEADING-03.                                                     
+           05  FILLER              PIC X(55)     VALUE                          
+              'SALES   ;MODE;EST;FLAT;REQ TPS;HA1 NRIC ;HH;ALLO-SCH;EL'.        
+           05  FILLER              PIC X(36)     VALUE                          
+              'IG-SCH;TENANCY;REMARKS             ;'.                           
+                                                                                
+       01  LZ3H-HEADING-03A.                                                    
+           05  FILLER              PIC X(52)     VALUE                          
+               'REGN    ;    ;   ;TYPE;IN APP ;         ;  ;        '.          
+           05  FILLER              PIC X(39)     VALUE                          
+               ';        ;PERIOD ;                    ;'.                       
+                                                                                
+       01  LZ3H-DATA.                                                           
+           05  LZ3H-REGN           PIC X(08)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ';'.                     
+           05  LZ3H-MODE           PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ';'.                     
+           05  LZ3H-EST            PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ';'.                     
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  LZ3H-FT             PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ';'.                     
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  LZ3H-TPS-REQ        PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ';'.                     
+           05  LZ3H-NRIC-HA        PIC X(09)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ';'.                     
+           05  FILLER              PIC X(01)     VALUE SPACES.                  
+           05  LZ3H-HH-STAT        PIC X(01)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ';'.                     
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  LZ3H-ALLO-SCH       PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ';'.                     
+           05  FILLER              PIC X(03)     VALUE SPACES.                  
+           05  LZ3H-ELIG-SCH       PIC X(03)     VALUE SPACES.                  
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ';'.                     
+           05  LZ3H-TENANCY-P      PIC ZZZZ9.                                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ';'.                     
+           05  LZ3H-REMARKS        PIC X(20)     VALUE SPACES.                  
+           05  FILLER              PIC X(01)     VALUE ';'.                     
+                                                                                
+                                                                                
+                                                                                
+      ******************************************************************        
+      *                   P R O G R A M     B O D Y                    *        
+      ******************************************************************        
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+      ******************************************************************        
+       0000-MAIN.                                                               
+      ******************************************************************        
+                                                                                
+           PERFORM 1000-OPEN-ROUTINE        THRU 1000-EXIT.                     
+                                                                                
+           PERFORM 2000-READ-BP13F716       THRU 2000-EXIT.                     
+                                                                                
+           PERFORM 2500-READ-BP13F730       THRU 2500-EXIT.                     
+                                                                                
+           PERFORM 3000-PROCESS-RECORDS     THRU 3000-EXIT                      
+             UNTIL WS-F716-EOF = 'Y' AND WS-F730-EOF = 'Y'.                     
+                                                                                
+           PERFORM 9999-CLOSE-ROUTINE       THRU 9999-EXIT.                     
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       1000-OPEN-ROUTINE.                                                       
+      ******************************************************************        
+                                                                                
+           OPEN INPUT  BP13F716                                                 
+                       BP13F730                                                 
+                       BP13K757                                                 
+                  I-O  BP13K730                                                 
+               OUTPUT  BP13LZ3H                                                 
+                       P13LZ3HA                                                 
+                       P13LZ3HB.                                                
+                                                                                
+           IF K730-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'ERROR OPENING BP13K730 , STATUS = ' K730-STATUS          
+              GO TO 9999-CLOSE-ROUTINE                                          
+           END-IF.                                                              
+                                                                                
+           IF K757-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'ERROR OPENING BP13K757 , STATUS = ' K757-STATUS          
+              GO TO 9999-CLOSE-ROUTINE                                          
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE(1:8)  TO WS-SYSTEM-DATE.                  
+           STRING WS-SYSTEM-DATE(7:2) '/'                                       
+                  WS-SYSTEM-DATE(5:2) '/'                                       
+                  WS-SYSTEM-DATE(1:4)                                           
+                  DELIMITED BY SIZE         INTO LZ3H-RUN-DATE.                 
+           MOVE LZ3H-RUN-DATE          TO LZ3HA-RUN-DATE                        
+                                          LZ3HB-RUN-DATE.                       
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       2000-READ-BP13F716.                                                      
+      ******************************************************************        
+                                                                                
+           READ BP13F716 AT END                                                 
+                MOVE 'Y'                    TO WS-F716-EOF                      
+                MOVE HIGH-VALUE             TO F716-NUM-REGN                    
+                GO TO 2000-EXIT                                                 
+           END-READ.                                                            
+                                                                                
+           IF F716-DTE-MOVING-IN NOT NUMERIC                                    
+              MOVE ZEROES                   TO F716-DTE-MOVING-IN               
+           END-IF                                                               
+                                                                                
+           ADD +1                           TO WS-F716-READ.                    
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       2500-READ-BP13F730.                                                      
+      ******************************************************************        
+                                                                                
+           READ BP13F730 AT END                                                 
+                MOVE 'Y'                    TO WS-F730-EOF                      
+                MOVE HIGH-VALUE             TO F730-NUM-REGN                    
+                GO TO 2500-EXIT                                                 
+           END-READ.                                                            
+                                                                                
+           ADD +1                           TO WS-F730-READ.                    
+                                                                                
+       2500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3000-PROCESS-RECORDS.                                                    
+      ******************************************************************        
+           IF F716-NUM-REGN = F730-NUM-REGN                                     
+                                                                                
+              ADD 1 TO WS-F730-F716-M                                           
+              MOVE 'N'                         TO WS-WRITTEN                    
+              MOVE SPACES                   TO LZ3H-NELIG-REC WS-REQ-TPS        
+                                               LZ3H-REMARKS                     
+              MOVE F716-NUM-REGN               TO WS-PREV-REGN                  
+                                                                                
+              PERFORM 4000-READ-K730           THRU 4000-EXIT                   
+                                                                                
+              PERFORM 5000-PROCESS-REGN-CASE   THRU 5000-EXIT                   
+                UNTIL F716-NUM-REGN NOT = WS-PREV-REGN                          
+                   OR WS-F716-EOF = 'Y'                                         
+                                                                                
+              IF WS-WRITTEN = 'N' AND WS-REQ-TPS = 'Y'                          
+                 MOVE '< 24 MONTHS      '      TO LZ3H-NELIG-REC(71:17)         
+                 PERFORM 6500-PRINT-HDR-LZ3H THRU 6500-EXIT                     
+                 WRITE BP13LZ3H-REC FROM LZ3H-NELIG-REC                         
+                 ADD 1 TO WS-NELIG-REQ WS-TOT-NELIG WS-LZ3H-LINE-CNT            
+                 IF K730-CDE-ALLOC-SCH = 'TPS'                                  
+                    PERFORM 6100-WRITE-BP13K730 THRU 6100-EXIT                  
+                 END-IF                                                         
+              ELSE                                                              
+                 IF WS-WRITTEN = 'N'                                            
+                    PERFORM 3700-WRITE-IN-ELIG THRU 3700-EXIT                   
+                 END-IF                                                         
+              END-IF                                                            
+              PERFORM 2500-READ-BP13F730       THRU 2500-EXIT                   
+           ELSE                                                                 
+              IF F716-NUM-REGN < F730-NUM-REGN                                  
+                 PERFORM 2000-READ-BP13F716    THRU 2000-EXIT                   
+              ELSE                                                              
+                 PERFORM 3500-WRITE-NO-MATCH   THRU 3500-EXIT                   
+                 PERFORM 2500-READ-BP13F730    THRU 2500-EXIT                   
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3500-WRITE-NO-MATCH.                                                     
+      ******************************************************************        
+           IF F730-CDE-ALLOC-SCH NOT = 'TPS'                                    
+              ADD 1  TO WS-BYPASS-PA                                            
+              GO TO 3500-EXIT.                                                  
+                                                                                
+           MOVE SPACES                      TO BP13K730-REC.                    
+           INITIALIZE BP13K730-REC.                                             
+           MOVE F730-NUM-REGN               TO K730-NUM-REGN                    
+                                                                                
+           READ BP13K730.                                                       
+                                                                                
+           IF K730-STATUS = 00                                                  
+              MOVE 'PA '                    TO K730-CDE-ALLOC-SCH               
+                                                                                
+              REWRITE BP13K730-REC                                              
+                                                                                
+              IF K730-STATUS = 00                                               
+                 ADD 1 TO WS-K730-REWRITE                                       
+              ELSE                                                              
+                 DISPLAY 'BP13K730 REWRITE ERROR/STAT: ' K730-STATUS            
+              END-IF                                                            
+              ADD 1 TO WS-K730-READ                                             
+           ELSE                                                                 
+              ADD 1 TO WS-K730-NFND                                             
+           END-IF.                                                              
+                                                                                
+           INITIALIZE LZ3H-DATA.                                                
+           MOVE F730-NUM-REGN               TO LZ3H-REGN.                       
+           MOVE F730-NUM-ALLO-CAT           TO LZ3H-MODE.                       
+           MOVE F730-CDE-ELIG-SCH           TO LZ3H-ELIG-SCH.                   
+           MOVE F730-CDE-ALLOC-SCH          TO LZ3H-ALLO-SCH.                   
+           MOVE F730-CDE-FLAT-TYPE          TO LZ3H-FT.                         
+           MOVE F730-CDE-NT1                TO LZ3H-EST.                        
+           MOVE F730-CDE-HOUSEHOLD          TO LZ3H-HH-STAT.                    
+      *    MOVE F716-NUM-NRIC               TO LZ3H-NRIC-HA.                    
+           MOVE 'NOT FOUND AS TENANT'       TO LZ3H-REMARKS                     
+                                                                                
+           PERFORM 6500-PRINT-HDR-LZ3H THRU 6500-EXIT.                          
+           WRITE BP13LZ3H-REC FROM LZ3H-DATA.                                   
+                                                                                
+           ADD 1 TO WS-F730-F716-NM WS-TOT-NELIG WS-LZ3H-LINE-CNT.              
+                                                                                
+       3500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3700-WRITE-IN-ELIG.                                                      
+      ******************************************************************        
+           IF F730-CDE-ALLOC-SCH NOT = 'TPS'                                    
+              ADD 1  TO WS-BYPASS-PA                                            
+              GO TO 3700-EXIT.                                                  
+                                                                                
+           INITIALIZE LZ3H-DATA.                                                
+                                                                                
+           IF WS-K730-IC-MTCH = 'N'                                             
+              MOVE 'NRIC NOT TALLY APPLT'   TO LZ3H-REMARKS                     
+              ADD 1                         TO WS-K730-IC-NMTCH                 
+              PERFORM 6100-WRITE-BP13K730   THRU 6100-EXIT                      
+           END-IF                                                               
+                                                                                
+           ADD 1 TO WS-TOT-NELIG                                                
+                                                                                
+           MOVE F730-NUM-REGN               TO LZ3H-REGN.                       
+           MOVE F730-NUM-ALLO-CAT           TO LZ3H-MODE.                       
+           MOVE F730-CDE-ELIG-SCH           TO LZ3H-ELIG-SCH.                   
+           MOVE F730-CDE-ALLOC-SCH          TO LZ3H-ALLO-SCH.                   
+           MOVE F730-CDE-FLAT-TYPE          TO LZ3H-FT.                         
+           MOVE F730-CDE-NT1                TO LZ3H-EST.                        
+           MOVE F730-CDE-HOUSEHOLD          TO LZ3H-HH-STAT.                    
+      *    MOVE F716-NUM-NRIC               TO LZ3H-NRIC-HA.                    
+                                                                                
+           PERFORM 6500-PRINT-HDR-LZ3H THRU 6500-EXIT.                          
+           WRITE BP13LZ3H-REC FROM LZ3H-DATA.                                   
+           ADD 1 TO WS-LZ3H-LINE-CNT.                                           
+                                                                                
+       3700-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4000-READ-K730.                                                          
+      ******************************************************************        
+                                                                                
+           MOVE SPACES                      TO BP13K730-REC.                    
+           INITIALIZE BP13K730-REC.                                             
+           MOVE 'N'                         TO WS-K730-REGN-COND                
+                                             WS-BTO-SBF WS-K730-IC-MTCH.        
+           MOVE F716-NUM-REGN               TO K730-NUM-REGN                    
+                                                                                
+           READ BP13K730.                                                       
+                                                                                
+           EVALUATE K730-STATUS                                                 
+               WHEN 00                                                          
+                    ADD 1 TO WS-K730-READ                                       
+                    PERFORM 4100-K730-COND-CHECK THRU 4100-EXIT                 
+               WHEN OTHER                                                       
+                    ADD 1 TO WS-K730-NFND                                       
+           END-EVALUATE.                                                        
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       4100-K730-COND-CHECK.                                                    
+      ******************************************************************        
+                                                                                
+           IF ((K730-NUM-ALLO-CAT = 'ROF' OR 'OBF')                             
+           OR (K730-CDE-ELIG-SCH = 'SSC' OR 'SSE')                              
+           OR (K730-NUM-MCPS NOT = ' ' AND 'N')                                 
+           OR (K730-CDE-ALLOC-SCH = 'TCP' OR 'SPS' OR 'FTS' OR 'STS')           
+           OR (K730-NUM-PORT-ELIG-TAG NOT = ' ')                                
+           OR (K730-NUM-AST = 'Y')                                              
+           OR (K730-NUM-MGPS = 'Y' OR 'P' OR 'C')                               
+           OR (K730-NUM-NTIMER = 'Y')                                           
+           OR (K730-CDE-FLAT-TYPE(1:1) = '4' OR '5'))                           
+              MOVE 'N'                      TO WS-K730-REGN-COND                
+           ELSE                                                                 
+              MOVE 'Y'                      TO WS-K730-REGN-COND                
+           END-IF.                                                              
+                                                                                
+           IF K730-NUM-ALLO-CAT = 'BTO' OR 'SBF'                                
+              MOVE 'Y'                      TO WS-BTO-SBF                       
+           END-IF                                                               
+                                                                                
+           MOVE K730-NUM-REGN               TO LZ3H-REGN.                       
+           MOVE K730-NUM-ALLO-CAT           TO LZ3H-MODE.                       
+           MOVE K730-CDE-ELIG-SCH           TO LZ3H-ELIG-SCH.                   
+           MOVE K730-CDE-ALLOC-SCH          TO LZ3H-ALLO-SCH.                   
+           MOVE K730-CDE-FLAT-TYPE          TO LZ3H-FT.                         
+           MOVE K730-CDE-NT1                TO LZ3H-EST.                        
+           MOVE K730-CDE-HOUSEHOLD          TO LZ3H-HH-STAT.                    
+           MOVE F716-NUM-NRIC               TO LZ3H-NRIC-HA.                    
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5000-PROCESS-REGN-CASE.                                                  
+      ******************************************************************        
+                                                                                
+           MOVE ZEROES                      TO WS-TOT-DIFF                      
+                                               WS-PREV-MOVE-IN                  
+           MOVE F716-NUM-NRIC               TO WS-PREV-NRIC                     
+           MOVE 'N'                         TO WS-K730-DT-CND                   
+                                                                                
+           IF F716-DTE-MOVING-OUT NOT NUMERIC                                   
+              MOVE F730-DTE-REQUEST         TO F716-DTE-MOVING-OUT              
+           END-IF                                                               
+                                                                                
+           IF F716-DTE-MOVING-OUT > F730-DTE-REQUEST                            
+              MOVE F730-DTE-REQUEST         TO F716-DTE-MOVING-OUT              
+           END-IF                                                               
+                                                                                
+           IF F716-DTE-MOVING-OUT(1:6) >= F730-DTE-REQUEST(1:6)                 
+              MOVE 'Y'                      TO WS-K730-DT-CND                   
+           END-IF                                                               
+                                                                                
+           IF (F716-NUM-NRIC = K730-NUM-NRIC1 OR K730-NUM-NRIC2                 
+                            OR K730-NUM-NRIC3 OR K730-NUM-NRIC4)                
+              MOVE 'Y'                      TO WS-K730-IC-MTCH                  
+           END-IF                                                               
+                                                                                
+           IF (F716-NUM-NRIC = K730-NUM-NRIC1 OR K730-NUM-NRIC2                 
+                            OR K730-NUM-NRIC3 OR K730-NUM-NRIC4)                
+           AND WS-WRITTEN = 'N' AND WS-BTO-SBF = 'Y'                            
+                                                                                
+               PERFORM 5100-MULTIPLE-RECORD THRU 5100-EXIT                      
+                 UNTIL F716-NUM-NRIC NOT = WS-PREV-NRIC                         
+                    OR WS-F716-EOF = 'Y'                                        
+               PERFORM 6000-WRITE-DATA      THRU 6000-EXIT                      
+                                                                                
+           ELSE                                                                 
+              PERFORM 2000-READ-BP13F716    THRU 2000-EXIT                      
+           END-IF.                                                              
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5100-MULTIPLE-RECORD.                                                    
+      ******************************************************************        
+                                                                                
+           IF WS-K730-DT-CND = 'Y' AND WS-TOT-DIFF < 24 AND                     
+              F716-DTE-MOVING-IN <= F730-DTE-REQUEST                            
+                                                                                
+              PERFORM 5110-CHECK-DATE-GAP   THRU 5110-EXIT                      
+                                                                                
+              PERFORM 5120-CALC-DATE-DIFF   THRU 5120-EXIT                      
+                                                                                
+              MOVE F716-DTE-MOVING-IN       TO WS-PREV-MOVE-IN                  
+                                                                                
+           END-IF                                                               
+                                                                                
+           PERFORM 2000-READ-BP13F716       THRU 2000-EXIT.                     
+                                                                                
+           IF F716-NUM-NRIC = WS-PREV-NRIC                                      
+              IF F716-DTE-MOVING-OUT NOT NUMERIC                                
+                 MOVE F730-DTE-REQUEST         TO F716-DTE-MOVING-OUT           
+              END-IF                                                            
+                                                                                
+              IF F716-DTE-MOVING-OUT > F730-DTE-REQUEST                         
+                 MOVE F730-DTE-REQUEST         TO F716-DTE-MOVING-OUT           
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       5100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5110-CHECK-DATE-GAP.                                                     
+      ******************************************************************        
+                                                                                
+           IF F716-DTE-MOVING-OUT NOT NUMERIC                                   
+              MOVE ZEROES                   TO F716-DTE-MOVING-OUT.             
+                                                                                
+           IF WS-PREV-MOVE-IN NOT NUMERIC                                       
+              MOVE ZEROES                   TO WS-PREV-MOVE-IN.                 
+                                                                                
+           MOVE WS-PREV-MOVE-IN             TO WS-IN-DATE                       
+           MOVE F716-DTE-MOVING-OUT         TO WS-OUT-DATE                      
+                                                                                
+           IF WS-PREV-MOVE-IN NOT = ZEROES                                      
+             IF (WS-IN-YY = WS-OUT-YY) AND (WS-IN-MM = WS-OUT-MM)               
+      *         IF WS-OUT-MM = 1                                                
+      *            ADD -1  TO WS-OUT-YY                                         
+      *            MOVE 12 TO WS-OUT-MM                                         
+      *         ELSE                                                            
+      *            ADD -1  TO WS-OUT-MM                                         
+      *         END-IF                                                          
+      *         MOVE WS-OUT-DATE            TO F716-DTE-MOVING-OUT              
+                CONTINUE                                                        
+             ELSE                                                               
+                COMPUTE WS-MNTH-DIFF1 = (((WS-IN-YY * 12) + (WS-IN-MM))         
+                                     - ((WS-OUT-YY * 12) + (WS-OUT-MM)))        
+                MOVE WS-MNTH-DIFF1          TO WS-DISP-MNTH                     
+                IF WS-MNTH-DIFF1 = 1                                            
+                   CONTINUE                                                     
+                ELSE                                                            
+                   IF WS-MNTH-DIFF1 <= -1                                       
+                      IF WS-IN-MM = 1                                           
+                         ADD -1  TO WS-IN-YY                                    
+                         MOVE 12 TO WS-IN-MM                                    
+                      ELSE                                                      
+                         ADD -1  TO WS-IN-MM                                    
+                      END-IF                                                    
+                      MOVE WS-IN-DATE      TO F716-DTE-MOVING-OUT               
+                   ELSE                                                         
+                      MOVE ZEROES           TO WS-TOT-DIFF                      
+                   END-IF                                                       
+                END-IF                                                          
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+       5110-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       5120-CALC-DATE-DIFF.                                                     
+      ******************************************************************        
+                                                                                
+           IF F716-DTE-MOVING-IN NOT NUMERIC                                    
+              MOVE ZEROES                   TO F716-DTE-MOVING-IN.              
+                                                                                
+           IF F716-DTE-MOVING-OUT NOT NUMERIC                                   
+              MOVE ZEROES                   TO F716-DTE-MOVING-OUT.             
+                                                                                
+           MOVE F716-DTE-MOVING-IN          TO WS-IN-DATE                       
+           MOVE F716-DTE-MOVING-OUT         TO WS-OUT-DATE                      
+                                                                                
+           IF WS-OUT-DD < WS-IN-DD                                              
+             COMPUTE WS-TEMP-MONTH = WS-OUT-MM - 1                              
+             MOVE WS-OUT-YY          TO WS-TEMP-YEAR                            
+                                                                                
+             IF WS-TEMP-MONTH = 0                                               
+                MOVE 12              TO WS-TEMP-MONTH                           
+                SUBTRACT 1 FROM WS-TEMP-YEAR                                    
+             ELSE                                                               
+                IF WS-TEMP-MONTH = 2                                            
+                   DIVIDE WS-OUT-YY BY 4 GIVING WS-QUOTIENT                     
+                                       REMAINDER WS-REMAINDER                   
+                   IF WS-REMAINDER = 0                                          
+                       MOVE 29       TO WS-MTH-DAY(2)                           
+                    ELSE                                                        
+                       MOVE 28       TO WS-MTH-DAY(2)                           
+                    END-IF                                                      
+                 END-IF                                                         
+              END-IF                                                            
+                                                                                
+              COMPUTE WS-REM-DAYS = WS-MTH-DAY(WS-TEMP-MONTH) -                 
+                                    WS-IN-DD + WS-OUT-DD                        
+           ELSE                                                                 
+              MOVE WS-OUT-YY         TO WS-TEMP-YEAR                            
+              MOVE WS-OUT-MM         TO WS-TEMP-MONTH                           
+              COMPUTE WS-REM-DAYS = WS-OUT-DD - WS-IN-DD                        
+           END-IF.                                                              
+                                                                                
+           COMPUTE WS-MNTH-DIFF ROUNDED =                                       
+                 ((WS-TEMP-YEAR - WS-IN-YY) * 12) +                             
+                   WS-TEMP-MONTH - WS-IN-MM +                                   
+                  (WS-REM-DAYS / WS-MTH-DAY(WS-TEMP-MONTH)).                    
+                                                                                
+           COMPUTE WS-TOT-DIFF =  WS-TOT-DIFF + WS-MNTH-DIFF.                   
+                                                                                
+       5120-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       6000-WRITE-DATA.                                                         
+      ******************************************************************        
+                                                                                
+           PERFORM 6050-READ-BP13K757       THRU 6050-EXIT                      
+                                                                                
+           MOVE LZ3H-REGN                   TO WS-WRITE-REGN                    
+           MOVE WS-TOT-DIFF                 TO WS-DISP-MNTH                     
+           MOVE WS-DISP-MNTH                TO LZ3H-TENANCY-P                   
+           MOVE WS-REQ-TPS                  TO LZ3H-TPS-REQ                     
+                                                                                
+           IF WS-K730-REGN-COND = 'N' OR WS-TOT-DIFF < 24                       
+              IF WS-REQ-TPS = 'Y'                                               
+                 IF LZ3H-NELIG-REC = SPACES                                     
+                   MOVE LZ3H-DATA           TO LZ3H-NELIG-REC                   
+                 END-IF                                                         
+              END-IF                                                            
+           ELSE                                                                 
+              MOVE 'Y'                      TO WS-WRITTEN                       
+              IF WS-REQ-TPS = 'Y'                                               
+                 ADD 1 TO WS-LZ3HA-WRITE                                        
+                 PERFORM 6600-PRINT-HDR-LZ3HA THRU 6600-EXIT                    
+                 WRITE P13LZ3HA-REC FROM LZ3H-DATA                              
+                 ADD 1 TO WS-LZ3HA-LINE-CNT                                     
+              ELSE                                                              
+                 ADD 1 TO WS-LZ3HB-WRITE                                        
+                 PERFORM 6700-PRINT-HDR-LZ3HB THRU 6700-EXIT                    
+                 WRITE P13LZ3HB-REC FROM LZ3H-DATA                              
+                 ADD 1 TO WS-LZ3HB-LINE-CNT                                     
+              END-IF                                                            
+              ADD 1    TO WS-LZ3H-WRITE                                         
+           END-IF.                                                              
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       6050-READ-BP13K757.                                                      
+      ******************************************************************        
+                                                                                
+            MOVE SPACES                      TO BP13K757-REC WS-REQ-TPS.        
+            INITIALIZE BP13K757-REC                                             
+            MOVE LZ3H-REGN                   TO K757-NUM-REGN                   
+                                                                                
+            READ BP13K757.                                                      
+                                                                                
+            IF K757-STATUS = 00                                                 
+               ADD 1                         TO WS-K757-READ                    
+               IF  K757-NUM-SPEC-SCHEME = 'TPS'                                 
+                  MOVE 'Y'                   TO WS-REQ-TPS                      
+                  ADD 1                      TO WS-K757-TPS                     
+                END-IF                                                          
+            ELSE                                                                
+               ADD 1                         TO WS-K757-NT-FND                  
+            END-IF.                                                             
+                                                                                
+       6050-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       6100-WRITE-BP13K730.                                                     
+      ******************************************************************        
+                                                                                
+           MOVE 'PA '                      TO K730-CDE-ALLOC-SCH                
+                                                                                
+           REWRITE BP13K730-REC.                                                
+                                                                                
+           IF K730-STATUS = 00                                                  
+              ADD 1                         TO WS-K730-REWRITE                  
+           ELSE                                                                 
+              DISPLAY 'BP13K730 REWRITE ERROR /STAT: ' K730-STATUS              
+           END-IF.                                                              
+                                                                                
+       6100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *****************************************************************         
+       6500-PRINT-HDR-LZ3H.                                                     
+      *****************************************************************         
+                                                                                
+           IF WS-LZ3H-LINE-CNT > 59                                             
+              MOVE ZEROES              TO WS-LZ3H-LINE-CNT                      
+                                                                                
+              ADD 1                    TO WS-LZ3H-PAGE-CNT                      
+              MOVE WS-LZ3H-PAGE-CNT    TO LZ3H-PAGE                             
+                                                                                
+              WRITE BP13LZ3H-REC FROM LZ3H-HEADING-01 AFTER PAGE                
+              WRITE BP13LZ3H-REC FROM LZ3H-HEADING-02                           
+              WRITE BP13LZ3H-REC FROM LZ3H-HEADING-03                           
+              WRITE BP13LZ3H-REC FROM LZ3H-HEADING-03A                          
+                                                                                
+              MOVE 4                   TO WS-LZ3H-LINE-CNT                      
+           END-IF.                                                              
+                                                                                
+       6500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *****************************************************************         
+       6600-PRINT-HDR-LZ3HA.                                                    
+      *****************************************************************         
+                                                                                
+           IF WS-LZ3HA-LINE-CNT > 59                                            
+              MOVE ZEROES              TO WS-LZ3HA-LINE-CNT                     
+                                                                                
+              ADD 1                    TO WS-LZ3HA-PAGE-CNT                     
+              MOVE WS-LZ3HA-PAGE-CNT   TO LZ3HA-PAGE                            
+                                                                                
+              WRITE P13LZ3HA-REC FROM LZ3H-HEADING-01A AFTER PAGE               
+              WRITE P13LZ3HA-REC FROM LZ3H-HEADING-02A                          
+              WRITE P13LZ3HA-REC FROM LZ3H-HEADING-03                           
+              WRITE P13LZ3HA-REC FROM LZ3H-HEADING-03A                          
+                                                                                
+              MOVE 4                   TO WS-LZ3HA-LINE-CNT                     
+           END-IF.                                                              
+                                                                                
+       6600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *****************************************************************         
+       6700-PRINT-HDR-LZ3HB.                                                    
+      *****************************************************************         
+                                                                                
+           IF WS-LZ3HB-LINE-CNT > 59                                            
+              MOVE ZEROES              TO WS-LZ3HB-LINE-CNT                     
+                                                                                
+              ADD 1                    TO WS-LZ3HB-PAGE-CNT                     
+              MOVE WS-LZ3HB-PAGE-CNT   TO LZ3HB-PAGE                            
+                                                                                
+              WRITE P13LZ3HB-REC FROM LZ3H-HEADING-01B AFTER PAGE               
+              WRITE P13LZ3HB-REC FROM LZ3H-HEADING-02B                          
+              WRITE P13LZ3HB-REC FROM LZ3H-HEADING-03                           
+              WRITE P13LZ3HB-REC FROM LZ3H-HEADING-03A                          
+                                                                                
+              MOVE 4                   TO WS-LZ3HB-LINE-CNT                     
+           END-IF.                                                              
+                                                                                
+       6700-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       9999-CLOSE-ROUTINE.                                                      
+      ******************************************************************        
+                                                                                
+           DISPLAY '*************** CONTROL    TOTALS ***************'.         
+           DISPLAY 'PROGRAM-ID : BP13CZ3H'                                      
+           DISPLAY 'DATE    : ' WS-SYSTEM-DATE                                  
+           DISPLAY '-------------------------------------------------'.         
+           DISPLAY '(1)  NO OF BP13F716 RECORDS READ ...... : '                 
+                    WS-F716-READ.                                               
+           DISPLAY '(1a) NO OF BP13F730 RECORDS READ ...... : '                 
+                    WS-F730-READ.                                               
+           DISPLAY '(1b) NO OF BP13F730-F716 MATCH......... : '                 
+                    WS-F730-F716-M.                                             
+           DISPLAY '(2)  NO OF BP13K757 READ .............. : '                 
+                    WS-K757-READ.                                               
+           DISPLAY '(2a) NO OF K757 REQ-TPS ............... : '                 
+                    WS-K757-TPS.                                                
+           DISPLAY '(3)  NO OF BP13K730 READ .............. : '                 
+                    WS-K730-READ.                                               
+           DISPLAY '(3a) NO OF BP13K730 NFOUND............. : '                 
+                    WS-K730-NFND.                                               
+           DISPLAY '(3b) NO OF BP13K730 REWRITE............ : '                 
+                    WS-K730-REWRITE.                                            
+           DISPLAY '(4)  NO OF ELIGIBLE CASES.............. : '                 
+                    WS-LZ3H-WRITE.                                              
+           DISPLAY '(4a) NO OF ELIGIBLE & TPS RQSTD ....... : '                 
+                    WS-LZ3HA-WRITE.                                             
+           DISPLAY '(4b) NO OF ELIGIBLE & TPS N RQSTD...... : '                 
+                    WS-LZ3HB-WRITE.                                             
+           DISPLAY '(5)  TOTAL IN-ELIGIBLE CASES........... : '                 
+                    WS-TOT-NELIG.                                               
+           DISPLAY '(5a) NO OF IN-ELIGIBLE & TPS RQSTD .... : '                 
+                    WS-NELIG-REQ.                                               
+           DISPLAY '(5b) NO OF IN-ELIGIBLE (K730 IC N-MTCH).: '                 
+                    WS-K730-IC-NMTCH.                                           
+           DISPLAY '(5c) NO OF IN-ELIGIBLE (NT FND IN F716).: '                 
+                    WS-F730-F716-NM.                                            
+           DISPLAY '(5D) BYPASS PA                          : '                 
+                    WS-BYPASS-PA.                                               
+                                                                                
+           CLOSE BP13F716                                                       
+                 BP13F730                                                       
+                 BP13K730                                                       
+                 BP13K757                                                       
+                 BP13LZ3H                                                       
+                 P13LZ3HA                                                       
+                 P13LZ3HB.                                                      
+                                                                                
+           IF K730-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'ERROR CLOSING BP13K730 , STATUS = ' K730-STATUS.         
+                                                                                
+           IF K757-STATUS NOT = 00 AND 97                                       
+              DISPLAY 'ERROR CLOSING BP13K757 , STATUS = ' K757-STATUS.         
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9999-EXIT.                                                               
+           EXIT.                                                                
+

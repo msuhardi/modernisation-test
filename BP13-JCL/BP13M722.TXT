@@ -1,0 +1,102 @@
+//BP13M722 JOB (BP13P),'BP13M722',MSGCLASS=N,CLASS=I,MSGLEVEL=(1,1),            
+//         NOTIFY=CSD0071                                                       
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//*=================================================================            
+//* JOB RUN ON 21ST MONTH TO PROJECT LOAN-BAL AS AT MONTH-END                   
+//*=================================================================            
+//* CHG-NO   BY   ON    - DESCRIPTION                                           
+//*------------------------------------------                                   
+//* BP133360 LSB 070708 - CHG GROUP-ID TO MB1A                                  
+//* BP133612 LSB 270709 - ADD BP13LC73                                          
+//*-----------------------------------------------------------------            
+//*  SEND DYNAMIC JDE AHEAD OF THE PRINT DATASET - MA&B UNIT                    
+//*-----------------------------------------------------------------            
+//PRT01   EXEC PGM=IEBGENER                                                     
+//SYSUT1   DD *                                                                 
+1$DJDE$ BTEXT='DPT=GRPID-EAAAMB1A CP-1',END;                                    
+1$DJDE$ JDE=BP13D,JDL=BP13,END;                                                 
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EAAAMB1A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID),DEST=IOM2                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//******************************************************************            
+//*  SEND DYNAMIC JDE AHEAD OF THE PRINT DATASET - FIN DEPT                     
+//*-----------------------------------------------------------------            
+//PRT02   EXEC PGM=IEBGENER                                                     
+//SYSUT1   DD *                                                                 
+1$DJDE$ BTEXT='DPT=GRPID-FI1A CP-1',END;                                        
+1$DJDE$ JDE=BP13D,JDL=BP13,COPIES=1,END;                                        
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=FI1A                                       
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID),DEST=IOM2                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*-----------------------------------------------------------------            
+//* INCLUDE LOAN AMT > ZEROS                                                    
+//*-----------------------------------------------------------------            
+//STEP01   EXEC SORT,CYL=30,COND=(0,NE)                                         
+//SORTIN   DD DSN=BP13.KD00.DBSMAST,DISP=SHR                                    
+//SORTOUT  DD DSN=&&BP13FD00,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=1600,BLKSIZE=0),                              
+//            SPACE=(CYL,(3,3),RLSE)                                            
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(361,1,A,1,8,A),FORMAT=CH                                         
+  INCLUDE COND=(298,7,CH,GT,C'0000000')                                         
+//*-----------------------------------------------------------------            
+//* REPORT ON PROJECTION OF LOAN AS AT MONTH-END                                
+//*-----------------------------------------------------------------            
+//STEP02   EXEC PGM=BP13CC70,COND=(0,NE)                                        
+//BP13FD00 DD DSN=&&BP13FD00,DISP=(OLD,PASS)                                    
+//BP13KD38 DD DSN=BP13.KD38.PPTRANS,DISP=SHR                                    
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13LC70 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSOUT   DD SYSOUT=*                                                          
+//*                                                                             
+//*-----------------------------------------------------------------            
+//* SORT BY REGN/DUE-DATE INCLUDE PP=09,10                                      
+//*-----------------------------------------------------------------            
+//STEP03   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.KD38.PPTRANS,DISP=SHR                                    
+//SORTOUT  DD DSN=&&BP13FD38,DISP=(,PASS),                                      
+//        DCB=(RECFM=FB,LRECL=400),                                             
+//        SPACE=(CYL,(2,1),RLSE)                                                
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(1,8,A,24,8,A),FORMAT=CH                                          
+  INCLUDE COND=(12,2,CH,GE,C'09')                                               
+//*-----------------------------------------------------------------            
+//* SORT OUT TOP CASES FOR THE MONTH TO SHOW LOAN TRANSFER TO SMS               
+//*-----------------------------------------------------------------            
+//STEP04   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F410.MTHSO,DISP=SHR                                      
+//SORTOUT  DD DSN=&&BP13FD38,DISP=(MOD,PASS)                                    
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(1,8,A),FORMAT=CH                                                 
+  INCLUDE COND=(914,3,CH,EQ,C'DBS')                                             
+  OUTREC FIELDS=(1,8,C'DUEXX',18X,980,9,37X,855,8,59X,10,11,245X)               
+//*-----------------------------------------------------------------            
+//* SORT BY REGN-NO/PP                                                          
+//*-----------------------------------------------------------------            
+//STEP05   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&BP13FD38,DISP=(OLD,PASS)                                    
+//SORTOUT  DD DSN=&&FD38REGN,DISP=(,PASS),                                      
+//        DCB=(RECFM=FB,LRECL=400),                                             
+//        SPACE=(CYL,(2,1),RLSE)                                                
+//SYSIN    DD  *                                                                
+  SORT FIELDS=(24,8,A,1,8,A),FORMAT=CH                                          
+//*-----------------------------------------------------------------            
+//* REPORT TO HF ON PP=09,10, LOAN-DISBURSED AFTER TOP                          
+//*-----------------------------------------------------------------            
+//STEP06   EXEC  PGM=BP13CC73,COND=(0,NE)                                       
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13FD38 DD DSN=&&FD38REGN,DISP=(OLD,PASS)                                    
+//BP13KD00 DD DSN=BP13.KD00.DBSMAST,DISP=SHR,                                   
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BP13KD03 DD DSN=BP13.KD03.DBSHIST,DISP=SHR,                                   
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BP13LC73 DD SYSOUT=2,OUTPUT=(*.PRT02.FORMID),DEST=IOM2                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*                                                                             
+

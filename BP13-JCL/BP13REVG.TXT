@@ -1,0 +1,133 @@
+//BP13REVG JOB (BP13P),'BP13REVG',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//         NOTIFY=CSD0071                                                       
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//**************************************************************                
+//* JCL TO REVERT BALLOT FILE BP13K740 TO STATUS BEFORE RUN                     
+//*-------------------------------------------------------------                
+//* CHGE REQ  BY     DATE    DESCRIPTION                                        
+//* -------- ---- -------- -----------------------------------------            
+//* BP133511  IL5 20090130 NEW                                                  
+//* BP135625 SMR2 20150122 CATER FOR 3P FLAT TYPE                               
+//* BP136296 IL5  20160728 UPDATE STEP RUNNING BP13C525                         
+//* BP138301 AM25 20200604 HARDCOPY REPORTS CONVERSION                          
+//*-----------------------------------------------------------------            
+//*---------------------------------------------------------------------        
+//* SORT THE RANDOM FILE IN RANDOM NUMBER ORDER                                 
+//*---------------------------------------------------------------------        
+//STEP01   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F510.RANDOM,DISP=SHR                                     
+//SORTOUT  DD DSN=&&BP13F510,DISP=(,PASS),                                      
+//         UNIT=(SYSDA,3),SPACE=(CYL,(48,10),RLSE),                             
+//         DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                               
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(123,8,A,1,28,D),FORMAT=CH                                       
+//*-------------------------------------------------------------------*         
+//* SELECT SMALLEST RANDOM NUMBER FOR SHORTLISTING                              
+//*-------------------------------------------------------------------*         
+//STEP02   EXEC PGM=BP13CB14,COND=(0,NE)                                        
+//BP13F740 DD DSN=&&BP13F510,DISP=(OLD,DELETE)                                  
+//P13F740B DD DSN=&&F740SMAL,DISP=(,PASS),                                      
+//      UNIT=(SYSDA,3),SPACE=(CYL,(48,10),RLSE),                                
+//      DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                                  
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* SORT BY RANDOM KEY                                                *         
+//*-------------------------------------------------------------------*         
+//STEP03   EXEC SORT,COND=(0,NE)                                                
+//SORTIN  DD DSN=&&F740SMAL,DISP=(OLD,DELETE)                                   
+//SORTOUT DD DSN=&&F740RANG,DISP=(NEW,PASS),                                    
+//      UNIT=(SYSDA,3),SPACE=(CYL,(48,10),RLSE),                                
+//      DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                                  
+//SYSIN   DD  *                                                                 
+    SORT FIELDS=(1,28,A),FORMAT=CH                                              
+//*---------------------------------------------------------------------        
+//* TO CREATE THE BALLOT FILE & TO ENSURE THAT NO DUPLICATE RANDOM NO           
+//* BY USING DEFINE VSAM BALLOT FILE                                            
+//*---------------------------------------------------------------------        
+//STEP04   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT    DD DSN=&&F740RANG,DISP=(OLD,DELETE)                                  
+//SYSIN    DD *                                                                 
+         DEL 'BP13.K740.MATUREBA' CL PURGE                                      
+         DEF CL (NAME(BP13.K740.MATUREBA)        -                              
+                 CYL(36 5)                       -                              
+                 UNIQUE                          -                              
+                 SPEED                           -                              
+                 STORCLAS(PRODRLS)               -                              
+                 LOG(NONE)                       -                              
+                 SHR(2 3))                       -                              
+                 DATA                            -                              
+                 (NAME(BP13.K740.MATUREBA.DATA)  -                              
+                 KEYS(28 0)                      -                              
+                 RECSZ(500 500)                  -                              
+                 FSPC(10 10)                     -                              
+                 CISZ(4096))                                                    
+         IF LASTCC = 0 THEN                      -                              
+           REPRO IFILE(INPUT)                    -                              
+                 ODS(BP13.K740.MATUREBA)                                        
+//*--------------------------------------------------------------------         
+//*      TO CREATE PATH/ALTX FOR MATUREBA BALLOT FILE                           
+//*--------------------------------------------------------------------         
+//STEP05   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.K740.MATUREBA,DISP=SHR                                   
+//SYSIN    DD  *                                                                
+           DEF AIX (NAME(BP13.K740.MATUREBA.ALTX1)   -                          
+               REL(BP13.K740.MATUREBA)               -                          
+               REUSE                                 -                          
+               KEYS(8 122)                            -                         
+               SHR(2 3)                              -                          
+               NUNQK)                                -                          
+               DATA                                  -                          
+               (NAME(BP13.K740.MATUREBA.ALTX1.DATA) -                           
+               CYL(10 5)                              -                         
+               RECSZ(31 354)                         -                          
+               FSPC(10 10)                           -                          
+               CISZ(4096))                           -                          
+               INDEX                                 -                          
+               (NAME(BP13.K740.MATUREBA.ALTX1.INDEX) -                          
+               CISZ(4096))                                                      
+         IF MAXCC = 0 THEN                           -                          
+           DEF PATH (NAME(BP13.K740.MATUREBA.PATH1) -                           
+               PENT(BP13.K740.MATUREBA.ALTX1))                                  
+         IF MAXCC = 0 THEN                                                      
+           BIX IDS(BP13.K740.MATUREBA)               -                          
+               ODS(BP13.K740.MATUREBA.ALTX1)                                    
+//*---------------------------------------------------------------------        
+//* SAS PROGRAM TO PRINT THE REQUEST BEFORE PIGEONHOLING                        
+//* REPORT TO BE SIGN-OFF BY IA                                                 
+//*---------------------------------------------------------------------        
+//STEP06   EXEC  SAS,COND=(0,NE)                                                
+//WORK     DD  UNIT=SYSDA,SPACE=(CYL,(60,20))                                   
+//BP13K740 DD  DSN=BP13.K740.MATUREBA,DISP=SHR                                  
+//BP13L512 DD  SYSOUT=8,DEST=IOM8                                               
+//SYSIN    DD  DSN=BP13.BATCH.SRC(BP13S512),DISP=SHR                            
+//*---------------------------------------------------------------------        
+//* SORT OUT 3P FLATS TO PRINT FLAT SUPPLY                                      
+//*---------------------------------------------------------------------        
+//STEP07    EXEC SORT,COND=(0,NE)                                               
+//SORTIN    DD DSN=BP13.K010.TENDER,DISP=SHR                                    
+//SORTOUT   DD DSN=&&P13K010P,DISP=(,PASS),                                     
+//             UNIT=(SYSDA,1),SPACE=(CYL,(5,3),RLSE),                           
+//             DCB=(RECFM=FB,LRECL=600,BLKSIZE=28800)                           
+//SYSOUT    DD SYSOUT=*                                                         
+//SYSIN     DD *                                                                
+   SORT FIELDS=(1,5,A),FORMAT=CH                                                
+   INCLUDE COND=(4,2,CH,EQ,C'3P')                                               
+//*---------------------------------------------------------------------        
+//* PRINT TENDER PROGRAM SUMMARY REPORT                                         
+//*---------------------------------------------------------------------        
+//STEP08    EXEC PGM=BP13C524,COND=(0,NE)                                       
+//SYSPRINT  DD SYSOUT=*                                                         
+//BP13F010  DD DSN=&&P13K010P,DISP=(OLD,DELETE)                                 
+//BP13F713  DD DSN=BP13.F713.PIGEON.MATUREPA,DISP=SHR                           
+//BP13L524  DD SYSOUT=8,DEST=IOM8                                               
+//SYSDBG    DD SYSOUT=*                                                         
+//SYSDBOUT  DD SYSOUT=*                                                         
+//SYSOUT    DD SYSOUT=*                                                         
+/*                                                                              
+

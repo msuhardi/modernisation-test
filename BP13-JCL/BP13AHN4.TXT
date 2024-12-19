@@ -1,0 +1,142 @@
+//BP13AHN4  JOB (BP13P),'BP13AHN4',MSGCLASS=N,CLASS=I,                          
+//       MSGLEVEL=(1,1),NOTIFY=CSD0071                                          
+//JOBLIB   DD  DSN=BP13.BATCH.LOADCOB,DISP=SHR                                  
+//******************************************************************            
+//* HNR FOR SBF                                                                 
+//* ----------------------------------------------------------                  
+//* CHG-NO   BY   ON     DESCRIPTION                                            
+//* ----------------------------------------------------------                  
+//*BP13XXXX XXX 210612 - NEW JCL                                                
+//*BP13XXXX ZDD 201212 - INCLUDE PROCESSING OF BP13K725                         
+//*BP135231 SMR 170214 - INCLUDE PARAMETER IN BP13C548                          
+//*BP135277 SMR 100414 - REMOVE PROCESSING OF BP13K747 & BP13K725               
+//******************************************************************            
+//*      VERIFY FILES BEFORE JOB RUN                                            
+//*-----------------------------------------------------------------            
+//STEP0A  EXEC PGM=IDCAMS,COND=(0,NE)                                           
+//INPUT1   DD DSN=BP13.K74A.RANQUE,DISP=OLD                                     
+//INPUT2   DD DSN=BP13.K74C.REGNRAND,DISP=OLD                                   
+//INPUT3   DD DSN=BP13.K74E.BOOKQUE,DISP=OLD                                    
+//INPUT4   DD DSN=BP13.K74G.ESTQUE,DISP=OLD                                     
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN   DD *                                                                  
+          VFY FILE(INPUT1)                                                      
+          VFY FILE(INPUT2)                                                      
+          VFY FILE(INPUT3)                                                      
+          VFY FILE(INPUT4)                                                      
+//**************************************************************                
+//*  TO SEND DJDE AHEAD OF THE PRINT DATASET                                    
+//*  PRT01 : COPIES = 1, APPLICATION TEAM                                       
+//*-----------------------------------------------------------------            
+//PRT01    EXEC PGM=IEBGENER                                                    
+//SYSUT1   DD *                                                                 
+$DJDE$ JDE=BP13D,JDL=BP13,END;                                                  
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EAALAP1                                    
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID)                                        
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*------------------------------------------------------------------*          
+//* STEP 0:-       *   DELETE BACKUP FILES *                                    
+//*------------------------------------------------------------------*          
+//STEP000  EXEC  PGM=IDCAMS,COND=(0,NE)                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD *                                                                 
+     DEL (BP13.F74C.REGNRAND.BACKUP)                                            
+     DEL (BP13.F74A.RANQUE.BACKUP)                                              
+     IF MAXCC < 12 THEN                                                         
+        SET MAXCC = 0                                                           
+//*---------------------------------------------------------------------        
+//* BACKUP BP13K74C                                                             
+//*---------------------------------------------------------------------        
+//STEP01   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K74C.REGNRAND,DISP=SHR                                   
+//SORTOUT  DD DSN=BP13.F74C.REGNRAND.BACKUP,DISP=(NEW,CATLG),                   
+//        DCB=(RECFM=FB,LRECL=100),                                             
+//        SPACE=(CYL,(25,5),RLSE)                                               
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(1,47,A),FORMAT=CH                                                
+//*---------------------------------------------------------------------        
+//* FILE ON RANDOM ASSIGN TO EACH REGN-NO BASED ON ATTEMPT, HHTY, MCPS          
+//*---------------------------------------------------------------------        
+//STEP02   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F740.MATUREBA.ATTEMPT.TAPE(0),DISP=SHR                   
+//SORTOUT  DD DSN=&&F74CSBF,DISP=(,PASS),                                       
+//        UNIT=SYSDA,DCB=(RECFM=FB,LRECL=100),                                  
+//        SPACE=(CYL,(25,5),RLSE)                                               
+//SYSIN    DD *                                                                 
+  SORT FIELDS=(187,3,A,211,2,A,29,2,A,1,28,A),FORMAT=CH                         
+  OUTREC FIELDS=(334,6,376,3,123,8,29,2,1,28,53X)                               
+  INCLUDE COND=(376,3,CH,EQ,C'SBF',AND,260,1,CH,NE,C'C')                        
+//*------------------------------------------------------------------           
+//* SORT BY KEY-FLD ORDER                                                       
+//*------------------------------------------------------------------           
+//STEP03   EXEC SORT,COND=(0,NE)                                                
+//SORTIN  DD DSN=&&F74CSBF,DISP=(OLD,PASS)                                      
+//        DD DSN=BP13.F74C.REGNRAND.BACKUP,DISP=SHR                             
+//SORTOUT DD DSN=&&BP13F74C,DISP=(NEW,PASS),                                    
+//        UNIT=SYSDA,                                                           
+//        DCB=(RECFM=FB,LRECL=100),                                             
+//        SPACE=(CYL,(1,1),RLSE)                                                
+//SYSIN   DD  *                                                                 
+   SORT FIELDS=(1,47,A),FORMAT=CH                                               
+   SUM FIELDS=NONE                                                              
+//*---------------------------------------------------------------------        
+//* TO CREATE THE BALLOT FILE & TO ENSURE THAT NO DUPLICATE RANDOM NO           
+//* BY USINF DEFINE VSAM BALLOT FILE                                            
+//*---------------------------------------------------------------------        
+//STEP04    EXEC PGM=IDCAMS,COND=(0,NE)                                         
+//SYSPRINT  DD SYSOUT=*                                                         
+//INPUT     DD DSN=&&BP13F74C,DISP=(OLD,PASS)                                   
+//SYSIN    DD *                                                                 
+         DEL 'BP13.K74C.REGNRAND' CL PURGE                                      
+         DEF CL (NAME(BP13.K74C.REGNRAND) -                                     
+                 CYL(30 10)                        -                            
+                 UNIQUE                          -                              
+                 SPEED                           -                              
+                 STORCLAS(PRODRLS)               -                              
+                 LOG(NONE)                       -                              
+                 SHR(2 3))                       -                              
+                 DATA                            -                              
+                 (NAME(BP13.K74C.REGNRAND.DATA) -                               
+                 KEYS(47 0)                      -                              
+                 RECSZ(100 100)                  -                              
+                 FSPC(10 10)                     -                              
+                 CISZ(4096))                                                    
+         IF LASTCC = 0 THEN                      -                              
+           REPRO IFILE(INPUT)                    -                              
+                 ODS(BP13.K74C.REGNRAND)                                        
+//*-----------------------------------------------------------------            
+//* SORT BY NRIC1/FT/SUCC-NT/COHORT/REGN-NO                                     
+//*-----------------------------------------------------------------            
+//STEP05   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K740.MATUREBA,DISP=SHR,                                  
+//            AMP=('BUFND=23')                                                  
+//SORTOUT  DD DSN=&&F740RAND,DISP=(,PASS),                                      
+//        UNIT=SYSDA,                                                           
+//        DCB=(RECFM=FB,LRECL=500),                                             
+//        SPACE=(CYL,(10,10),RLSE)                                              
+//SYSIN   DD  *                                                                 
+  SORT FIELDS=(334,6,A,187,3,A,211,2,A,80,2,A,1,28,A),FORMAT=CH                 
+//*SORT FIELDS=(41,9,A,211,1,A,213,3,A,80,2,A,123,8,A),FORMAT=CH                
+//*-----------------------------------------------------------------            
+//* COMPUTE RANDOM-NO FOR MCPS AND PUBLIC SCHEME                                
+//*-----------------------------------------------------------------            
+//STEP06 EXEC PGM=BP13CF41,COND=(0,NE)                                          
+//BP13F740 DD DSN=&&F740RAND,DISP=(OLD,PASS)                                    
+//BP13K74A DD DSN=BP13.K74A.RANQUE,DISP=SHR,                                    
+//            AMP=('BUFND=23')                                                  
+//BP13K74C DD DSN=BP13.K74C.REGNRAND,DISP=SHR,                                  
+//            AMP=('BUFND=23')                                                  
+//BP13K74E DD DSN=BP13.K74E.BOOKQUE,DISP=SHR,                                   
+//            AMP=('BUFND=23')                                                  
+//BP13K74G DD DSN=BP13.K74G.ESTQUE,DISP=SHR,                                    
+//            AMP=('BUFND=23')                                                  
+//BP13F74A DD DSN=BP13.F74A.RANQUE.BACKUP,DISP=(NEW,CATLG),                     
+//        DCB=(RECFM=FB,LRECL=300),                                             
+//        SPACE=(CYL,(10,10),RLSE)                                              
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//*                      END OF JOB                                             
+//*---------------------------------------------------------------------        
+

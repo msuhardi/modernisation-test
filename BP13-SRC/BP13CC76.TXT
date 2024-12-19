@@ -1,0 +1,322 @@
+      **************************                                                
+       IDENTIFICATION DIVISION.                                                 
+      **************************                                                
+       PROGRAM-ID.    BP13CC76.                                                 
+      *AUTHOR.        PAULO CAMIA LEGASPI.                                      
+      *DATE-WRITTEN.  15 APRIL 2011.                                            
+                                                                                
+      * =========================================================== *           
+      * SYSTEM OF COMMITMENT (BP13)                                 *           
+      * =========================================================== *           
+      *   OBJECTIVE   : MATCH AG07F630 WITH AG06F640 TO GET IBG-NO  *           
+      *                 IBG-DATE AND CHEQUE-NO, UPDATE TEH DATA TO  *           
+      *                 BP13KD10 FOR REPORTING PURPOSE.             *           
+      *                                                             *           
+      *   INPUT FILES :                                             *           
+      *   1.  AG07F630 -- VOUCHER TRANSACTION FILE                  *           
+      *   2.  BP13FD10 -- SORTED SOC/DBSS VOUCHER OIC FILE          *           
+      *                                                             *           
+      *   OUTPUT FILES:                                             *           
+      *   1.  P13FD10A -- EDITED FIRST TRANSACTION FILE             *           
+      *                                                             *           
+      * CHQ REQ     DATE     BY  DESCRIPTIONS                       *           
+      * -------- ---------- ---- ---------------------------------- *           
+      * BP134154 15/04/2011 PCL3 NEW PROGRAM                        *           
+      * BP134154 19/04/2011 JB8  TO UPDATE BP13KD30                 *           
+      * BP134154 26/04/2011 JB8  TO CATER FOR EXISTING CHQ SENT DATE*           
+      * =========================================================== *           
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+                                                                                
+       CONFIGURATION SECTION.                                                   
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+                                                                                
+       FILE-CONTROL.                                                            
+                                                                                
+                                                                                
+           SELECT AG07F630   ASSIGN       TO AG07F630.                          
+                                                                                
+           SELECT BP13FD10   ASSIGN       TO BP13FD10.                          
+                                                                                
+           SELECT BP13KD30  ASSIGN        TO BP13KD30                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS KD30-KEY-FLD                       
+                            FILE STATUS   IS WS-KD30-STATUS.                    
+                                                                                
+           SELECT P13FD10A   ASSIGN       TO P13FD10A.                          
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+                                                                                
+       FD   AG07F630                                                            
+            BLOCK CONTAINS     0 RECORDS                                        
+            RECORD CONTAINS  130 CHARACTERS                                     
+            LABEL RECORD IS STANDARD                                            
+            RECORDING MODE IS F.                                                
+       COPY AG07F630.                                                           
+                                                                                
+       FD   BP13FD10                                                            
+            BLOCK CONTAINS     0 RECORDS                                        
+            RECORD CONTAINS  1400 CHARACTERS                                    
+            LABEL RECORD IS STANDARD                                            
+            RECORDING MODE IS F.                                                
+       COPY BP13FD10.                                                           
+                                                                                
+       FD   BP13KD30                                                            
+            RECORD CONTAINS  2000 CHARACTERS.                                   
+       COPY BP13KD30.                                                           
+                                                                                
+       FD   P13FD10A                                                            
+            BLOCK CONTAINS     0 RECORDS                                        
+            RECORD CONTAINS  1400 CHARACTERS                                    
+            LABEL RECORD IS STANDARD                                            
+            RECORDING MODE IS F.                                                
+       01   BP13FD10A-REC       PIC X(1400).                            00055007
+                                                                                
+                                                                                
+      ************************                                                  
+       WORKING-STORAGE SECTION.                                                 
+      ************************                                                  
+                                                                                
+       01  WS-CNT-WRITE           PIC 9(08) VALUE ZEROES.                       
+       01  WS-CNT-FND             PIC 9(08) VALUE ZEROES.                       
+       01  WS-CNT-NFND1           PIC 9(08) VALUE ZEROES.                       
+       01  WS-CNT-NFND2           PIC 9(08) VALUE ZEROES.                       
+       01  WS-FD10-READ           PIC 9(08) VALUE ZEROES.                       
+       01  WS-F630-READ           PIC 9(08) VALUE ZEROES.                       
+       01  WS-KD30-REWRITE        PIC 9(08) VALUE ZEROES.                       
+       01  WS-KD30-STATUS         PIC 9(02) VALUE ZEROES.                       
+       01  WS-KD30-FND            PIC X     VALUE SPACE.                        
+           88  KD30-FND                     VALUE 'Y'.                          
+       01  WS-F630-EOF            PIC X     VALUE SPACE.                        
+       01  WS-FD10-EOF            PIC X     VALUE SPACE.                        
+       01  WS-DATE                PIC X(08) VALUE SPACES.                       
+       01  WS-PREV-KEY            PIC X(11) VALUE SPACES.                       
+       01  WS-I                   PIC 9(02) VALUE ZEROES.                       
+                                                                                
+      ********************                                                      
+       PROCEDURE DIVISION.                                                      
+      ********************                                                      
+                                                                                
+      *-------------------------------------------------------------            
+       0000-MAIN.                                                               
+      *-------------------------------------------------------------            
+                                                                                
+           PERFORM 1000-OPEN-FILES   THRU 1000-EXIT.                            
+           PERFORM 2000-READ-FD10    THRU 2000-EXIT.                            
+           PERFORM 3000-READ-F630    THRU 3000-EXIT.                            
+           PERFORM 4000-PROCESS-REC  THRU 4000-EXIT                             
+             UNTIL F630-NUM-VR = HIGH-VALUES                                    
+               AND FD10-NUM-VR = HIGH-VALUES.                                   
+           PERFORM 9000-CLOSE-FILES  THRU 9000-EXIT.                            
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       1000-OPEN-FILES.                                                         
+      *-------------------------------------------------------------            
+                                                                                
+           OPEN INPUT  AG07F630                                                 
+                       BP13FD10                                                 
+                I-O    BP13KD30                                                 
+                OUTPUT P13FD10A.                                                
+                                                                                
+           IF WS-KD30-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'BP13KD30 - OPEN ERROR, STATUS :' WS-KD30-STATUS          
+              GO TO 9000-CLOSE-FILES                                            
+           END-IF.                                                              
+                                                                                
+           MOVE FUNCTION CURRENT-DATE TO WS-DATE.                               
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       2000-READ-FD10.                                                          
+      *-------------------------------------------------------------            
+                                                                                
+           READ BP13FD10 AT END                                                 
+                MOVE HIGH-VALUES TO BP13FD10-REC                                
+                MOVE 'Y' TO WS-FD10-EOF                                         
+                GO TO 2000-EXIT.                                                
+           ADD 1 TO WS-FD10-READ.                                               
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3000-READ-F630.                                                          
+      *-------------------------------------------------------------            
+                                                                                
+           READ AG07F630 AT END                                                 
+                MOVE HIGH-VALUES TO AG07F630-REC                                
+                MOVE 'Y' TO WS-F630-EOF                                         
+                GO TO 3000-EXIT.                                                
+           ADD 1 TO WS-F630-READ.                                               
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4000-PROCESS-REC.                                                        
+      *-------------------------------------------------------------            
+                                                                                
+           IF FD10-NUM-VR = F630-NUM-VR                                         
+              MOVE FD10-NUM-VR                         TO WS-PREV-KEY           
+              PERFORM 4500-PROCESS-SAME-KEY          THRU 4500-EXIT             
+                UNTIL FD10-NUM-VR NOT = WS-PREV-KEY                             
+                   OR WS-FD10-EOF     = 'Y'                                     
+              PERFORM 3000-READ-F630                 THRU 3000-EXIT             
+           ELSE                                                                 
+              IF FD10-NUM-VR < F630-NUM-VR                                      
+                  ADD 1                                TO WS-CNT-NFND1          
+                  PERFORM 5000-WRITE-P13FD10A        THRU 5000-EXIT             
+                  PERFORM 2000-READ-FD10             THRU 2000-EXIT             
+              ELSE                                                              
+                  ADD 1                                TO WS-CNT-NFND2          
+                  PERFORM 3000-READ-F630             THRU 3000-EXIT             
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4500-PROCESS-SAME-KEY.                                                   
+      *-------------------------------------------------------------            
+                                                                                
+           IF FD10-NUM-VR = F630-NUM-VR                                         
+              ADD 1                         TO WS-CNT-FND                       
+              MOVE F630-NUM-BATCH           TO FD10-NUM-BATCH                   
+              MOVE AG07F630-REC(111:8)      TO FD10-DTE-IBG-VALUE               
+              MOVE AG07F630-REC(119:12)     TO FD10-TXT-IBG-SERIAL              
+              MOVE F630-NUM-SYS             TO FD10-NUM-SYSTEM                  
+              PERFORM 4600-UPDATE-BP13KD30  THRU 4600-EXIT                      
+              PERFORM 5000-WRITE-P13FD10A   THRU 5000-EXIT                      
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-READ-FD10        THRU 2000-EXIT.                        
+                                                                                
+       4500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       4600-UPDATE-BP13KD30.                                                    
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE FD10-NUM-REGN                  TO KD30-NUM-REGN                 
+           PERFORM 8001-READ-BP13KD30        THRU 8001-EXIT                     
+                                                                                
+           IF KD30-FND                                                          
+              PERFORM VARYING WS-I FROM 1 BY 1 UNTIL WS-I > 15                  
+                 IF KD30-NUM-PP-SCHDL(WS-I) = FD10-NUM-PP                       
+                    IF KD30-DTE-CHEQUE-SENT(WS-I) = SPACES OR LOW-VALUES        
+                                                 OR ZEROES OR '00000000'        
+                       MOVE FD10-DTE-IBG-VALUE                                  
+                         TO KD30-DTE-CHEQUE-SENT(WS-I)                          
+                       MOVE F630-DTE-TRANS TO KD30-DTE-FIN-PROCESS(WS-I)        
+                       MOVE 'BP13CC76'     TO KD30-NUM-USERID                   
+                    END-IF                                                      
+                 END-IF                                                         
+              END-PERFORM                                                       
+              PERFORM 8002-REWRITE-BP13KD30  THRU 8002-EXIT                     
+           END-IF.                                                              
+                                                                                
+       4600-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       5000-WRITE-P13FD10A.                                                     
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES                       TO BP13FD10A-REC.                  
+           INITIALIZE                           BP13FD10A-REC.                  
+                                                                                
+           WRITE BP13FD10A-REC             FROM BP13FD10-REC.                   
+           ADD 1                             TO WS-CNT-WRITE.                   
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+       8001-READ-BP13KD30.                                                      
+      *---------------------------------------------------------------*         
+                                                                                
+           READ BP13KD30.                                                       
+                                                                                
+           IF WS-KD30-STATUS = 00 OR 02                                         
+              MOVE 'Y'                       TO WS-KD30-FND                     
+           ELSE                                                                 
+              IF WS-KD30-STATUS = 23                                            
+                 MOVE 'N'                    TO WS-KD30-FND                     
+              ELSE                                                              
+                 DISPLAY 'BP13KD30 - READ ERROR, KEY (' KD30-NUM-REGN           
+                         '), STATUS (' WS-KD30-STATUS ')'                       
+                 GO TO 9000-CLOSE-FILES                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       8001-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *---------------------------------------------------------------*         
+       8002-REWRITE-BP13KD30.                                                   
+      *---------------------------------------------------------------*         
+                                                                                
+           REWRITE BP13KD30-REC.                                                
+                                                                                
+           IF WS-KD30-STATUS = 00                                               
+              ADD 1                     TO WS-KD30-REWRITE                      
+           ELSE                                                                 
+              DISPLAY 'BP13KD30 - REWRITE ERROR, KEY (' KD30-NUM-REGN           
+                      '), STATUS (' WS-KD30-STATUS ')'                          
+              GO TO 9000-CLOSE-FILES                                            
+           END-IF.                                                              
+                                                                                
+       8002-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-----------------*                                                       
+       9000-CLOSE-FILES.                                                        
+      *-----------------*                                                       
+                                                                                
+           DISPLAY '------- BM06374F -------------'.                            
+           DISPLAY 'NO OF BP13FD10 READ             : '                         
+                                               WS-FD10-READ.                    
+           DISPLAY 'NO OF AG07F630 READ             : '                         
+                                               WS-F630-READ.                    
+           DISPLAY 'NO OF MATCHED                   : '                         
+                                               WS-CNT-FND.                      
+           DISPLAY 'NO OF RECS NOT FOUND (BP13FD10) : '                         
+                                               WS-CNT-NFND1.                    
+           DISPLAY 'NO OF RECS NOT FOUND (AG07F630) : '                         
+                                               WS-CNT-NFND2.                    
+           DISPLAY 'NO OF RECS WRITTEN   (P13FD10A) : '                         
+                                               WS-CNT-WRITE.                    
+           DISPLAY 'NO OF RECS UPDATE    (BP13KD30) : '                         
+                                               WS-KD30-REWRITE.                 
+                                                                                
+           CLOSE BP13FD10                                                       
+                 P13FD10A                                                       
+                 AG07F630                                                       
+                 BP13KD30.                                                      
+                                                                                
+           IF WS-KD30-STATUS NOT = 00                                           
+              DISPLAY 'BP13KD30 - CLOSE ERROR, STATUS :' WS-KD30-STATUS         
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+            EXIT.                                                               
+

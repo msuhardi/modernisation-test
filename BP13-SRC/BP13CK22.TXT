@@ -1,0 +1,357 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.   BP13CK22.                                                  
+      *AUTHOR.       IMC1.                                                      
+      *DATE-WRITTEN. 13/08/2013.                                                
+      * ========================================================== *            
+      * FLAT INVENTORY SYSTEM (BM06)                               *            
+      * ========================================================== *            
+      *  OBJECTIVE: MATCH SUBLET CASE FILE BY REF-NO (FROM FV07)   *            
+      *           : IF FOUND GET SUBLET-ROOM/SUBLET FLAT DATA      *            
+      *           : IF MACTHED, GET SCH-ACC-NO                     *            
+      *                                                            *            
+      *   INPUT  :  BP13F55A (SUBLTE REF TEMP KEEP IN RDB SCH-ACC) *            
+      *          :  BR12FV05                                       *            
+      *                                                            *            
+      *  OUTPUT  :  BP13OUTC BP13F55A                              *            
+      * ========================================================== *            
+      * REF NO   DATE       BY   AMENDMENTS/ENHANCEMENTS              *         
+      * -------- ---------- ---- -----------------------              *         
+      * BP135089 04/09/2013 IMC1 NEW PROGRAM.                         *         
+      * BP137358 30/05/2018 FNP1 EXPAND BP13F55A FROM 800 TO 1200     *         
+      *===============================================================*         
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F55A ASSIGN TO BP13F55A.                                  
+                                                                                
+           SELECT BR12FV05 ASSIGN TO BR12FV05.                                  
+                                                                                
+           SELECT BP13K80A ASSIGN TO BP13K80A                                   
+                  ACCESS MODE     IS DYNAMIC                                    
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K80A-KEY-FLD                               
+                  FILE STATUS     IS WS-BP13K80A-STATUS.                        
+                                                                                
+           SELECT BP13K830 ASSIGN TO BP13K830                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  ACCESS MODE     IS DYNAMIC                                    
+                  RECORD KEY      IS K830-KEY-FLD                               
+                  FILE STATUS     IS WS-BP13K830-STATUS.                        
+                                                                                
+           SELECT BM06K130 ASSIGN TO BM06K130                                   
+                  ACCESS MODE     IS RANDOM                                     
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K130-NUM-POSTAL-CODE                       
+                  FILE STATUS     IS WS-BM06K130-STATUS.                        
+                                                                                
+           SELECT BP13OUT  ASSIGN TO BP13OUT.                                   
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+       FD  BP13F55A                                                             
+           BLOCK CONTAINS 0 CHARACTERS                                          
+           RECORD CONTAINS 1200 CHARACTERS                                      
+           RECORDING MODE IS F                                                  
+           LABEL RECORDS ARE STANDARD.                                          
+       COPY BP13F55A.                                                   00015505
+                                                                                
+       FD  BR12FV05                   BLOCK CONTAINS  0 RECORDS                 
+                                      RECORD CONTAINS 1200 CHARACTERS           
+                                      LABEL RECORD    IS STANDARD               
+                                      RECORDING MODE  IS F.                     
+       COPY BR12FV05.                                                           
+                                                                                
+       FD  BP13K80A                                                             
+           RECORD CONTAINS 100 CHARACTERS.                                      
+       COPY BP13K80A.                                                           
+                                                                                
+       FD  BP13K830                                                             
+           RECORD CONTAINS 250 CHARACTERS.                                      
+       COPY BP13K830.                                                           
+                                                                                
+       FD  BM06K130                                                             
+           RECORD CONTAINS 600 CHARACTERS.                                      
+       COPY BM06K130.                                                           
+                                                                                
+       FD  BP13OUT                                                              
+           BLOCK CONTAINS 0 CHARACTERS                                          
+           RECORD CONTAINS 1200 CHARACTERS                                      
+           RECORDING MODE IS F                                                  
+           LABEL RECORDS ARE STANDARD.                                          
+       01  BP13OUT-REC    PIC X(1200).                                  00015505
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-F55A-EOF                   PIC X    VALUE 'N'.                    
+       01  WS-FV05-EOF                   PIC X    VALUE 'N'.                    
+       01  WS-K830-EOF                   PIC X    VALUE 'N'.                    
+       01  WS-FV05-STATUS                PIC 99   VALUE ZEROS.                  
+       01  WS-BP13K80A-STATUS            PIC 99   VALUE ZEROS.                  
+       01  WS-BP13K830-STATUS            PIC 99   VALUE ZEROS.                  
+       01  WS-BM06K130-STATUS            PIC 99   VALUE ZEROS.                  
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-F55A-READ              PIC 9(9) VALUE ZEROS.                  
+           05  WS-FV05-READ              PIC 9(9) VALUE ZEROS.                  
+           05  WS-MATCH                  PIC 9(9) VALUE ZEROS.                  
+           05  WS-FV05-NOTFND            PIC 9(9) VALUE ZEROS.                  
+           05  WS-F55A-NOTFND            PIC 9(9) VALUE ZEROS.                  
+           05  WS-F55A-WRITE             PIC 9(9) VALUE ZEROS.                  
+           05  WS-BR12                   PIC X(1) VALUE SPACES.                 
+           05  WS-BR12-F                 PIC 9(9) VALUE ZEROS.                  
+           05  WS-BR12-B                 PIC 9(9) VALUE ZEROS.                  
+           05  WS-BP13F55A-PREV          PIC X(41) VALUE ZEROS.                 
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       000-MAIN-LOGIC.                                                          
+                                                                                
+            PERFORM 100-OPEN-FILES   THRU 100-EXIT.                             
+            PERFORM 200-READ-F55A    THRU 200-EXIT.                             
+            PERFORM 210-READ-FV05    THRU 210-EXIT.                             
+            PERFORM 300-PROCESS-F55A THRU 300-EXIT                              
+                    UNTIL WS-F55A-EOF = 'Y'                                     
+                    AND   WS-FV05-EOF = 'Y'.                                    
+            PERFORM 900-CLOSE-FILES  THRU 900-EXIT.                             
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       100-OPEN-FILES.                                                          
+      *-------------------------------------------------------------            
+           OPEN  INPUT BP13F55A                                                 
+                       BR12FV05                                                 
+                       BP13K80A                                                 
+                       BP13K830                                                 
+                       BM06K130                                                 
+                OUTPUT BP13OUT.                                                 
+                                                                                
+           IF WS-FV05-STATUS NOT = ZEROS AND 97                                 
+              DISPLAY 'OPENING ERROR, FV05-STATUS ' WS-FV05-STATUS              
+              MOVE WS-FV05-STATUS       TO RETURN-CODE                          
+              PERFORM 900-CLOSE-FILES THRU 900-EXIT.                            
+                                                                                
+           IF WS-BP13K80A-STATUS NOT = ZEROS AND 97                             
+              DISPLAY 'OPENING ERROR, K80A-STATUS ' WS-BP13K80A-STATUS          
+              MOVE WS-BP13K80A-STATUS   TO RETURN-CODE                          
+              PERFORM 900-CLOSE-FILES THRU 900-EXIT.                            
+                                                                                
+           IF WS-BP13K830-STATUS NOT = ZEROS AND 97                             
+              DISPLAY 'OPENING ERROR, K830-STATUS ' WS-BP13K830-STATUS          
+              MOVE WS-BP13K830-STATUS   TO RETURN-CODE                          
+              PERFORM 900-CLOSE-FILES THRU 900-EXIT.                            
+                                                                                
+           IF WS-BM06K130-STATUS NOT = ZEROS AND 97                             
+              DISPLAY 'OPENING ERROR, K130-STATUS ' WS-BM06K130-STATUS          
+              MOVE WS-BM06K130-STATUS   TO RETURN-CODE                          
+              PERFORM 900-CLOSE-FILES THRU 900-EXIT.                            
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       200-READ-F55A.                                                           
+      *-------------------------------------------------------------            
+           READ BP13F55A AT END                                                 
+                MOVE 'Y' TO WS-F55A-EOF                                         
+                MOVE HIGH-VALUES TO F55A-NUM-RDB-HDB-REF                        
+                GO TO 200-EXIT.                                                 
+                                                                                
+           ADD 1         TO WS-F55A-READ.                                       
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       210-READ-FV05.                                                           
+      *-------------------------------------------------------------            
+           READ BR12FV05 AT END                                                 
+                MOVE 'Y' TO WS-FV05-EOF                                         
+                MOVE HIGH-VALUES TO FV05-NUM-CASE-REF                           
+                GO TO 210-EXIT.                                                 
+                                                                                
+           ADD 1         TO WS-FV05-READ.                                       
+                                                                                
+       210-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       300-PROCESS-F55A.                                                        
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES TO WS-BR12.                                              
+                                                                                
+           IF F55A-NUM-RDB-HDB-REF = FV05-NUM-CASE-REF                          
+              ADD 1                        TO WS-MATCH                          
+              PERFORM 3000-READ-BP13K80A   THRU 3000-EXIT                       
+              WRITE BP13OUT-REC            FROM BP13F55A-REC                    
+              ADD 1                        TO WS-F55A-WRITE                     
+              PERFORM 200-READ-F55A    THRU 200-EXIT                            
+           ELSE                                                                 
+              IF F55A-NUM-RDB-HDB-REF < FV05-NUM-CASE-REF                       
+                 ADD 1 TO WS-F55A-NOTFND                                        
+                 IF F55A-NUM-RDB-HDB-REF(12:1) NOT = SPACES AND                 
+                                                     LOW-VALUES                 
+                    DISPLAY F55A-NUM-NRIC1 ' ' F55A-NUM-RDB-HDB-REF             
+                            '  NOT MATCH'                                       
+                                                                                
+                    MOVE SPACES        TO F55A-NUM-RDB-HDB-REF                  
+                                          F55A-NUM-SUBLET                       
+                                          F55A-NUM-RDB-ROLE                     
+                                                                                
+                 END-IF                                                         
+                                                                                
+                 IF F55A-NUM-RDB-ROLE = SPACES OR LOW-VALUES                    
+                    PERFORM 3200-READ-BP13K830 THRU 3200-EXIT                   
+                 END-IF                                                         
+                                                                                
+                 WRITE BP13OUT-REC          FROM BP13F55A-REC                   
+                 ADD 1                      TO   WS-F55A-WRITE                  
+                 PERFORM 200-READ-F55A      THRU 200-EXIT                       
+              ELSE                                                              
+                 ADD 1 TO WS-FV05-NOTFND                                        
+                 PERFORM 210-READ-FV05      THRU 210-EXIT                       
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       3000-READ-BP13K80A.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE SPACES           TO BP13K80A-REC.                               
+           INITIALIZE               BP13K80A-REC.                               
+                                                                                
+           STRING FV05-NUM-SCHEME                                               
+                  FV05-NUM-ACNT                                                 
+                  DELIMITED BY SIZE INTO K80A-NUM-SCH-ACC                       
+                                                                                
+           READ BP13K80A.                                                       
+                                                                                
+           EVALUATE WS-BP13K80A-STATUS                                          
+               WHEN 00                                                          
+                    MOVE K80A-NUM-TOWN       TO  F55A-NUM-PRESENT-NT            
+                    MOVE K80A-NUM-FLAT-TYPE  TO  F55A-NUM-PRESENT-FT            
+                    IF F55A-NUM-RDB-HDB-REF(12:1) NOT = SPACES AND              
+                                                        LOW-VALUES              
+                       MOVE K80A-NUM-SCH-ACC TO F55A-NUM-RDB-HDB-REF            
+                       MOVE SPACES        TO F55A-NUM-RDB-HDB-REF(12:1)         
+                    END-IF                                                      
+               WHEN 23                                                          
+                    DISPLAY 'BP13K80A RECORD NOT FND: ' K80A-NUM-SCH-ACC        
+                    IF F55A-NUM-RDB-HDB-REF(12:1) NOT = SPACES AND              
+                                                        LOW-VALUES              
+                       MOVE SPACES        TO F55A-NUM-RDB-HDB-REF               
+                       MOVE SPACES        TO F55A-NUM-SUBLET                    
+                    END-IF                                                      
+               WHEN OTHER                                                       
+                    DISPLAY 'ERROR READING BP13K80A : '                         
+                            WS-BP13K80A-STATUS ' SCH ACC = '                    
+                            K80A-NUM-SCH-ACC                                    
+                    PERFORM  900-CLOSE-FILES       THRU 900-EXIT                
+           END-EVALUATE.                                                        
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *===============================================================*         
+       3200-READ-BP13K830.                                                      
+      *===============================================================*         
+                                                                                
+           MOVE SPACES        TO K830-KEY-FLD.                                  
+           MOVE F55A-NUM-REGN TO K830-KEY-FLD.                                  
+                                                                                
+           READ BP13K830                                                        
+                                                                                
+           IF WS-BP13K830-STATUS = 00 OR 02                                     
+              IF K830-NUM-REGN = F55A-NUM-REGN                                  
+                 EVALUATE TRUE                                                  
+                 WHEN K830-NUM-ADDR-TYPE = 'H'                                  
+                    MOVE 'H'                      TO F55A-NUM-RDB-ROLE          
+                 WHEN K830-NUM-ADDR-TYPE = SPACES                               
+                    MOVE ' '                      TO F55A-NUM-RDB-ROLE          
+                 WHEN OTHER                                                     
+                    MOVE 'P'                      TO F55A-NUM-RDB-ROLE          
+                 END-EVALUATE                                                   
+                 PERFORM 3400-GET-NT           THRU 3400-EXIT                   
+                                                                                
+              ELSE                                                              
+                 MOVE ' '                         TO F55A-NUM-RDB-ROLE          
+                 MOVE 'Y'                         TO WS-K830-EOF                
+              END-IF                                                            
+           ELSE                                                                 
+              IF WS-BP13K830-STATUS = 23 OR 10                                  
+                 MOVE ' '                         TO F55A-NUM-RDB-ROLE          
+                 MOVE 'Y'                         TO WS-K830-EOF                
+              ELSE                                                              
+                 DISPLAY 'BP13K830 - ERROR READING NEXT : '                     
+                          WS-BP13K830-STATUS                                    
+                 GO TO 900-CLOSE-FILES                                          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       3400-GET-NT.                                                             
+      *-------------------------------------------------------------            
+                                                                                
+           INITIALIZE K130-REC.                                                 
+                                                                                
+           MOVE K830-NUM-POSTAL            TO K130-NUM-POSTAL-CODE              
+                                                                                
+           READ BM06K130.                                                       
+                                                                                
+           EVALUATE WS-BM06K130-STATUS                                          
+               WHEN 00                                                          
+                    MOVE K130-NT-CODE        TO F55A-NUM-PRESENT-NT             
+                    IF F55A-NUM-RDB-ROLE = 'H'                                  
+                       MOVE K130-REC(600:1)  TO F55A-NUM-RDB-ROLE(2:1)          
+                    END-IF                                                      
+               WHEN 23                                                          
+                    DISPLAY K130-NUM-POSTAL-CODE ' K130 NOT FND '               
+                            K830-NUM-REGN                                       
+               WHEN OTHER                                                       
+                    MOVE WS-BM06K130-STATUS         TO RETURN-CODE              
+                    DISPLAY 'ERROR READING BP13K716: '                          
+                            WS-BM06K130-STATUS                                  
+                            ' KEY : ' K130-KEY-FLD                              
+                    PERFORM  900-CLOSE-FILES  THRU 900-EXIT                     
+           END-EVALUATE.                                                        
+                                                                                
+       3400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       900-CLOSE-FILES.                                                         
+      *-------------------------------------------------------------            
+           DISPLAY '----- BP13CK22 CONTROL TOTAL --------'.                     
+           DISPLAY ' A. REC READ    BP13F55A      = ' WS-F55A-READ.             
+           DISPLAY ' B. REC READ    BR12FV05     = ' WS-FV05-READ.              
+           DISPLAY ' C. REC WRITTEN BP13OUT      = ' WS-F55A-WRITE.             
+           DISPLAY ' D. FV05 NOTFD               = ' WS-FV05-NOTFND.            
+           DISPLAY ' E. F55A NOTFD                = ' WS-F55A-NOTFND.           
+           DISPLAY ' F. MATCH                    = ' WS-MATCH.                  
+           DISPLAY ' G. BR12 - B                 = ' WS-BR12-B.                 
+           DISPLAY ' H. BR12 - F                 = ' WS-BR12-F.                 
+           DISPLAY ' '.                                                         
+                                                                                
+           CLOSE BP13F55A                                                       
+                 BR12FV05                                                       
+                 BP13K80A                                                       
+                 BP13K830                                                       
+                 BM06K130                                                       
+                 BP13OUT.                                                       
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       900-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+

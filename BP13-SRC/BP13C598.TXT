@@ -1,0 +1,366 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C598.                                                 
+      *AUTHOR.        JAI.                                                      
+      *DATE-WRITTEN.  25/MAY/1995.                                              
+                                                                                
+      **********************************************************                
+      *    SYSTEM NAME : SYSTEM OF COMMITMENT                  *                
+      *    SYSTEM ID : BP13                                    *                
+      *    OBJECTIVE  : TO FACILITATE 2ND PIGEONHOLING OF PA   *                
+      *                 ADD THE BALANCE OF JB QUOTA TO PA,     *                
+      *                 ADJUST TOTAL UNIT/MAX-CAT1/CAT2/CAT3   *                
+      *                                                        *                
+      *  CHG-NO  BY  ON    DESCRIPTION                         *                
+      *  -----------------------------                         *                
+      * C950543 LSB 950526 - JB PIGEONHOLING                   *                
+      * C950651 EG1 950703 - REMOVED THE COMPUTE PROCESS FOR   *                
+      *                      K712. INCLUDED THE ADJUSTMENT OF  *                
+      *                      JB FOR K712.                      *                
+      *BP130348 LSB 970723 - TRANSFER BAL JB-NH TO PA-NH, BAL  *                
+      *                      JB-UG TO NH-UG, NOT TO COMPUTE    *                
+      *                      BY PROPORTION                     *                
+      *BP130350 LSB 970902 - JB CONTROL BOTH NHH/UPG, IF BAL   *                
+      *                      JB -NHH/UPG TRF TO PA-NHH/UPG     *                
+      *BP130780 MCC 991227 - DEL HARDCODED '19' IN WS-SYS-DATE *                
+      **********************************************************                
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+                                                                                
+       SOURCE-COMPUTER.     IBM-3090.                                           
+       OBJECT-COMPUTER.     IBM-3090.                                           
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13K010 ASSIGN TO BP13K010                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  ACCESS MODE     IS SEQUENTIAL                                 
+                  RECORD KEY      IS K010-KEY-FLD                               
+                  FILE STATUS     IS WS-K010-STATUS.                            
+                                                                                
+           SELECT BP13K712 ASSIGN TO BP13K712                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  ACCESS MODE     IS RANDOM                                     
+                  RECORD KEY      IS K712-KEY-FLD                               
+                  FILE STATUS     IS WS-K712-STATUS.                            
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD   BP13K010.                                                           
+       COPY BP13K010.                                                           
+                                                                                
+       FD   BP13K712.                                                           
+       COPY BP13K712.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+        01  WS-VARIABLES.                                                       
+            05 WS-CNT-K010-READ            PIC 9(08) VALUE 0.                   
+            05 WS-CNT-K010-REWRITE         PIC 9(08) VALUE 0.                   
+            05 WS-CNT-K712-READ            PIC 9(08) VALUE 0.                   
+            05 WS-CNT-K712-REWRITE         PIC 9(08) VALUE 0.                   
+            05 WS-K010-EOF                 PIC X(01) VALUE 'N'.                 
+               88 K010-EOF                     VALUE 'Y'.                       
+            05 WS-K010-STATUS              PIC 9(02) VALUE 0.                   
+            05 WS-K712-STATUS              PIC 9(02) VALUE 0.                   
+            05 WS-NUM-BAL-JB               PIC 9(05) VALUE 0.                   
+            05 WS-NUM-FLAT-NH              PIC S9(5) VALUE 0.                   
+            05 WS-JB-BAL                   PIC S9(5) VALUE 0.                   
+            05 WS-JB-TRF-NH                PIC S9(5) VALUE 0.                   
+            05 WS-JB-TRF-UG                PIC S9(5) VALUE 0.                   
+            05 WS-TOT-UNIT                 PIC S9(5) VALUE 0.                   
+            05 WS-SYS-TIME                 PIC 9(08).                           
+                                                                                
+       01  WS-SYS-DATE.                                                         
+           05 WS-CC                       PIC 9(02) VALUE 00.                   
+           05 WS-SYS-YYMMDD.                                                    
+              10 WS-YY                    PIC 9(02).                            
+              10 WS-MM                    PIC 9(02).                            
+              10 WS-DD                    PIC 9(02).                            
+                                                                                
+      ********************                                                      
+       PROCEDURE DIVISION.                                                      
+      ********************                                                      
+                                                                                
+      ******************                                                        
+       0000-CONTROL-RTN.                                                        
+      ******************                                                        
+                                                                                
+           PERFORM 1000-OPEN-FILES         THRU 1000-EXIT.                      
+           PERFORM 1500-START-BP13K010-KEY THRU 1500-EXIT.              01790000
+           PERFORM 3000-MAIN-ROUTINE       THRU 3000-EXIT                       
+             UNTIL K010-EOF.                                                    
+                                                                                
+           PERFORM 9999-CLOSE-FILES        THRU 9999-EXIT.                      
+                                                                                
+       0000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *****************                                                         
+       1000-OPEN-FILES.                                                         
+      *****************                                                         
+                                                                                
+           OPEN I-O    BP13K010.                                                
+           OPEN I-O    BP13K712.                                                
+                                                                                
+           IF WS-K010-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR OPENING BP13K010, STATUS ' WS-K010-STATUS          
+              MOVE WS-K010-STATUS        TO RETURN-CODE                         
+              PERFORM 9999-CLOSE-FILES   THRU 9999-EXIT                         
+           END-IF.                                                              
+                                                                                
+           IF WS-K712-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR OPENING BP13K712, STATUS ' WS-K712-STATUS          
+              MOVE WS-K712-STATUS        TO RETURN-CODE                         
+              PERFORM 9999-CLOSE-FILES   THRU 9999-EXIT                         
+           END-IF.                                                              
+                                                                                
+           ACCEPT WS-SYS-YYMMDD  FROM DATE.                                     
+           ACCEPT WS-SYS-TIME    FROM TIME.                                     
+                                                                                
+           IF WS-YY > 94                                                        
+              MOVE 19 TO WS-CC                                                  
+           ELSE                                                                 
+              MOVE 20 TO WS-CC                                                  
+           END-IF.                                                              
+                                                                                
+       1000-EXIT.                                                               
+            EXIT.                                                               
+                                                                        01780000
+      *************************                                                 
+       1500-START-BP13K010-KEY.                                         01790000
+      *************************                                                 
+                                                                        01780000
+           MOVE SPACES TO K010-KEY-FLD                                  01800000
+                                                                        01780000
+           START BP13K010 KEY > K010-KEY-FLD                            01810000
+                                                                                
+           IF WS-K010-STATUS  = 00                                              
+              PERFORM 2000-READ-BP13K010    THRU 2000-EXIT                      
+           ELSE                                                                 
+              DISPLAY 'START READ BP13K010, STATUS ' WS-K010-STATUS             
+              MOVE WS-K010-STATUS        TO RETURN-CODE                         
+              PERFORM 9999-CLOSE-FILES   THRU 9999-EXIT                         
+           END-IF.                                                              
+                                                                                
+       1500-EXIT.                                                               
+            EXIT.                                                               
+                                                                        01860000
+      ********************                                                      
+       2000-READ-BP13K010.                                                      
+      ********************                                                      
+                                                                                
+           READ BP13K010 NEXT AT END                                            
+                MOVE 'Y' TO WS-K010-EOF                                         
+                GO TO 2000-EXIT                                                 
+                END-READ.                                                       
+                                                                                
+           IF WS-K010-STATUS NOT = 00                                           
+              DISPLAY 'ERROR READING BP13K010, STATUS ' WS-K010-STATUS          
+              MOVE WS-K010-STATUS        TO RETURN-CODE                         
+              PERFORM 9999-CLOSE-FILES   THRU 9999-EXIT                         
+           END-IF.                                                              
+                                                                                
+           ADD 1                         TO WS-CNT-K010-READ.                   
+                                                                                
+       2000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *******************                                                       
+       3000-MAIN-ROUTINE.                                                       
+      *******************                                                       
+                                                                                
+           PERFORM 4000-ADD-ROUTINE   THRU 4000-EXIT.                           
+                                                                                
+           PERFORM 2000-READ-BP13K010    THRU 2000-EXIT.                        
+                                                                                
+       3000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      ******************                                                        
+       4000-ADD-ROUTINE.                                                        
+      ******************                                                        
+                                                                                
+           IF K010-NUM-MAX-PA1 NOT NUMERIC                                      
+              MOVE ZEROS TO K010-NUM-MAX-PA1                                    
+           END-IF.                                                              
+                                                                                
+           IF K010-NUM-MAX-PA2 NOT NUMERIC                                      
+              MOVE ZEROS TO K010-NUM-MAX-PA2                                    
+           END-IF.                                                              
+                                                                                
+           IF K010-NUM-MAX-PA3 NOT NUMERIC                                      
+              MOVE ZEROS TO K010-NUM-MAX-PA3                                    
+           END-IF.                                                              
+                                                                                
+           COMPUTE WS-NUM-BAL-JB = K010-NUM-TOT-JB - K010-REG-JB1 -             
+                                   K010-REG-JB2    - K010-REG-JB3.              
+                                                                                
+           IF WS-NUM-BAL-JB > 0                                                 
+              ADD WS-NUM-BAL-JB          TO K010-NUM-TOT-PA                     
+              SUBTRACT WS-NUM-BAL-JB   FROM K010-NUM-TOT-JB                     
+              COMPUTE K010-NUM-MAX-PA1 =   K010-NUM-MAX-PA1 +                   
+                     (K010-NUM-MAX-JB1  -  K010-REG-JB1)                        
+              COMPUTE K010-NUM-MAX-PA2 =   K010-NUM-MAX-PA2 +                   
+                     (K010-NUM-MAX-JB2  -  K010-REG-JB2)                        
+              COMPUTE K010-NUM-MAX-PA3 =   K010-NUM-MAX-PA3 +                   
+                     (K010-NUM-MAX-JB3  -  K010-REG-JB3)                        
+                                                                                
+              PERFORM 4500-REWRITE-BP13K010 THRU 4500-EXIT                      
+              PERFORM 5000-READ-JB-NHH-UPG THRU 5000-EXIT                       
+              PERFORM 5400-READ-UPD-K712 THRU 5400-EXIT                         
+           END-IF.                                                              
+                                                                                
+       4000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       4500-REWRITE-BP13K010.                                                   
+                                                                                
+           REWRITE BP13K010-TENDER.                                             
+                                                                                
+           IF WS-K010-STATUS = 00                                               
+              ADD 1                   TO WS-CNT-K010-REWRITE                    
+           ELSE                                                                 
+              DISPLAY 'ERROR REWRITING BP13K010, STATUS '                       
+                                       WS-K010-STATUS                           
+              DISPLAY '                          KEY IS '                       
+                                       K010-KEY-FLD                             
+              MOVE WS-K010-STATUS        TO RETURN-CODE                         
+              PERFORM 9999-CLOSE-FILES   THRU 9999-EXIT                         
+           END-IF.                                                              
+                                                                                
+       4500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      **********************                                                    
+       5000-READ-JB-NHH-UPG.                                                    
+      **********************                                                    
+                                                                                
+           MOVE K010-CDE-NT-ZONE TO K712-CDE-NT-ZONE.                           
+           MOVE K010-CDE-FLAT-TY TO K712-CDE-FLAT-TY.                           
+           MOVE 'MT'             TO K712-CDE-COHORT.                            
+           MOVE 'JB'             TO K712-CDE-ALLOC-SCH.                         
+                                                                                
+           READ BP13K712.                                                       
+                                                                                
+           EVALUATE WS-K712-STATUS                                              
+               WHEN 00                                                          
+                    PERFORM 5100-COMPUTE-BALANCE THRU 5100-EXIT                 
+               WHEN 23                                                          
+                    ADD 1 TO WS-CNT-K712-READ                                   
+                    DISPLAY 'RECORD NOT IN K712 ' K712-KEY-FLD                  
+               WHEN OTHER                                                       
+                    DISPLAY 'ERROR REWRITING BP13K010, STATUS '                 
+                                             WS-K010-STATUS                     
+                    DISPLAY 'KEY IS '        K010-KEY-FLD                       
+                    MOVE WS-K010-STATUS        TO RETURN-CODE                   
+                    PERFORM 9999-CLOSE-FILES   THRU 9999-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       5000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+       5100-COMPUTE-BALANCE.                                                    
+                                                                                
+           COMPUTE WS-JB-BAL = K712-NUM-TOT-UNIT - K712-NUM-REG-NH              
+                                                 - K712-NUM-REG-UG.             
+           IF K712-NUM-FLAT-NH >  K712-NUM-REG-NH                               
+              COMPUTE WS-JB-TRF-NH =                                            
+                                  K712-NUM-FLAT-NH - K712-NUM-REG-NH            
+           END-IF.                                                              
+           IF K712-NUM-FLAT-UG >  K712-NUM-REG-UG                               
+              COMPUTE WS-JB-TRF-UG =                                            
+                                  K712-NUM-FLAT-UG - K712-NUM-REG-UG            
+           END-IF.                                                              
+                                                                                
+       5100-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      ********************                                                      
+       5400-READ-UPD-K712.                                                      
+      ********************                                                      
+                                                                                
+           MOVE K010-CDE-NT-ZONE TO K712-CDE-NT-ZONE.                           
+           MOVE K010-CDE-FLAT-TY TO K712-CDE-FLAT-TY.                           
+           MOVE 'PA'             TO K712-CDE-COHORT.                            
+           MOVE 'PA'             TO K712-CDE-ALLOC-SCH.                         
+                                                                                
+           READ BP13K712.                                                       
+                                                                                
+           EVALUATE WS-K712-STATUS                                              
+               WHEN 00                                                          
+                    ADD 1 TO WS-CNT-K712-READ                                   
+                    PERFORM 5500-REWRITE-K712 THRU 5500-EXIT                    
+               WHEN 23                                                          
+                    ADD 1 TO WS-CNT-K712-READ                                   
+                    DISPLAY 'RECORD NOT IN K712 ' K712-KEY-FLD                  
+               WHEN OTHER                                                       
+                    DISPLAY 'ERROR REWRITING BP13K010, STATUS '                 
+                                             WS-K010-STATUS                     
+                    DISPLAY 'KEY IS '        K010-KEY-FLD                       
+                    MOVE WS-K010-STATUS        TO RETURN-CODE                   
+                    PERFORM 9999-CLOSE-FILES   THRU 9999-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       5400-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      ******************                                                        
+       5500-REWRITE-K712.                                                       
+      ******************                                                        
+                                                                                
+           IF WS-JB-TRF-NH > 0                                                  
+              COMPUTE K712-NUM-FLAT-NH = K712-NUM-FLAT-NH + WS-JB-TRF-NH        
+              COMPUTE K712-NUM-TOT-UNIT = K712-NUM-TOT-UNIT +                   
+                                                            WS-JB-TRF-NH        
+           END-IF.                                                              
+                                                                                
+           IF WS-JB-TRF-UG > 0                                                  
+              COMPUTE K712-NUM-FLAT-UG = K712-NUM-FLAT-UG + WS-JB-TRF-UG        
+              COMPUTE K712-NUM-TOT-UNIT = K712-NUM-TOT-UNIT +                   
+                                                            WS-JB-TRF-UG        
+           END-IF.                                                              
+                                                                                
+           MOVE WS-SYS-DATE TO K712-DTE-UPDATE.                                 
+           MOVE WS-SYS-TIME TO K712-TME-SYSTEM.                                 
+           MOVE 'P13C598'   TO K712-USERID.                                     
+                                                                                
+           REWRITE BP13K712-REC.                                                
+                                                                                
+           IF WS-K712-STATUS = 00                                               
+              ADD 1 TO WS-CNT-K712-REWRITE                                      
+           ELSE                                                                 
+              DISPLAY 'ERROR REWRITING BP13K712, STATUS ' WS-K712-STATUS        
+              DISPLAY 'KEY IS '        K712-KEY-FLD                             
+              MOVE WS-K712-STATUS        TO RETURN-CODE                         
+              PERFORM 9999-CLOSE-FILES   THRU 9999-EXIT                         
+           END-IF.                                                              
+                                                                                
+       5500-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      ******************                                                        
+       9999-CLOSE-FILES.                                                        
+      ******************                                                        
+                                                                                
+           DISPLAY '>>>>>>>>>>>>>>>> BP13C598 <<<<<<<<<<<<<<<<<<'.              
+           DISPLAY '- ADD MAX-CAT QUOTA FROM JB  TO  PA        - '.             
+           DISPLAY '  '.                                                        
+           DISPLAY 'K010 RECORDS READ    : '  WS-CNT-K010-READ.                 
+           DISPLAY 'K010 RECORDS REWRITE : '  WS-CNT-K010-REWRITE.              
+           DISPLAY 'K712 RECORDS READ    : '  WS-CNT-K712-READ.                 
+           DISPLAY 'K712 RECORDS REWRITE : '  WS-CNT-K712-REWRITE.              
+           DISPLAY '  '.                                                        
+                                                                                
+           CLOSE BP13K010.                                                      
+                                                                                
+           IF WS-K010-STATUS NOT = 00                                           
+              DISPLAY 'ERROR CLOSING BP13K010, STATUS ' WS-K010-STATUS          
+              MOVE WS-K010-STATUS       TO RETURN-CODE                          
+           END-IF.                                                              
+                                                                                
+       9999-EXIT.                                                               
+           STOP RUN.                                                            
+

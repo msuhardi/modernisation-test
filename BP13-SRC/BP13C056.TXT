@@ -1,0 +1,358 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C056.                                                 
+      *AUTHOR.        NINO GARILLO.                                             
+      *DATE-WRITTEN.  22/09/2004.                                               
+      * ========================================================== *            
+      * SYSTEM NAME (EXECUTIVE CONDOMINIUM.SYSTEM)                 *            
+      * ========================================================== *            
+      * OBJECTIVE :                                                *            
+      *     FOR APPLICATION CANCELLED THROUGH ONLINE BP13B598,     *            
+      *     IF RED CASES FOUND WITH DEBARMENT RECORDS WITH REASON  *            
+      *     CODE T1 OR T2, SOC WILL OUTPUT TRANSACTION FILE TO     *            
+      *     DEBARMENT SYSTEM FOR DELETION.                         *            
+      *                                                            *            
+      * INPUT FILES  :  BP13F310  -  SEQUENTIAL DATASET            *            
+      *                 BP13K820  -  VSAM DATASET                  *            
+      *                 P04K010   -  VSAM DATASET                  *            
+      * OUTPUT FILES :  P04F010   -  SEQUENTIAL DATASET            *            
+      * ========================================================== *            
+      * CHG-REQ  OIC   DATE    DESCRIPTION                         *            
+      * --------------------------------------------               *            
+      * BP172702 YCH2 13072005 CHECK K800 FOR 'C' AND 'RED'        *            
+      * ========================================================== *            
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13F310  ASSIGN       TO BP13F310.                           
+                                                                                
+           SELECT BP13K800  ASSIGN       TO BP13K800                            
+                            ACCESS MODE  IS RANDOM                              
+                            ORGANIZATION IS INDEXED                             
+                            RECORD KEY   IS K800-NUM-REGN                       
+                            FILE STATUS  IS WS-K800-STATUS.                     
+                                                                                
+           SELECT BP13K820  ASSIGN       TO BP13K820                            
+                            ACCESS MODE  IS DYNAMIC                             
+                            ORGANIZATION IS INDEXED                             
+                            RECORD KEY   IS K820-KEY-FLD                        
+                            FILE STATUS  IS WS-K820-STATUS.                     
+                                                                                
+           SELECT P04K010   ASSIGN       TO P04K010                             
+                            ACCESS MODE  IS DYNAMIC                             
+                            ORGANIZATION IS INDEXED                             
+                            RECORD KEY   IS K010-PRIME-KEY                      
+                            FILE STATUS  IS WS-K010-STATUS.                     
+                                                                                
+           SELECT P04F010   ASSIGN       TO P04F010.                            
+                                                                                
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+      *-------------------------------------------------------------            
+                                                                                
+       FD  BP13F310                                                             
+           RECORDING MODE  IS  F                                                
+           RECORD CONTAINS 150 CHARACTERS.                                      
+       COPY BP13F310.                                                           
+                                                                                
+       FD  BP13K800                                                             
+           RECORD CONTAINS 2000 CHARACTERS.                                     
+       COPY BP13K800.                                                           
+                                                                                
+       FD  BP13K820                                                             
+           RECORD CONTAINS 400 CHARACTERS.                                      
+       COPY BP13K820.                                                           
+                                                                                
+       FD  P04K010                                                              
+           RECORD CONTAINS 300 CHARACTERS.                                      
+       COPY P04K010.                                                            
+                                                                                
+       FD  P04F010                                                              
+           RECORDING MODE  IS  F                                                
+           RECORD CONTAINS 300 CHARACTERS.                                      
+       01  P04F010-REC                 PIC X(300).                              
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+       01  WS-STATUS.                                                           
+           05  WS-K800-STATUS           PIC 9(2)  VALUE 00.                     
+           05  WS-K820-STATUS           PIC 9(2)  VALUE 00.                     
+           05  WS-K010-STATUS           PIC 9(2)  VALUE 00.                     
+                                                                                
+       01  WS-SWITCHES.                                                         
+           05  WS-EOF-F310-SW           PIC X     VALUE 'N'.                    
+           05  WS-END-K800-SW           PIC X     VALUE 'N'.                    
+           05  WS-END-K820-SW           PIC X     VALUE 'N'.                    
+           05  WS-END-K010-SW           PIC X     VALUE 'N'.                    
+           05  WS-RED-FND               PIC X     VALUE 'N'.                    
+                                                                                
+       01  WS-ACCUMULATORS.                                                     
+           05  WS-F310-READ             PIC 9(5)  VALUE ZEROES.                 
+           05  WS-K800-FND              PIC 9(5)  VALUE ZEROES.                 
+           05  WS-K820-NRICFD           PIC 9(5)  VALUE ZEROES.                 
+           05  WS-K010-REFRFD           PIC 9(5)  VALUE ZEROES.                 
+           05  WS-K010-REAST1           PIC 9(5)  VALUE ZEROES.                 
+           05  WS-K010-REAST2           PIC 9(5)  VALUE ZEROES.                 
+           05  WS-K010-BYPASSED         PIC 9(5)  VALUE ZEROES.                 
+           05  WS-F010-WROTE            PIC 9(5)  VALUE ZEROES.                 
+                                                                                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+       MAIN.                                                                    
+      *-------------------------------------------------------------            
+           PERFORM 0000-OPEN-ROUTINE    THRU 0000-EXIT.                         
+           PERFORM 1000-READ-F310       THRU 1000-EXIT.                         
+           PERFORM 2000-PROCESS-DATA    THRU 2000-EXIT                          
+                       UNTIL WS-EOF-F310-SW = 'Y'.                              
+           PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT.                         
+                                                                                
+                                                                                
+       0000-OPEN-ROUTINE.                                                       
+      *-------------------------------------------------------------            
+           OPEN INPUT  BP13F310                                                 
+                       BP13K800                                                 
+                       BP13K820                                                 
+                       P04K010                                                  
+                OUTPUT P04F010.                                                 
+                                                                                
+           IF WS-K820-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'OPEN BP13K820 FAIL ERROR ' WS-K820-STATUS                
+              MOVE     WS-K820-STATUS      TO RETURN-CODE                       
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           IF WS-K010-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'OPEN BP13K010 FAIL ERROR ' WS-K010-STATUS                
+              MOVE     WS-K010-STATUS      TO RETURN-CODE                       
+              PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       1000-READ-F310.                                                          
+      *-------------------------------------------------------------            
+           READ BP13F310 AT END                                                 
+                MOVE 'Y' TO WS-EOF-F310-SW                                      
+                GO TO 1000-EXIT.                                                
+                                                                                
+           ADD  1  TO WS-F310-READ.                                             
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       2000-PROCESS-DATA.                                                       
+      *-------------------------------------------------------------            
+           PERFORM 2500-READ-K800     THRU 2500-EXIT.                           
+           IF  WS-RED-FND = 'Y'                                                 
+               PERFORM 3000-START-K820    THRU 3000-EXIT                        
+               IF WS-K820-STATUS  =  00                                         
+                  PERFORM 3100-READ-K820        THRU 3100-EXIT                  
+                  PERFORM 3200-PROCESS-K820     THRU 3200-EXIT                  
+                          UNTIL WS-END-K820-SW = 'Y'                            
+                          OR (K820-NUM-REGN NOT = F310-REGN-NO)                 
+               END-IF                                                           
+           END-IF.                                                              
+                                                                                
+           PERFORM 1000-READ-F310     THRU 1000-EXIT.                           
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       2500-READ-K800.                                                          
+           MOVE 'N' TO WS-RED-FND.                                              
+           MOVE F310-REGN-NO TO K800-NUM-REGN.                                  
+           READ BP13K800.                                                       
+           EVALUATE WS-K800-STATUS                                              
+             WHEN   00                                                          
+                    IF K800-NUM-STATUS = 'C' AND                                
+                       K800-NUM-ALLO-SCHEME = 'RED'                             
+                       MOVE 'Y' TO WS-RED-FND                                   
+                       ADD 1    TO WS-K800-FND                                  
+                    END-IF                                                      
+             WHEN   23                                                          
+             WHEN   10                                                          
+                    MOVE 'N' TO WS-RED-FND                                      
+             WHEN   OTHER                                                       
+                    DISPLAY 'READ BP13K800 ERROR : ' WS-K800-STATUS             
+                            ' K800-NUM-REG : ' K800-NUM-REGN                    
+                    MOVE     WS-K800-STATUS      TO RETURN-CODE                 
+                    PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                 
+           END-EVALUATE.                                                        
+                                                                                
+       2500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       3000-START-K820.                                                         
+      *-------------------------------------------------------------            
+           MOVE  SPACES       TO K820-KEY-FLD.                                  
+           MOVE  F310-REGN-NO TO K820-NUM-REGN.                                 
+           START BP13K820 KEY >= K820-KEY-FLD                                   
+           IF WS-K820-STATUS  =  00                                             
+              CONTINUE                                                          
+           ELSE                                                                 
+              IF WS-K820-STATUS = 23                                            
+                 DISPLAY 'READ BP13K820 NOTFD : ' WS-K820-STATUS                
+                         ' K820-KEY-FLD : ' K820-NUM-REGN                       
+              ELSE                                                              
+                 DISPLAY 'READ BP13K820 FAIL ERROR : ' WS-K820-STATUS           
+                         ' K820-KEY-FLD : ' K820-NUM-REGN                       
+                 MOVE     WS-K820-STATUS      TO RETURN-CODE                    
+                 PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                    
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       3100-READ-K820.                                                          
+      *-------------------------------------------------------------            
+           READ BP13K820 NEXT RECORD AT END                                     
+                MOVE 'Y' TO WS-END-K820-SW                                      
+                GO TO 3100-EXIT.                                                
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       3200-PROCESS-K820.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           IF K820-NUM-REGN = F310-REGN-NO                                      
+              ADD  1  TO WS-K820-NRICFD                                         
+              PERFORM 4000-START-K010   THRU 4000-EXIT                          
+              IF WS-K010-STATUS   =  00                                         
+                 PERFORM 4100-READ-K010        THRU 4100-EXIT                   
+                 PERFORM 4200-PROCESS-K010     THRU 4200-EXIT                   
+                         UNTIL WS-END-K010-SW = 'Y'                             
+                         OR (K010-NUM-UINFIN(1:9) NOT = K820-NUM-NRIC)          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 3100-READ-K820    THRU 3100-EXIT.                            
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4000-START-K010.                                                         
+      *-------------------------------------------------------------            
+           MOVE  SPACES        TO K010-PRIME-KEY.                               
+           MOVE  K820-NUM-NRIC TO K010-NUM-UINFIN.                              
+           START P04K010 KEY   >= K010-PRIME-KEY                                
+           IF WS-K010-STATUS   =  00                                            
+              CONTINUE                                                          
+           ELSE                                                                 
+              IF WS-K010-STATUS = 23                                            
+                 DISPLAY 'READ P04K010 FAIL ERROR : ' WS-K010-STATUS            
+                         ' K010-KEY-FLD : ' K010-NUM-UINFIN                     
+              ELSE                                                              
+                 DISPLAY 'READ P04K010 FAIL ERROR : ' WS-K010-STATUS            
+                         ' K010-KEY-FLD : ' K010-NUM-UINFIN                     
+                 MOVE     WS-K010-STATUS      TO RETURN-CODE                    
+                 PERFORM  9000-CLOSE-ROUTINE  THRU 9000-EXIT                    
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       4000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4100-READ-K010.                                                          
+      *-------------------------------------------------------------            
+           READ P04K010 NEXT RECORD AT END                                      
+                MOVE 'Y' TO WS-END-K010-SW                                      
+                GO TO 4100-EXIT.                                                
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       4200-PROCESS-K010.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           IF K010-NUM-UINFIN(1:9) = K820-NUM-NRIC                              
+              ADD 1 TO WS-K010-REFRFD                                           
+              EVALUATE K010-REASON-CODE                                         
+              WHEN 'T1'                                                         
+                 ADD 1 TO WS-K010-REAST1                                        
+                 PERFORM 5000-WRITE-F010 THRU 5000-EXIT                         
+              WHEN 'T2'                                                         
+                 ADD 1 TO WS-K010-REAST2                                        
+                 PERFORM 5000-WRITE-F010 THRU 5000-EXIT                         
+              WHEN OTHER                                                        
+                 ADD 1 TO WS-K010-BYPASSED                                      
+              END-EVALUATE                                                      
+           END-IF.                                                              
+                                                                                
+           PERFORM 4100-READ-K010 THRU 4100-EXIT.                               
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       5000-WRITE-F010.                                                         
+      *-------------------------------------------------------------            
+           WRITE P04F010-REC FROM P04K010-REC.                                  
+                                                                                
+           ADD  1  TO WS-F010-WROTE.                                            
+                                                                                
+       5000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       9000-CLOSE-ROUTINE.                                                      
+      *-------------------------------------------------------------            
+           DISPLAY '   '.                                                       
+           DISPLAY '*------- BP13C056 CONTROL TOTAL -------*'.                  
+           DISPLAY '   '.                                                       
+           DISPLAY '01. NO BP13F310 REGN READ  : ' WS-F310-READ.                
+           DISPLAY '1A. NO BP13K800 REGN READ  : ' WS-K800-FND.                 
+           DISPLAY '02. NO BP13K820 NRIC FD    : ' WS-K820-NRICFD.              
+           DISPLAY '03. NO P04K010  REFNO FD   : ' WS-K010-REFRFD.              
+           DISPLAY '04. NO P04K010  REASON T1  : ' WS-K010-REAST1.              
+           DISPLAY '05. NO P04K010  REASON T2  : ' WS-K010-REAST2.              
+           DISPLAY '06. NO P04K010  BYPASSED   : ' WS-K010-BYPASSED.            
+           DISPLAY '07. NO P04F010  WROTE      : ' WS-F010-WROTE.               
+           DISPLAY '  '.                                                        
+           DISPLAY ' CHECK '.                                                   
+           DISPLAY '      03.  =  04.  +  05.  +  06.'.                         
+           DISPLAY '      07.  =  04.  +  05.'.                                 
+           DISPLAY '  '.                                                        
+                                                                                
+           CLOSE BP13F310                                                       
+                 BP13K800                                                       
+                 BP13K820                                                       
+                 P04K010                                                        
+                 P04F010.                                                       
+                                                                                
+           IF WS-K800-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'CLOSE BP13K800 FAIL ERROR ' WS-K800-STATUS               
+              MOVE     WS-K800-STATUS      TO RETURN-CODE                       
+           END-IF.                                                              
+                                                                                
+           IF WS-K820-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'CLOSE BP13K820 FAIL ERROR ' WS-K820-STATUS               
+              MOVE     WS-K820-STATUS      TO RETURN-CODE                       
+           END-IF.                                                              
+                                                                                
+           IF WS-K010-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'CLOSE P04K010 FAIL ERROR ' WS-K010-STATUS                
+              MOVE     WS-K010-STATUS      TO RETURN-CODE                       
+           END-IF.                                                              
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+           EXIT.                                                                
+

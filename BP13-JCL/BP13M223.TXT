@@ -1,0 +1,680 @@
+//BP13M223 JOB (BP13P),'BP13M223',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//         NOTIFY=CSD0071,SCHENV=PKZIP                                          
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//*=====================================================================        
+//* CREATE APPLICTAION FILE TO SQL TABEL                                00130010
+//* APPLICATION FILE BP13FW3A                                           00130010
+//* OCCUPIER    FILE BP13FW3B                                           00130010
+//* JON RUN ON 1ST OF THE MONTH                                         00130010
+//*=====================================================================        
+//* CHGPNO   BY    ON     - DESCRIPTION                                 00130010
+//* ------------------------------------                                00130010
+//* BP135820 LSB 13062015 - NEW JOB                                     00130010
+//* BP135919 LSB 30092015 - ADD BP13K640                                00130010
+//* BP136270 LSB 27052016 - ADD TP AND CANCELLATION FILE                00130010
+//* BP136911 MRN106022017 - REMOVE KD05 AND KD07 FROM C92F(STEP06/07/08)        
+//* BP137366 LSB 20062019 - ADD BP13FW3F, BP13FW3G TO MHA, OMIT EC,DBS          
+//* BP138939 LSB 20211213 - ADD BP13FW3M, BP13FW3N,BM06K955, HMG DATA           
+//* BP138923 KR1320220526 - ADD SY02F001 TO C94T                                
+//* BP138923 LSB 20220830 - BYPASS DUPLICATE KEY BP13FW3M                       
+//* BP138667 LSB 20221109 - BYPASS DUPLICATE CUSTID BP13FW3B                    
+//* BP139506 EAA220230310 - ADD SY02F001 IN BP13C94U                            
+//*-------------------------------------------------------------------*         
+//* STEP00 :  TO DELETE ZIP FILES                                               
+//*-------------------------------------------------------------------*         
+//STEP00   EXEC PGM=IDCAMS                                                      
+//SYSPRINT DD   SYSOUT=*                                                        
+//SYSIN    DD   *                                                               
+     DEL ('BP13.FFDW.SALES.APLCTN.M.ZIP')                                       
+     DEL ('BP13.FFDW.SALES.APLCTN.TP.M.ZIP')                                    
+     DEL ('BP13.FFDW.SALES.APLCTN.CANCEL.M.ZIP')                                
+     DEL ('BP13.FFDW.SALES.APLCNT.M.ZIP')                                       
+     DEL ('BP13.FFDW.SALES.APLCNT.TP.M.ZIP')                                    
+     DEL ('BP13.FFDW.SALES.APLCNT.CANCEL.M.ZIP')                                
+     DEL ('BM06.FFDW.SALES.FIS.M.ZIP')                                          
+     DEL ('BM06.FFDW.SALES.FIS.TP.M.ZIP')                                       
+     DEL ('BM06.FFDW.SALES.FIS.CANCEL.M.ZIP')                                   
+     DEL ('BP13.FFDW.CODE.TABLE.M.ZIP')                                         
+     DEL ('BM06.FFDW.CODE.TABLE.M.ZIP')                                         
+     IF MAXCC < 12 THEN                                                         
+        SET MAXCC = 0                                                           
+//*-----------------------------------------------------------------    00130010
+//* SORT OUT CASES KEY-ISUED IN THE MONTH                               00130010
+//*-----------------------------------------------------------------    00130010
+//STEP01   EXEC SORT,COND=(0,NE)                                                
+//SORTIN  DD DSN=BP13.F410.MTHSO.BKUP,DISP=SHR                                  
+//SORTOUT DD DSN=&&BP13F410,DISP=(,PASS),                                       
+//        UNIT=SYSDA,                                                           
+//        DCB=(RECFM=FB,LRECL=2000),                                            
+//        SPACE=(CYL,(120,50),RLSE)                                             
+//SYSIN   DD  *                                                                 
+  SORT FIELDS=(1,8,A),FORMAT=CH                                                 
+//*--------------------------------------------------------------------         
+//* CREATE BP13F800 ON KEY-ISSUED IN THE MONTH                                  
+//*--------------------------------------------------------------------         
+//STEP02   EXEC  PGM=BP13C93G,COND=(0,NE)                                       
+//BP13F410 DD DSN=&&BP13F410,DISP=(OLD,PASS)                                    
+//BP13K893 DD DSN=BP13.K893.APPLN.HISTORY,DISP=SHR,                             
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13F800 DD DSN=&&F800F410,DISP=(,PASS),                                      
+//        UNIT=SYSDA,                                                           
+//        DCB=(RECFM=FB,LRECL=2000,BLKSIZE=0),                                  
+//        SPACE=(CYL,(20,20),RLSE)                                              
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*                                                                             
+//*-----------------------------------------------------------------            
+//* SORT OUT CURRENT SOC MASTER                                                 
+//*-----------------------------------------------------------------            
+//STEP03   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K800.APPLN,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//SORTOUT  DD DSN=&&BP13F800,DISP=(NEW,PASS),                                   
+//            UNIT=(SYSDA,20),SPACE=(CYL,(350,50),RLSE),                        
+//            DCB=(RECFM=FB,LRECL=2000,BLKSIZE=0)                               
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(4,8,A),FORMAT=CH                                                
+   OMIT COND=(4,7,CH,EQ,C'       ',OR,                                          
+              924,2,CH,EQ,C'WI',OR,                                             
+              924,2,CH,EQ,C'BE',OR,                                             
+              924,2,CH,EQ,C'EC',OR,                                             
+              924,3,CH,EQ,C'SMR',OR,                                            
+              924,3,CH,EQ,C'NPL',OR,                                            
+              924,3,CH,EQ,C'DBS')                                               
+//*--------------------------------------------------------------------         
+//* OUTPUT BP13F800 - FOUND IN BP13K410 KEY-ISSUED CASE                         
+//*        BP13F800 - CANCELLED CASES WITHIN THE MONTH                          
+//*        BP13F800 - LIVE CASES, EXCLUDE CANCELLED CASES                       
+//*--------------------------------------------------------------------         
+//STEP04   EXEC  PGM=BP13C92V,COND=(0,NE)                                       
+//BP13F800 DD DSN=&&BP13F800,DISP=(OLD,PASS)                                    
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13K410 DD DSN=BP13.K410.ACCUMSO,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//P13F800A DD DSN=&&F800TP,DISP=(,PASS),                                        
+//        UNIT=SYSDA,                                                           
+//        DCB=(RECFM=FB,LRECL=2000,BLKSIZE=0),                                  
+//        SPACE=(CYL,(20,20),RLSE)                                              
+//P13F800B DD DSN=&&F800CAN,DISP=(,PASS),                                       
+//        UNIT=SYSDA,                                                           
+//        DCB=(RECFM=FB,LRECL=2000,BLKSIZE=0),                                  
+//        SPACE=(CYL,(80,20),RLSE)                                              
+//P13F800C DD DSN=&&F800APP,DISP=(,PASS),                                       
+//        UNIT=SYSDA,                                                           
+//        DCB=(RECFM=FB,LRECL=2000,BLKSIZE=0),                                  
+//        SPACE=(CYL,(300,80),RLSE)                                             
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*                                                                             
+//*-----------------------------------------------------------------            
+//* ADD TP CASES FOR THE MONTH                                                  
+//*-----------------------------------------------------------------            
+//STEP05   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&F800F410,DISP=(OLD,PASS)                                    
+//         DD DSN=&&F800TP,DISP=(OLD,PASS)                                      
+//SORTOUT  DD DSN=&&F800KEY,DISP=(NEW,PASS),                                    
+//            UNIT=(SYSDA,20),SPACE=(CYL,(350,50),RLSE),                        
+//            DCB=(RECFM=FB,LRECL=2000,BLKSIZE=0)                               
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(4,8,A),FORMAT=CH                                                
+   SUM FIELDS=NONE                                                              
+   OMIT COND=(4,7,CH,EQ,C'       ',OR,                                          
+              924,2,CH,EQ,C'WI',OR,                                             
+              924,2,CH,EQ,C'BE',OR,                                             
+              924,2,CH,EQ,C'EC',OR,                                             
+              924,3,CH,EQ,C'SMR',OR,                                            
+              924,3,CH,EQ,C'NPL',OR,                                            
+              924,3,CH,EQ,C'DBS')                                               
+//*-----------------------------------------------------------------            
+//* TP CASES                                                                    
+//* OUTPUT APPLICATION BP13FW3A/OCCUP BP13FW3B FILE TO SQL                      
+//*-----------------------------------------------------------------            
+//STEP06   EXEC  PGM=IKJEFT01,COND=(0,NE),                                      
+//             DYNAMNBR=20                                                      
+//BP13F800 DD DSN=&&F800KEY,DISP=(OLD,PASS)                                     
+//BP13K800 DD DSN=BP13.K800.APPLN,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K820 DD DSN=BP13.K820.OCCUP,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K895 DD DSN=BP13.K895.OCCUP.HISTORY,DISP=SHR,                             
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K830 DD DSN=BP13.K830.ADDR,DISP=SHR,                                      
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K330 DD DSN=BP13.K330.ACCUMAO,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K410 DD DSN=BP13.K410.ACCUMSO,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K813 DD DSN=BP13.K813.BTOBE,DISP=SHR,                                     
+//         AMP=('BUFNI=8','BUFND=4')                                            
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K100 DD DSN=BM06.K100.BLOCK,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K110 DD DSN=BM06.K110.FLATINV,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K670 DD DSN=BP13.K670.BO,DISP=SHR,                                        
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K734 DD DSN=BP13.K734.INCOME,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KD00 DD DSN=BP13.KD00.DBSMAST,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KB78 DD DSN=BP13.KB78.DBSREQ,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K130 DD DSN=BM06.K130.BLOCK.PIDB,DISP=SHR,                                
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K022 DD DSN=BP13.K022.WISOIC,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K021 DD DSN=BP13.K022.WISOIC.PATH1,DISP=SHR,                              
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K435 DD DSN=BP13.K435.KEY.BORROW,DISP=SHR,                                
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BB14K500 DD DSN=BB14.K500.BLKLEASE,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BB14K580 DD DSN=BB14.K580.UNTLEASE,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K640 DD DSN=BP13.K640.CA.ACTION,DISP=SHR,                                 
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K840 DD DSN=BP13.K840.APPLHIST,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K857 DD DSN=BP13.K857.EMAIL,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K845 DD DSN=BP13.K845.APPLN.HIST,DISP=SHR,                                
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K950 DD DSN=BM06.K950.FIS.HISTORY,DISP=SHR,                               
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13FW3A DD DSN=BP13.FW3A.APPLN.TP,DISP=OLD                                   
+//BP13FW3B DD DSN=BP13.FW3B.OCCUP.TP.C92F,DISP=OLD                              
+//BP13FW3F DD DSN=BP13.FW3F.APPLMHA.TP,DISP=OLD                                 
+//BP13FW3G DD DSN=BP13.FW3G.OCCPMHA.TP,DISP=OLD                                 
+//BP13FW3M DD DSN=BP13.FW3M.APPSALE.TP,DISP=OLD                                 
+//BM06F955 DD DSN=BM06.F955.FIS.TP,DISP=OLD                                     
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSTSPRT DD  SYSOUT=*                                                         
+//SYSTSIN  DD  *                                                                
+ DSN SYSTEM(DSN)                                                                
+ RUN  PROGRAM(BP13C92F) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+ END                                                                            
+//*-----------------------------------------------------------------    00130010
+//* DROP DUPLICATE REGN/CUSTID                                          00130010
+//*-----------------------------------------------------------------    00130010
+//STEP06A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN  DD DSN=BP13.FW3B.OCCUP.TP.C92F,DISP=SHR                               
+//SORTOUT DD DSN=BP13.FW3B.OCCUP.TP,DISP=OLD                                    
+//SYSIN   DD  *                                                                 
+  SORT FIELDS=(1,17,A),FORMAT=CH                                                
+  SUM FIELDS=NONE                                                               
+//*-----------------------------------------------------------------            
+//* CANCELLED CASE                                                              
+//* OUTPUT APPLICATION BP13FW3A/OCCUP BP13FW3B FILE TO SQL                      
+//*-----------------------------------------------------------------            
+//STEP07   EXEC  PGM=IKJEFT01,COND=(0,NE),                                      
+//             DYNAMNBR=20                                                      
+//BP13F800 DD DSN=&&F800CAN,DISP=(OLD,PASS)                                     
+//BP13K800 DD DSN=BP13.K800.APPLN,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K820 DD DSN=BP13.K820.OCCUP,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K895 DD DSN=BP13.K895.OCCUP.HISTORY,DISP=SHR,                             
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K830 DD DSN=BP13.K830.ADDR,DISP=SHR,                                      
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K330 DD DSN=BP13.K330.ACCUMAO,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K410 DD DSN=BP13.K410.ACCUMSO,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K813 DD DSN=BP13.K813.BTOBE,DISP=SHR,                                     
+//         AMP=('BUFNI=8','BUFND=4')                                            
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K100 DD DSN=BM06.K100.BLOCK,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K110 DD DSN=BM06.K110.FLATINV,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K670 DD DSN=BP13.K670.BO,DISP=SHR,                                        
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K734 DD DSN=BP13.K734.INCOME,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KD00 DD DSN=BP13.KD00.DBSMAST,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KB78 DD DSN=BP13.KB78.DBSREQ,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K130 DD DSN=BM06.K130.BLOCK.PIDB,DISP=SHR,                                
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K022 DD DSN=BP13.K022.WISOIC,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K021 DD DSN=BP13.K022.WISOIC.PATH1,DISP=SHR,                              
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K435 DD DSN=BP13.K435.KEY.BORROW,DISP=SHR,                                
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BB14K500 DD DSN=BB14.K500.BLKLEASE,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BB14K580 DD DSN=BB14.K580.UNTLEASE,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K640 DD DSN=BP13.K640.CA.ACTION,DISP=SHR,                                 
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K840 DD DSN=BP13.K840.APPLHIST,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K857 DD DSN=BP13.K857.EMAIL,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K845 DD DSN=BP13.K845.APPLN.HIST,DISP=SHR,                                
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K950 DD DSN=BM06.K950.FIS.HISTORY,DISP=SHR,                               
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13FW3A DD DSN=BP13.FW3A.APPLN.CANCEL,DISP=OLD                               
+//BP13FW3B DD DSN=BP13.FW3B.OCCUP.CANCEL.C92F,DISP=OLD                          
+//BP13FW3F DD DSN=BP13.FW3F.APPLMHA.CANCEL,DISP=OLD                             
+//BP13FW3G DD DSN=BP13.FW3G.OCCPMHA.CANCEL,DISP=OLD                             
+//BP13FW3M DD DSN=BP13.FW3M.APPSALE.CANCEL,DISP=OLD                             
+//BM06F955 DD DSN=BM06.F955.FIS.CANCEL,DISP=OLD                                 
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSTSPRT DD  SYSOUT=*                                                         
+//SYSTSIN  DD  *                                                                
+ DSN SYSTEM(DSN)                                                                
+ RUN  PROGRAM(BP13C92F) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+ END                                                                            
+//*-----------------------------------------------------------------    00130010
+//* DROP DUPLICATE REGN/CUSTID                                          00130010
+//*-----------------------------------------------------------------    00130010
+//STEP07A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN  DD DSN=BP13.FW3B.OCCUP.CANCEL.C92F,DISP=SHR                           
+//SORTOUT DD DSN=BP13.FW3B.OCCUP.CANCEL,DISP=OLD                                
+//SYSIN   DD  *                                                                 
+  SORT FIELDS=(1,17,A),FORMAT=CH                                                
+  SUM FIELDS=NONE                                                               
+//*-----------------------------------------------------------------            
+//* LIVE CASES                                                                  
+//* OUTPUT APPLICATION BP13FW3A/OCCUP BP13FW3B FILE TO SQL                      
+//*-----------------------------------------------------------------            
+//STEP08   EXEC  PGM=IKJEFT01,COND=(0,NE),                                      
+//             DYNAMNBR=20                                                      
+//BP13F800 DD DSN=&&F800APP,DISP=(OLD,PASS)                                     
+//BP13K800 DD DSN=BP13.K800.APPLN,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K820 DD DSN=BP13.K820.OCCUP,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K895 DD DSN=BP13.K895.OCCUP.HISTORY,DISP=SHR,                             
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K830 DD DSN=BP13.K830.ADDR,DISP=SHR,                                      
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K330 DD DSN=BP13.K330.ACCUMAO,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K410 DD DSN=BP13.K410.ACCUMSO,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K813 DD DSN=BP13.K813.BTOBE,DISP=SHR,                                     
+//         AMP=('BUFNI=8','BUFND=4')                                            
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K100 DD DSN=BM06.K100.BLOCK,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K110 DD DSN=BM06.K110.FLATINV,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K670 DD DSN=BP13.K670.BO,DISP=SHR,                                        
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K734 DD DSN=BP13.K734.INCOME,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KD00 DD DSN=BP13.KD00.DBSMAST,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KB78 DD DSN=BP13.KB78.DBSREQ,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K130 DD DSN=BM06.K130.BLOCK.PIDB,DISP=SHR,                                
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K022 DD DSN=BP13.K022.WISOIC,DISP=SHR,                                    
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K021 DD DSN=BP13.K022.WISOIC.PATH1,DISP=SHR,                              
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K435 DD DSN=BP13.K435.KEY.BORROW,DISP=SHR,                                
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BB14K500 DD DSN=BB14.K500.BLKLEASE,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BB14K580 DD DSN=BB14.K580.UNTLEASE,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K640 DD DSN=BP13.K640.CA.ACTION,DISP=SHR,                                 
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K840 DD DSN=BP13.K840.APPLHIST,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K857 DD DSN=BP13.K857.EMAIL,DISP=SHR,                                     
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13K845 DD DSN=BP13.K845.APPLN.HIST,DISP=SHR,                                
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BM06K950 DD DSN=BM06.K950.FIS.HISTORY,DISP=SHR,                               
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13FW3A DD DSN=BP13.FW3A.APPLN,DISP=OLD                                      
+//BP13FW3B DD DSN=BP13.FW3B.OCCUP.C92F,DISP=OLD                                 
+//BP13FW3F DD DSN=BP13.FW3F.APPLMHA,DISP=OLD                                    
+//BP13FW3G DD DSN=BP13.FW3G.OCCPMHA,DISP=OLD                                    
+//BP13FW3M DD DSN=BP13.FW3M.APPSALE,DISP=OLD                                    
+//BM06F955 DD DSN=BM06.F955.FIS,DISP=OLD                                        
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSTSPRT DD  SYSOUT=*                                                         
+//SYSTSIN  DD  *                                                                
+ DSN SYSTEM(DSN)                                                                
+ RUN  PROGRAM(BP13C92F) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+ END                                                                            
+//*-----------------------------------------------------------------    00130010
+//* DROP DUPLICATE REGN/CUSTID                                          00130010
+//*-----------------------------------------------------------------    00130010
+//STEP08A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN  DD DSN=BP13.FW3B.OCCUP.C92F,DISP=SHR                                  
+//SORTOUT DD DSN=BP13.FW3B.OCCUP,DISP=OLD                                       
+//SYSIN   DD  *                                                                 
+  SORT FIELDS=(1,17,A),FORMAT=CH                                                
+  SUM FIELDS=NONE                                                               
+//*---------------------------------------------------------------------00040200
+//* SENT FILE TO MHA                                                    00250000
+//*---------------------------------------------------------------------00040200
+//STEP13   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.FW3F.APPLMHA.TP,DISP=SHR                         00512000
+//         DD DSN=BP13.FW3F.APPLMHA,DISP=SHR                            00512000
+//         DD DSN=BP13.FW3F.APPLMHA.CANCEL,DISP=SHR                     00512000
+//OUTPUT1  DD DSN=BP13.FW3F.APPLMHA.SENT,DISP=OLD                       00513000
+//INPUT2   DD DSN=BP13.FW3G.OCCPMHA.TP,DISP=SHR                         00512000
+//         DD DSN=BP13.FW3G.OCCPMHA,DISP=SHR                            00512000
+//         DD DSN=BP13.FW3G.OCCPMHA.CANCEL,DISP=SHR                     00512000
+//OUTPUT2  DD DSN=BP13.FW3G.OCCPMHA.SENT,DISP=OLD                       00513000
+//*                                                                             
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1) OUTFILE(OUTPUT1)                                      
+     REPRO INFILE(INPUT2) OUTFILE(OUTPUT2)                                      
+//*---------------------------------------------------------------------00040200
+//* BACKUP BP13 APPLN BP13FW3A AND OCCUP BP13FW3B FILE                  00250000
+//*---------------------------------------------------------------------00040200
+//STEP14   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.FW3A.APPLN,DISP=SHR                              00512000
+//OUTPUT1  DD DSN=BP13.FW3A.APPLN.MONTH(+1),DISP=(,CATLG),              00513000
+//            UNIT=CART,LABEL=(1,SL),                                   00513100
+//            DCB=(BP13.GDG,BLKSIZE=18400,LRECL=800,RECFM=FB)           00514200
+//INPUT2   DD DSN=BP13.FW3B.OCCUP,DISP=SHR                              00512000
+//OUTPUT2  DD DSN=BP13.FW3B.OCCUP.MONTH(+1),DISP=(,CATLG),              00513000
+//            UNIT=CART,LABEL=(2,SL),VOL=REF=*.OUTPUT1,                 00513100
+//            DCB=(BP13.GDG,BLKSIZE=27600,LRECL=400,RECFM=FB)           00514200
+//INPUT3   DD DSN=BP13.FW3F.APPLMHA,DISP=SHR                            00512000
+//OUTPUT3  DD DSN=BP13.FW3F.APPLMHA.MONTH(+1),DISP=(,CATLG),            00513000
+//            UNIT=CART,LABEL=(3,SL),VOL=REF=*.OUTPUT1,                 00513100
+//            DCB=(BP13.GDG,BLKSIZE=27650,LRECL=350,RECFM=FB)           00514200
+//INPUT4   DD DSN=BP13.FW3G.OCCPMHA,DISP=SHR                            00512000
+//OUTPUT4  DD DSN=BP13.FW3G.OCCPMHA.MONTH(+1),DISP=(,CATLG),            00513000
+//            UNIT=CART,LABEL=(4,SL),VOL=REF=*.OUTPUT1,                 00513100
+//            DCB=(BP13.GDG,BLKSIZE=27750,LRECL=250,RECFM=FB)           00514200
+//INPUT5   DD DSN=BP13.FW3M.APPSALE,DISP=SHR                            00512000
+//OUTPUT5  DD DSN=BP13.FW3M.APPSALE.MBKUP(+1),DISP=(,CATLG),            00513000
+//            UNIT=CART,LABEL=(5,SL),VOL=REF=*.OUTPUT1,                 00513100
+//            DCB=(BP13.GDG,BLKSIZE=18400,LRECL=800,RECFM=FB)           00514200
+//INPUT6   DD DSN=BM06.F955.FIS,DISP=SHR                                00512000
+//OUTPUT6  DD DSN=BM06.F955.FIS.MBKUP(+1),DISP=(,CATLG),                00513000
+//            UNIT=CART,LABEL=(6,SL),VOL=REF=*.OUTPUT1,                 00513100
+//            DCB=(BP13.GDG,BLKSIZE=27650,LRECL=350,RECFM=FB)           00514200
+//*                                                                             
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1) OUTFILE(OUTPUT1)                                      
+     REPRO INFILE(INPUT2) OUTFILE(OUTPUT2)                                      
+     REPRO INFILE(INPUT3) OUTFILE(OUTPUT3)                                      
+     REPRO INFILE(INPUT4) OUTFILE(OUTPUT4)                                      
+     REPRO INFILE(INPUT5) OUTFILE(OUTPUT5)                                      
+     REPRO INFILE(INPUT6) OUTFILE(OUTPUT6)                                      
+//*---------------------------------------------------------------------00040000
+//* FORMAT TP FILE TO MHA                                               00050000
+//*---------------------------------------------------------------------00060000
+//STEP15   EXEC PGM=BP13C93T,COND=(0,NE)                                00070000
+//BP13FW3F DD DSN=BP13.FW3F.APPLMHA.TP,DISP=SHR                         00080001
+//BP13FW3G DD DSN=BP13.FW3G.OCCPMHA.TP,DISP=SHR                         00090001
+//P13FW3FA DD DSN=BP13.FW3F.APPLMHA.TP.FORMAT,DISP=OLD                  00091001
+//P13FW3GA DD DSN=BP13.FW3G.OCCPMHA.TP.FORMAT,DISP=OLD                  00092001
+//SYSOUT DD SYSOUT=*                                                    00100000
+//SYSDBOUT DD SYSOUT=*                                                          
+/*                                                                      00120000
+//*---------------------------------------------------------------------00040000
+//* FORMAT CANCEL FILE TO MHA                                           00050000
+//*---------------------------------------------------------------------00060000
+//STEP16   EXEC PGM=BP13C93T,COND=(0,NE)                                00070000
+//BP13FW3F DD DSN=BP13.FW3F.APPLMHA.CANCEL,DISP=SHR                     00080001
+//BP13FW3G DD DSN=BP13.FW3G.OCCPMHA.CANCEL,DISP=SHR                     00090001
+//P13FW3FA DD DSN=BP13.FW3F.APPLMHA.CANCEL.FORMAT,DISP=OLD              00091001
+//P13FW3GA DD DSN=BP13.FW3G.OCCPMHA.CANCEL.FORMAT,DISP=OLD              00092001
+//SYSOUT DD SYSOUT=*                                                    00100000
+//SYSDBOUT DD SYSOUT=*                                                          
+/*                                                                      00120000
+//*---------------------------------------------------------------------00040000
+//* FORMAT APPLN FILE TO MHA                                            00050000
+//*---------------------------------------------------------------------00060000
+//STEP17   EXEC PGM=BP13C93T,COND=(0,NE)                                00070000
+//BP13FW3F DD DSN=BP13.FW3F.APPLMHA,DISP=SHR                            00080001
+//BP13FW3G DD DSN=BP13.FW3G.OCCPMHA,DISP=SHR                            00090001
+//P13FW3FA DD DSN=BP13.FW3F.APPLMHA.FORMAT,DISP=OLD                     00091001
+//P13FW3GA DD DSN=BP13.FW3G.OCCPMHA.FORMAT,DISP=OLD                     00092001
+//SYSOUT DD SYSOUT=*                                                    00100000
+//SYSDBOUT DD SYSOUT=*                                                          
+/*                                                                      00120000
+//*---------------------------------------------------------------------00040200
+//* SENT FORMATED FILE TO MHA                                           00250000
+//*---------------------------------------------------------------------00040200
+//STEP18   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.FW3F.APPLMHA.TP.FORMAT,DISP=SHR                  00512000
+//         DD DSN=BP13.FW3F.APPLMHA.FORMAT,DISP=SHR                     00512000
+//         DD DSN=BP13.FW3F.APPLMHA.CANCEL.FORMAT,DISP=SHR              00512000
+//OUTPUT1  DD DSN=BP13.FW3F.APPLMHA.SENT.FORMAT,DISP=OLD                00513000
+//INPUT2   DD DSN=BP13.FW3G.OCCPMHA.TP.FORMAT,DISP=SHR                  00512000
+//         DD DSN=BP13.FW3G.OCCPMHA.FORMAT,DISP=SHR                     00512000
+//         DD DSN=BP13.FW3G.OCCPMHA.CANCEL.FORMAT,DISP=SHR              00512000
+//OUTPUT2  DD DSN=BP13.FW3G.OCCPMHA.SENT.FORMAT,DISP=OLD                00513000
+//*                                                                             
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1) OUTFILE(OUTPUT1)                                      
+     REPRO INFILE(INPUT2) OUTFILE(OUTPUT2)                                      
+//*-----------------------------------------------------------------    00130010
+//* SORT OUT OCCUO FILE KEY-ISUED IN THE MONTH                          00130010
+//* BYPASS DUPLICATE KEY                                                00130010
+//*-----------------------------------------------------------------    00130010
+//STEP18A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN  DD DSN=BP13.FW3B.OCCUP.TP,DISP=SHR                                    
+//SORTOUT DD DSN=&&FW3BTP,DISP=(,PASS),                                         
+//        UNIT=SYSDA,                                                           
+//        DCB=(RECFM=FB,LRECL=400,BLKSIZE=27600),                               
+//        SPACE=(CYL,(80,50),RLSE)                                              
+//SYSIN   DD  *                                                                 
+  SORT FIELDS=(1,17,A),FORMAT=CH                                                
+  SUM FIELDS=NONE                                                               
+//*---------------------------------------------------------------------00040000
+//* FORMAT TP FILE TO HMG DATA WAREHOUSE                                00050000
+//*---------------------------------------------------------------------00060000
+//STEP19   EXEC PGM=BP13C94T,COND=(0,NE)                                        
+//BP13FW3M DD DSN=BP13.FW3M.APPSALE.TP,DISP=SHR                                 
+//BP13FW3B DD DSN=&&FW3BTP,DISP=(OLD,PASS)                                      
+//BM06F955 DD DSN=BM06.F955.FIS.TP,DISP=SHR                                     
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//P13FW3MA DD DSN=BP13.FW3M.APPSALE.TP.FORMAT,DISP=SHR                          
+//BP13FW3N DD DSN=BP13.FW3N.OCCUP.TP.FORMAT,DISP=SHR                            
+//M06F955A DD DSN=BM06.F955.FIS.TP.FORMAT,DISP=SHR                              
+//SYSOUT DD SYSOUT=*                                                    00100000
+//SYSDBOUT DD SYSOUT=*                                                          
+/*                                                                      00120000
+//*-----------------------------------------------------------------    00130010
+//* SORT OUT OCCUO FILE CANCEL IN THE MONTH                             00130010
+//* BYPASS DUPLICATE KEY                                                00130010
+//*-----------------------------------------------------------------    00130010
+//STEP19A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN  DD DSN=BP13.FW3B.OCCUP.CANCEL,DISP=SHR                                
+//SORTOUT DD DSN=&&FW3BCEL,DISP=(,PASS),                                        
+//        UNIT=SYSDA,                                                           
+//        DCB=(RECFM=FB,LRECL=400,BLKSIZE=27600),                               
+//        SPACE=(CYL,(80,50),RLSE)                                              
+//SYSIN   DD  *                                                                 
+  SORT FIELDS=(1,17,A),FORMAT=CH                                                
+  SUM FIELDS=NONE                                                               
+//*---------------------------------------------------------------------00040000
+//* FORMAT TP FILE TO HMG DATA WAREHOUSE                                00050000
+//*---------------------------------------------------------------------00060000
+//STEP20   EXEC PGM=BP13C94T,COND=(0,NE)                                00070000
+//BP13FW3M DD DSN=BP13.FW3M.APPSALE.CANCEL,DISP=SHR                             
+//BP13FW3B DD DSN=&&FW3BCEL,DISP=(OLD,PASS)                                     
+//BM06F955 DD DSN=BM06.F955.FIS.CANCEL,DISP=SHR                                 
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//P13FW3MA DD DSN=BP13.FW3M.APPSALE.CANCEL.FORMAT,DISP=SHR                      
+//BP13FW3N DD DSN=BP13.FW3N.OCCUP.CANCEL.FORMAT,DISP=SHR                        
+//M06F955A DD DSN=BM06.F955.FIS.CANCEL.FORMAT,DISP=SHR                          
+//SYSOUT DD SYSOUT=*                                                    00100000
+//SYSDBOUT DD SYSOUT=*                                                          
+/*                                                                      00120000
+//*-----------------------------------------------------------------    00130010
+//STEP20A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN  DD DSN=BP13.FW3B.OCCUP,DISP=SHR                                       
+//SORTOUT DD DSN=&&FW3BOCC,DISP=(,PASS),                                        
+//        UNIT=SYSDA,                                                           
+//        DCB=(RECFM=FB,LRECL=400,BLKSIZE=27600),                               
+//        SPACE=(CYL,(180,50),RLSE)                                             
+//SYSIN   DD  *                                                                 
+  SORT FIELDS=(1,17,A),FORMAT=CH                                                
+  SUM FIELDS=NONE                                                               
+//*---------------------------------------------------------------------00040000
+//* FORMAT TP FILE TO HMG DATA WAREHOUSE                                00050000
+//*---------------------------------------------------------------------00060000
+//STEP21   EXEC PGM=BP13C94T,COND=(0,NE)                                00070000
+//BP13FW3M DD DSN=BP13.FW3M.APPSALE,DISP=SHR                                    
+//BP13FW3B DD DSN=&&FW3BOCC,DISP=(OLD,PASS)                                     
+//BM06F955 DD DSN=BM06.F955.FIS,DISP=SHR                                        
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//P13FW3MA DD DSN=BP13.FW3M.APPSALE.FORMAT,DISP=SHR                             
+//BP13FW3N DD DSN=BP13.FW3N.OCCUP.FORMAT,DISP=SHR                               
+//M06F955A DD DSN=BM06.F955.FIS.FORMAT,DISP=SHR                                 
+//SYSOUT DD SYSOUT=*                                                    00100000
+//SYSDBOUT DD SYSOUT=*                                                          
+/*                                                                      00120000
+//*-----------------------------------------------------------------    00040000
+//*PRINT CODE TABLE FOR BP13 & BM06                                     00050000
+//*-----------------------------------------------------------------    00060000
+//STEP22   EXEC  PGM=BP13C94U,COND=(0,NE)                               00070000
+//BP13FW3P DD DSN=BP13.FW3P.CODE.TABLE,DISP=OLD                         00080000
+//BM06F956 DD DSN=BM06.F956.CODE.TABLE,DISP=OLD                         00090000
+//BP13K060 DD DSN=BP13.K060.CODETAB,DISP=SHR,                           00100000
+//         AMP=('BUFND=4','BUFNI=8')                                    00110000
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//SYSOUT   DD  SYSOUT=*                                                 00120000
+//SYSPRINT DD  SYSOUT=*                                                 00130000
+//SYSTSPRT DD  SYSOUT=*                                                 00140000
+//SYSTSIN  DD  *                                                        00150000
+//*--------------------------------------------------------------------*        
+//*          ZIP THE REPORT FILE                                                
+//*--------------------------------------------------------------------*        
+//STEP90    EXEC PKZIP                                                          
+-ARCHIVE(BP13.FFDW.SALES.APLCTN.M.ZIP)                                          
+-ARCHVOL(DUMMY)                                                                 
+-METHOD(FAST)                                                                   
+-ZIPPED_DSN(BP13.FW3M.APPSALE.FORMAT,BP13_FFDW_SALES_APLCTN_M.TXT)              
+-FILE_TERMINATOR()                                                              
+ BP13.FW3M.APPSALE.FORMAT                                                       
+//*--------------------------------------------------------------------*        
+//*          ZIP THE REPORT FILE                                                
+//*--------------------------------------------------------------------*        
+//STEP91    EXEC PKZIP                                                          
+-ARCHIVE(BP13.FFDW.SALES.APLCTN.TP.M.ZIP)                                       
+-ARCHVOL(DUMMY)                                                                 
+-METHOD(FAST)                                                                   
+-ZIPPED_DSN(BP13.FW3M.APPSALE.TP.FORMAT,BP13_FFDW_SALES_APLCTN_TP_M.TXT)        
+-FILE_TERMINATOR()                                                              
+ BP13.FW3M.APPSALE.TP.FORMAT                                                    
+//*--------------------------------------------------------------------*        
+//*          ZIP THE REPORT FILE                                                
+//*--------------------------------------------------------------------*        
+//STEP92    EXEC PKZIP                                                          
+-ARCHIVE(BP13.FFDW.SALES.APLCTN.CANCEL.M.ZIP)                                   
+-ARCHVOL(DUMMY)                                                                 
+-METHOD(FAST)                                                                   
+-ZIPPED_DSN(BP13.FW3M.APPSALE.CANCEL.FORMAT,BP13_FFDW_SALES_APLCTN_CANC-        
+ EL_M.TXT)                                                                      
+-FILE_TERMINATOR()                                                              
+ BP13.FW3M.APPSALE.CANCEL.FORMAT                                                
+//*--------------------------------------------------------------------*        
+//*          ZIP THE REPORT FILE                                                
+//*--------------------------------------------------------------------*        
+//STEP93    EXEC PKZIP                                                          
+-ARCHIVE(BP13.FFDW.SALES.APLCNT.M.ZIP)                                          
+-ARCHVOL(DUMMY)                                                                 
+-METHOD(FAST)                                                                   
+-ZIPPED_DSN(BP13.FW3N.OCCUP.FORMAT,BP13_FFDW_SALES_APLCNT_M.TXT)                
+-FILE_TERMINATOR()                                                              
+ BP13.FW3N.OCCUP.FORMAT                                                         
+//*--------------------------------------------------------------------*        
+//*          ZIP THE REPORT FILE                                                
+//*--------------------------------------------------------------------*        
+//STEP94    EXEC PKZIP                                                          
+-ARCHIVE(BP13.FFDW.SALES.APLCNT.TP.M.ZIP)                                       
+-ARCHVOL(DUMMY)                                                                 
+-METHOD(FAST)                                                                   
+-ZIPPED_DSN(BP13.FW3N.OCCUP.TP.FORMAT,BP13_FFDW_SALES_APLCNT_TP_M.TXT)          
+-FILE_TERMINATOR()                                                              
+ BP13.FW3N.OCCUP.TP.FORMAT                                                      
+//*--------------------------------------------------------------------*        
+//*          ZIP THE REPORT FILE                                                
+//*--------------------------------------------------------------------*        
+//STEP95    EXEC PKZIP                                                          
+-ARCHIVE(BP13.FFDW.SALES.APLCNT.CANCEL.M.ZIP)                                   
+-ARCHVOL(DUMMY)                                                                 
+-METHOD(FAST)                                                                   
+-ZIPPED_DSN(BP13.FW3N.OCCUP.CANCEL.FORMAT,BP13_FFDW_SALES_APLCNT_CANCEL-        
+ _M.TXT)                                                                        
+-FILE_TERMINATOR()                                                              
+ BP13.FW3N.OCCUP.CANCEL.FORMAT                                                  
+//*--------------------------------------------------------------------*        
+//*          ZIP THE REPORT FILE                                                
+//*--------------------------------------------------------------------*        
+//STEP96    EXEC PKZIP                                                          
+-ARCHIVE(BM06.FFDW.SALES.FIS.M.ZIP)                                             
+-ARCHVOL(DUMMY)                                                                 
+-METHOD(FAST)                                                                   
+-ZIPPED_DSN(BM06.F955.FIS.FORMAT,BM06_FFDW_SALES_FIS_M.TXT)                     
+-FILE_TERMINATOR()                                                              
+ BM06.F955.FIS.FORMAT                                                           
+//*--------------------------------------------------------------------*        
+//*          ZIP THE REPORT FILE                                                
+//*--------------------------------------------------------------------*        
+//STEP97    EXEC PKZIP                                                          
+-ARCHIVE(BM06.FFDW.SALES.FIS.TP.M.ZIP)                                          
+-ARCHVOL(DUMMY)                                                                 
+-METHOD(FAST)                                                                   
+-ZIPPED_DSN(BM06.F955.FIS.TP.FORMAT,BM06_FFDW_SALES_FIS_TP_M.TXT)               
+-FILE_TERMINATOR()                                                              
+ BM06.F955.FIS.TP.FORMAT                                                        
+//*--------------------------------------------------------------------*        
+//*          ZIP THE REPORT FILE                                                
+//*--------------------------------------------------------------------*        
+//STEP98    EXEC PKZIP                                                          
+-ARCHIVE(BM06.FFDW.SALES.FIS.CANCEL.M.ZIP)                                      
+-ARCHVOL(DUMMY)                                                                 
+-METHOD(FAST)                                                                   
+-ZIPPED_DSN(BM06.F955.FIS.CANCEL.FORMAT,BM06_FFDW_SALES_FIS_CANCEL_M.TX-        
+ T)                                                                             
+-FILE_TERMINATOR()                                                              
+ BM06.F955.FIS.CANCEL.FORMAT                                                    
+//*--------------------------------------------------------------------*        
+//*          ZIP THE REPORT FILE                                                
+//*--------------------------------------------------------------------*        
+//STEP99    EXEC PKZIP                                                          
+-ARCHIVE(BP13.FFDW.CODE.TABLE.M.ZIP)                                            
+-ARCHVOL(DUMMY)                                                                 
+-METHOD(FAST)                                                                   
+-ZIPPED_DSN(BP13.FW3P.CODE.TABLE,BP13_FFDW_CODE_TABLE_M.TXT)                    
+-FILE_TERMINATOR()                                                              
+ BP13.FW3P.CODE.TABLE                                                           
+//*--------------------------------------------------------------------*        
+//*          ZIP THE REPORT FILE                                                
+//*--------------------------------------------------------------------*        
+//STEP100   EXEC PKZIP                                                          
+-ARCHIVE(BM06.FFDW.CODE.TABLE.M.ZIP)                                            
+-ARCHVOL(DUMMY)                                                                 
+-METHOD(FAST)                                                                   
+-ZIPPED_DSN(BM06.F956.CODE.TABLE,BM06_FFDW_CODE_TABLE_M.TXT)                    
+-FILE_TERMINATOR()                                                              
+ BM06.F956.CODE.TABLE                                                           
+

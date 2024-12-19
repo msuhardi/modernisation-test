@@ -1,0 +1,668 @@
+//BP13M713  JOB (BP13P),'BP13M713',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),           
+//        NOTIFY=CSD0071                                                        
+//JOBLIB  DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                    
+//*====================================================================         
+//* RUN ON 4TH OF THE MONTH                                                     
+//*====================================================================         
+//* 1) ADD NEW LOAN TO LOAN-BAL, UPDATE NEW AMT-INSTAL                          
+//* 2) RAISE INTEREST & STANDARD DEBIT                                          
+//*====================================================================         
+//* BP132772 030506 LSB  DBSS                                                   
+//* BP133051 090507 ED1  INCLUDED BP13CC72                                      
+//* BP133052 180507 ED1  CHGED BP13FD04 SORT & PRT01 COPY TO 1                  
+//*          230507 ED1  ADDED P13FD92A OUTPUT FOR PGM BP13CC72                 
+//*                      AND INCLUDED BP13CC82                                  
+//* BP133173 311007 LSB  ADD P13F125A TO CC05                                   
+//* BP133171 061107 LSB  INCLUDE LOAN-SCH = P OR A IN STEP16                    
+//* BP133091 151207 LMS  EXPANSION OF BP13KD00 FROM 1200 TO 1600                
+//* BP133209 050208 LSB  EXPANSION OF BP13FD04 FROM 1300 TO 1700                
+//*                      ADDED BP13KD43 IN BP13CC03 & BP13CC04                  
+//* BP133115 130308 LSB  REPORT FOR NON-HDB LOAN LOAN-SCH=A                     
+//* BP133209 240308 LSB  REMOVE BP13KD43 FOR BP13CC03                           
+//* BP133209 180408 ED1  ADD BP13CD21, INCLUDE F125.INTRCREDIT.MONTH            
+//*                      IN BP13CC07 PROCESS                                    
+//* BP133314 180608 LSB1 BP13CC72 CATER FOR CHG OF REPAY-PERIOD                 
+//* BP133545 060309 LSB1 ADD BP13KD03 TO CC05                                   
+//* BP133489 190309 JB8  ADD BP13CC4A , SIMILAR TO BP13CC44                     
+//* BP133572 060409 JB8  BACKUP KD00 BEFORE UPD INSTALMENT FOR BP13CC4A         
+//* BP133572 190409 JB8  CC07, UPDATE INTEREST, UPDATE INSTAL                   
+//* BP133619 010609 LSB  ADD SORT FROM BP13KD00 BEFOR RAISE STD DEBIT           
+//* BP133638 290709 LSB  DELETE BP13KD43 FROM BP13CC04                          
+//* BP133662 271009 LSB  RAISE INTEREST FOR X-ACCOUNT                           
+//* BP134154 220211 JB8  ADD BP13KD60 FOR BP13CC16                              
+//* BP134429 100912 LSB1 MOVE CC63, CC64 TO M711                                
+//* BP134707 270513 LSB1 INFORM CPFB STOP DEDUCTION MI IF LOAN-BAL=<0           
+//* BP135171 110214 RJE1 TO CATER FOR DB2 UPGRADE                               
+//* BP135161 090414 IMC1 ADD STEPS TO PRINT ARREARS REPORTS FOR X ACCT          
+//* BP135161 100614 IMC1 CHANGE DATA USED FOR ARREARS REPORTS                   
+//* BP135452 060814 IMC1 ADD STEPS TO CREATE CONTROL REC FOR BP13CC4A           
+//*====================================================================         
+//******************************************************************            
+//*  SEND DYNAMIC JDE AHEAD OF THE PRINT DATASET                                
+//*-----------------------------------------------------------------            
+//PRT01   EXEC PGM=IEBGENER                                                     
+//SYSUT1   DD *                                                                 
+1$DJDE$ BTEXT='DPT=GRPID-EAAARS1A CP-1',END;                                    
+1$DJDE$ JDE=BP13D,JDL=BP13,COPIES=1,END;                                        
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EAAARS1A                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID),DEST=IOM2                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//******************************************************************            
+//*  SEND DYNAMIC JDE AHEAD OF THE PRINT DATASET - FIN DEPT                     
+//*-----------------------------------------------------------------            
+//PRT02   EXEC PGM=IEBGENER                                                     
+//SYSUT1   DD *                                                                 
+1$DJDE$ BTEXT='DPT=GRPID-FI1A CP-1',END;                                        
+1$DJDE$ JDE=BP13D,JDL=BP13,COPIES=1,END;                                        
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=FI1A                                       
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID),DEST=IOM2                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//******************************************************************            
+//*  SEND DYNAMIC JDE AHEAD OF THE PRINT DATASET                                
+//*  LETTER FOR INSTALMENT RATE CHANGE                                          
+//*-----------------------------------------------------------------            
+//PRT03   EXEC PGM=IEBGENER                                                     
+//SYSUT1   DD *                                                                 
+1$DJDE$ BTEXT='DPT=GRPID-EAAARS1B CP-1',END;                                    
+1$DJDE$ JDE=13POT2,JDL=BP13,FORMS=BP13DO,END;                                   
+//FORMID   OUTPUT FORMS=1WD1,GROUPID=EAAARS1B                                   
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID),DEST=IOM2                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//******************************************************************            
+//*  SEND DYNAMIC JDE AHEAD OF THE PRINT DATASET                                
+//*  LETTER FOR REVISING REPAY PERIOD                                           
+//*-----------------------------------------------------------------            
+//PRT04   EXEC PGM=IEBGENER                                                     
+//SYSUT1   DD *                                                                 
+1$DJDE$ BTEXT='DPT=GRPID-EAAARS1B CP-1',END;                                    
+1$DJDE$ JDE=13POT2,JDL=BP13,FORMS=BP13A6,END;                                   
+//FORMID   OUTPUT FORMS=BP13A6,GROUPID=EAAARS1B                                 
+//SYSUT2   DD SYSOUT=2,OUTPUT=(*.FORMID),DEST=IOM2                              
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD DUMMY                                                             
+//*-------------------------------------------------------------------*         
+//* VERIFY FILES BEFORE DAILY PRODUCTION RUN                          *         
+//*-------------------------------------------------------------------*         
+//STEP0A  EXEC PGM=IDCAMS,COND=(0,NE)                                           
+//INPUT1   DD DSN=BP13.KD00.DBSMAST,DISP=OLD                                    
+//INPUT2   DD DSN=BP13.KD65.PDATE,DISP=OLD                                      
+//INPUT3   DD DSN=BP13.KD60.ACCHIST,DISP=OLD                                    
+//INPUT4   DD DSN=BP13.KD61.ACCHIST,DISP=OLD                                    
+//INPUT5   DD DSN=BP13.KD99.DBSMAST.LOG,DISP=OLD                                
+//INPUT6   DD DSN=BP13.KD63.TXHIST,DISP=OLD                                     
+//INPUT7   DD DSN=BP13.KD38.PPTRANS,DISP=OLD                                    
+//INPUT8   DD DSN=BP13.KD39.PPTRANS.HISTORY,DISP=OLD                            
+//INPUT9   DD DSN=BP13.K140.KIVTRAN,DISP=OLD                                    
+//INPUT10  DD DSN=BP13.KD92.UPDLOAN,DISP=OLD                                    
+//INPUT11  DD DSN=BP13.KD94.UPDLOAN.LOG,DISP=OLD                                
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN   DD *                                                                  
+          VFY FILE(INPUT1)                                                      
+          VFY FILE(INPUT2)                                                      
+          VFY FILE(INPUT3)                                                      
+          VFY FILE(INPUT4)                                                      
+          VFY FILE(INPUT5)                                                      
+          VFY FILE(INPUT6)                                                      
+          VFY FILE(INPUT7)                                                      
+          VFY FILE(INPUT8)                                                      
+          VFY FILE(INPUT9)                                                      
+          VFY FILE(INPUT10)                                                     
+          VFY FILE(INPUT11)                                                     
+//*-------------------------------------------------------------------*         
+//* BACKUP BP13KD38                                                             
+//*-------------------------------------------------------------------*         
+//STEP00   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.KD38.PPTRANS,DISP=SHR                                    
+//OUTPUT1  DD DSN=BP13.FD38.PPTRANS.BKUP,DISP=OLD                               
+//INPUT2   DD DSN=BP13.FD38.PPTRANS.DUEDTE.ACCUM,DISP=SHR                       
+//OUTPUT2  DD DSN=BP13.FD38.PPTRANS.DUEDTE.MBKUP,DISP=OLD                       
+//INPUT3   DD DSN=BP13.FD38.PPTRANS.DELETE,DISP=SHR                             
+//OUTPUT3  DD DSN=BP13.FD38.PPTRANS.DELETE.M713,DISP=OLD                        
+//INPUT4   DD DSN=BP13.FD69.INTEREST,DISP=SHR                                   
+//OUTPUT4  DD DSN=BP13.FD69.INTEREST.PREMTH,DISP=OLD                            
+//INPUT5   DD DSN=BP13.KD92.UPDLOAN,DISP=SHR                                    
+//OUTPUT5  DD DSN=BP13.FD92.UPDLOAN,DISP=OLD                                    
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+     REPRO INFILE(INPUT2)  OUTFILE(OUTPUT2)                                     
+     REPRO INFILE(INPUT3)  OUTFILE(OUTPUT3)                                     
+     REPRO INFILE(INPUT4)  OUTFILE(OUTPUT4)                                     
+     REPRO INFILE(INPUT5)  OUTFILE(OUTPUT5)                                     
+//*                                                                             
+//*-------------------------------------------------------------------*         
+//* BACKUP BP13KD00 BEFORE UPDATE INSTALMENT                          *         
+//* SORT BY AGE/PRJCT/REGN                                                      
+//*-------------------------------------------------------------------*         
+//STEP0A   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.KD00.DBSMAST,DISP=SHR                                    
+//SORTOUT  DD DSN=&&FD00BFUD,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            SPACE=(CYL,(50,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=1700,BLKSIZE=0)                               
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(363,4,A,22,3,A,1,8,A),FORMAT=CH                                 
+   OMIT COND=(363,4,CH,EQ,C'0000',OR,1,8,CH,EQ,C'        ')                     
+   OUTREC FIELDS=(1,1600,100X)                                                  
+/*                                                                              
+//*-----------------------------------------------------------------            
+//* INCLUDED NEW LOAN > ZERO, SORT REGN/NUM-TRANS/SCHEDULE                      
+//*-----------------------------------------------------------------            
+//STEP01 EXEC    SORT,COND=(0,NE)                                               
+//SORTIN   DD  DSN=BP13.FD38.PPTRANS.DUEDTE.EFFMTH,DISP=SHR                     
+//SORTOUT  DD  DSN=&&FD38EFF,DISP=(NEW,PASS),                                   
+//         UNIT=SYSDA,SPACE=(CYL,(20,10),RLSE),                                 
+//         DCB=(RECFM=FB,LRECL=400,BLKSIZE=27600)                               
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,8,A,24,8,D),FORMAT=CH                                         
+   INCLUDE COND=(49,9,CH,GT,C'000000000')                                       
+//*-----------------------------------------------------------------            
+//* EFF NEW REVISED INSTALMENT FOR NEW MONTH                                    
+//* NOT DUE CASES = KEEP IN BP13.FD38.PPTRANS.NEWLOAN FOR NEXT MTH              
+//* DUE CASES = DELETE FROM KD38, KEEP IN BP13.FD38.PPTRANS.DELETE              
+//*-----------------------------------------------------------------            
+//STEP02 EXEC    PGM=BP13CC16,COND=(0,NE)                                       
+//BP13FD38 DD  DSN=&&FD38EFF,DISP=(OLD,DELETE)                                  
+//SY02F001 DD  DSN=SY02.F001.DATE,DISP=SHR                                      
+//BP13KD00 DD  DSN=BP13.KD00.DBSMAST,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KD60 DD  DSN=BP13.KD60.ACCHIST,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KD38 DD  DSN=BP13.KD38.PPTRANS,DISP=SHR                                   
+//BP13KD63 DD  DSN=BP13.KD63.TXHIST,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KD99 DD  DSN=BP13.KD99.DBSMAST.LOG,DISP=SHR,                              
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//P13FD38A DD  DSN=BP13.FD38.PPTRANS.NEWLOAN,DISP=OLD                           
+//P13FD38B DD  DSN=BP13.FD38.PPTRANS.DELETE,DISP=OLD                            
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//*-----------------------------------------------------------------            
+//* SORT BP13KD92                                                               
+//* INCLUDED TRANS = RATE & DTE-REVSD-INSTAL-EFF NOT SPACES                     
+//*-----------------------------------------------------------------            
+//STEP03 EXEC    SORT,COND=(0,NE)                                               
+//SORTIN   DD  DSN=BP13.KD92.UPDLOAN,DISP=SHR                                   
+//SORTOUT  DD  DSN=&&BP13FD92,DISP=(NEW,PASS),                                  
+//         UNIT=SYSDA,SPACE=(CYL,(20,10),RLSE),                                 
+//         DCB=(RECFM=FB,LRECL=1000,BLKSIZE=27000)                              
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,12,A),FORMAT=CH                                               
+   INCLUDE COND=((9,4,CH,EQ,C'RATE',OR,9,4,CH,EQ,C'RPAY'),AND,                  
+                 (402,8,CH,NE,C'        '))                                     
+//*-----------------------------------------------------------------            
+//* EFF NEW REVISED INSTALMENT FOR NEW MONTH                                    
+//* NOT DUE CASES = KEEP IN BP13.KD92.UPDLOAN FOR NEXT MTH                      
+//* DUE CASES     = DELETE FROM KD92, KEEP IN BP13KD94                          
+//*-----------------------------------------------------------------            
+//STEP04 EXEC    PGM=BP13CC72,COND=(0,NE)                                       
+//BP13FD92 DD  DSN=&&BP13FD92,DISP=(OLD,DELETE)                                 
+//BP13KD92 DD  DSN=BP13.KD92.UPDLOAN,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KD94 DD DSN=BP13.KD94.UPDLOAN.LOG,DISP=SHR,                               
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KD00 DD  DSN=BP13.KD00.DBSMAST,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KD99 DD  DSN=BP13.KD99.DBSMAST.LOG,DISP=SHR,                              
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//SY02F001 DD  DSN=SY02.F001.DATE,DISP=SHR                                      
+//P13FD92A DD  DSN=BP13.FD92.UPDLOAN.LETTER,DISP=OLD                            
+//P13LC72A DD  SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                       
+//P13LC72B DD  SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                       
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//*-------------------------------------------------------------------*         
+//*  PRINT LETTER FOR INSTALMENT RATE CHANGE                          *         
+//*-------------------------------------------------------------------*         
+//STEP04A  EXEC PGM=IKJEFT01,DYNAMNBR=20,COND=(0,NE),REGION=4096K               
+//BP13FD92 DD DSN=BP13.FD92.UPDLOAN.LETTER,DISP=OLD                             
+//SY02F001 DD  DSN=SY02.F001.DATE,DISP=SHR                                      
+//BP13K800 DD  DSN=BP13.K800.APPLN,DISP=SHR,                                    
+//         AMP=('BUFND=8','BUFNI=4')                                            
+//BP13K820 DD  DSN=BP13.K820.OCCUP,DISP=SHR,                                    
+//         AMP=('BUFND=8','BUFNI=4')                                            
+//BP13K830 DD  DSN=BP13.K830.ADDR,DISP=SHR,                                     
+//         AMP=('BUFND=8','BUFNI=4')                                            
+//BP13K831 DD  DSN=BP13.K830.ADDR.PATH1,DISP=SHR,                               
+//         AMP=('BUFND=8','BUFNI=4')                                            
+//BP13KD00 DD  DSN=BP13.KD00.DBSMAST,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13LC82 DD  SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                       
+//P13PC82A DD  SYSOUT=2,OUTPUT=(*.PRT03.FORMID),DEST=IOM2                       
+//P13PC82B DD  SYSOUT=2,OUTPUT=(*.PRT04.FORMID),DEST=IOM2                       
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSTSPRT DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSTSIN  DD *                                                                 
+  DSN SYSTEM(DSN)                                                               
+  RUN PROGRAM(BP13CC82) PLAN(BP13PCC) -                                         
+      LIB('BP13.BATCH.LOADCOB')                                                 
+  END                                                                           
+//*-------------------------------------------------------------------*         
+//* BACKUP BP13KD00 AFTER UPDATE NEW INSTALMENT                                 
+//*-------------------------------------------------------------------*         
+//STEP4A   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.KD00.DBSMAST,DISP=SHR                                    
+//OUTPUT1  DD DSN=BP13.FD00.DBSMAST.M713,DISP=OLD                               
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+//*                                                                             
+//*-------------------------------------------------------------------*         
+//*- ROLL OVER TO NEW MONTH BP13CC13                                  *         
+//*-------------------------------------------------------------------*         
+//* SORT BP13KD00 AND OMIT LOAN-BAL = ZEROS                           *         
+//* RAISE INTEREST FOR ACCOUNT-STATUS= C OR X                         *         
+//*-------------------------------------------------------------------*         
+//STEP05   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.KD00.DBSMAST,DISP=SHR                                    
+//SORTOUT  DD DSN=&&BP13FD00,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            SPACE=(CYL,(50,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=1600,BLKSIZE=0)                               
+//SYSIN    DD *                                                                 
+      SORT FIELDS=(1,8,CH,A),FORMAT=CH                                          
+      INCLUDE COND=((33,1,CH,EQ,C'C',OR,33,1,CH,EQ,C'X'),AND,                   
+                    298,9,CH,NE,C'000000000')                                   
+//*-------------------------------------------------------------------*         
+//* RAISE INTEREST BASED ON AMT-LOAN-BAL                                        
+//* OUTPUT INT REC TO BP13F125 FOR PGM BP13CC05                                 
+//*-------------------------------------------------------------------*         
+//STEP06   EXEC PGM=BP13CC03,COND=(0,NE)                                        
+//SY02F001 DD  DSN=SY02.F001.DATE,DISP=SHR                                      
+//BP13FD00 DD DSN=&&BP13FD00,DISP=(OLD,PASS)                                    
+//AB03K050 DD DSN=AB03.K050.INTTABLE,DISP=SHR                                   
+//BP13KD65 DD DSN=BP13.KD65.PDATE,DISP=SHR                                      
+//BP13FD69 DD DSN=BP13.FD69.INTEREST,DISP=SHR                                   
+//BP13F125 DD DSN=BP13.F125.DBSSPOST,DISP=OLD                                   
+//**BP13F125 DD DSN=BP13.F125.INTEREST.MONTH,DISP=OLD                           
+//BP13LC03 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* UPDATE INSTALMENT/INTEREST TO DBS MASTER,  OUTPUT TRANSCCTION FILE          
+//*-------------------------------------------------------------------*         
+//STEP06A  EXEC PGM=BP13CC05,COND=(0,NE)                                        
+//SY02F001 DD  DSN=SY02.F001.DATE,DISP=SHR                                      
+//BP13F125 DD DSN=BP13.F125.DBSSPOST,DISP=SHR                                   
+//BP13KD00 DD DSN=BP13.KD00.DBSMAST,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KD03 DD DSN=BP13.KD03.DBSHIST,DISP=SHR,                                   
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//BP13KD99 DD DSN=BP13.KD99.DBSMAST.LOG,DISP=OLD                                
+//BP13KD65 DD DSN=BP13.KD65.PDATE,DISP=OLD                                      
+//BP13K140 DD DSN=BP13.K140.KIVTRAN,DISP=OLD                                    
+//BP13LC05 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//P13F125A DD DSN=BP13.F125.INTEREST.MONTH,DISP=OLD                             
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* SORT BP13KD00 AND OMIT LOAN-BAL = ZEROS                           *         
+//* GET UODATED LOAN-BALANCE AFTER ADDED IN AMT-INTEREST              *         
+//* RAISE INTEREST FOR ACCOUNT-STATUS= C ONLY                         *         
+//*-------------------------------------------------------------------*         
+//STEP06B  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.KD00.DBSMAST,DISP=SHR                                    
+//SORTOUT  DD DSN=&&FD00INT,DISP=(NEW,PASS),                                    
+//            UNIT=SYSDA,                                                       
+//            SPACE=(CYL,(50,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=1600,BLKSIZE=0)                               
+//SYSIN    DD *                                                                 
+      SORT FIELDS=(1,8,CH,A),FORMAT=CH                                          
+      INCLUDE COND=(33,1,CH,EQ,C'C',AND,                                        
+                    298,9,CH,NE,C'000000000')                                   
+//*-------------------------------------------------------------------*         
+//* RAISE STANDARD DEBIT, UPDATE AMT INSTALMENT TO DBS MASTER                   
+//*-------------------------------------------------------------------*         
+//STEP07   EXEC PGM=BP13CC04,COND=(0,NE)                                        
+//SY02F001 DD  DSN=SY02.F001.DATE,DISP=SHR                                      
+//BP13FD00 DD DSN=&&FD00INT,DISP=(OLD,PASS)                                     
+//BP13KD00 DD DSN=BP13.KD00.DBSMAST,DISP=SHR                                    
+//BP13KD65 DD DSN=BP13.KD65.PDATE,DISP=SHR                                      
+//BP13F125 DD DSN=BP13.F125.INSTAL.MONTH,DISP=OLD                               
+//BP13LC04 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*--------------------------------------------------------------------         
+//* SORT BP13KD60, OMIT ARR-INST = ZERO                                         
+//*--------------------------------------------------------------------         
+//STEP08B EXEC SORT,COND=(0,NE)                                                 
+//SORTIN   DD DSN=BP13.KD60.ACCHIST,DISP=SHR                                    
+//SORTOUT  DD DSN=&&FD60CD21,DISP=(,PASS),                                      
+//        UNIT=SYSDA,DCB=(RECFM=FB,LRECL=250),                                  
+//        SPACE=(CYL,(1,2),RLSE)                                                
+//SYSIN     DD  *                                                               
+   SORT FIELDS=(1,8,A),FORMAT=CH                                                
+   OMIT COND=(45,6,CH,EQ,C'000000')                                             
+//*-------------------------------------------------------------------*         
+//* CREATE F125 - JVA FOR 1ST OF MONTH CREDIT TRANS                             
+//*-------------------------------------------------------------------*         
+//STEP08C  EXEC PGM=BP13CD21,COND=(0,NE)                                        
+//BP13FD60 DD DSN=&&FD60CD21,DISP=(OLD,PASS)                                    
+//BP13KD00 DD  DSN=BP13.KD00.DBSMAST,DISP=SHR,                                  
+//         AMP=('BUFND=4','BUFNI=8')                                            
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13F125 DD DSN=BP13.F125.INTRCR.MONTH,DISP=OLD                               
+//BP13LD21 DD  SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                       
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* INCLUDE MONTHLY INTEREST RAISE                                              
+//*-------------------------------------- ----------------------------*         
+//STEP09   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F125.INTEREST.MONTH,DISP=SHR                             
+//SORTOUT  DD DSN=&&F125INT,DISP=(,PASS),                                       
+//         DCB=(RECFM=FB,LRECL=150,BLKSIZE=0),                                  
+//         SPACE=(CYL,(30,10),RLSE)                                             
+//SYSIN    DD *                                                                 
+  SORT     FIELDS=(1,2,A,5,19,A),FORMAT=CH                                      
+//*---------------------------------------------------------------------        
+//* UPDATE DAILY PAYMENT TO FINANCIAL TRANSACTION HIST                          
+//*---------------------------------------------------------------------        
+//STEP10   EXEC PGM=BP13CC07,COND=(0,NE)                                        
+//BP13F125 DD DSN=&&F125INT,DISP=(OLD,PASS)                                     
+//BP13KD60 DD DSN=BP13.KD60.ACCHIST,DISP=SHR                                    
+//BP13KD63 DD DSN=BP13.KD63.TXHIST,DISP=SHR                                     
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//*-------------------------------------------------------------------*         
+//* INCLUDE MONTHLY INSTALMENT, INTEREST ARREARS                                
+//*-------------------------------------- ----------------------------*         
+//STEP10A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F125.INSTAL.MONTH,DISP=SHR                               
+//         DD DSN=BP13.F125.INTRCR.MONTH,DISP=SHR                               
+//SORTOUT  DD DSN=&&F125ALL,DISP=(,PASS),                                       
+//         DCB=(RECFM=FB,LRECL=150,BLKSIZE=0),                                  
+//         SPACE=(CYL,(30,10),RLSE)                                             
+//SYSIN    DD *                                                                 
+  SORT     FIELDS=(1,2,A,5,19,A),FORMAT=CH                                      
+//*---------------------------------------------------------------------        
+//* UPDATE DAILY PAYMENT TO FINANCIAL TRANSACTION HIST                          
+//*---------------------------------------------------------------------        
+//STEP10B  EXEC PGM=BP13CC07,COND=(0,NE)                                        
+//BP13F125 DD DSN=&&F125ALL,DISP=(OLD,PASS)                                     
+//BP13KD60 DD DSN=BP13.KD60.ACCHIST,DISP=SHR                                    
+//BP13KD63 DD DSN=BP13.KD63.TXHIST,DISP=SHR                                     
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//*-------------------------------------------------------------------*         
+//* ACCUMULATE DAILY PAYMENT TRANS TO MTHLY PAYMENT TRANS             *         
+//*-------------------------------------------------------------------*         
+//STEP11   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.F125.INSTAL.MONTH,DISP=SHR                               
+//         DD DSN=BP13.F125.INTEREST.MONTH,DISP=SHR                             
+//         DD DSN=BP13.F125.INTRCR.MONTH,DISP=SHR                               
+//OUTPUT1  DD DSN=BP13.F136.MTHTRAN.DBSS,DISP=MOD                               
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+//*                                                                             
+//*-------------------------------------------------------------------*         
+//* BACKUP BP13.F125 - GDG(12)                                                  
+//*-------------------------------------------------------------------*         
+//STEP12   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.F125.INTEREST.MONTH,DISP=SHR                             
+//         DD DSN=BP13.F125.INTEREST.NEWLOAN.ACCUM,DISP=SHR                     
+//OUTPUT1  DD DSN=BP13.F125.INTEREST.MONTH.BKUP(+1),DISP=(NEW,CATLG),           
+//            SPACE=(CYL,(8,5)),                                                
+//            DCB=(BP13.GDG,BLKSIZE=27900,LRECL=150,RECFM=FB)                   
+//INPUT2   DD DSN=BP13.F125.INSTAL.MONTH,DISP=SHR                               
+//         DD DSN=BP13.F125.INSTAL.NEWLOAN.ACCUM,DISP=SHR                       
+//OUTPUT2  DD DSN=BP13.F125.INSTAL.MONTH.BKUP(+1),DISP=(NEW,CATLG),             
+//            SPACE=(CYL,(8,5)),                                                
+//            DCB=(BP13.GDG,BLKSIZE=27900,LRECL=150,RECFM=FB)                   
+//INPUT3   DD DSN=BP13.F125.INTRCR.MONTH,DISP=SHR                               
+//OUTPUT3  DD DSN=BP13.F125.INTRCR.BACKUP,DISP=OLD                              
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+     REPRO INFILE(INPUT2)  OUTFILE(OUTPUT2)                                     
+     REPRO INFILE(INPUT3)  OUTFILE(OUTPUT3)                                     
+//*                                                                             
+//*-------------------------------------------------------------------*         
+//* EMPTY FINANCIAL TRANSACTION FILE                                  *         
+//*-------------------------------------------------------------------*         
+//STEP13   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.EMPTY.CHAR150,DISP=SHR                                   
+//OUTPUT1  DD DSN=BP13.F125.INSTAL.NEWLOAN.ACCUM,DISP=OLD                       
+//OUTPUT2  DD DSN=BP13.F125.INTEREST.NEWLOAN.ACCUM,DISP=OLD                     
+//OUTPUT3  DD DSN=BP13.F125.INTRCR.MONTH,DISP=OLD                               
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT2)                                     
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT3)                                     
+//*                                                                             
+//*-------------------------------------------------------------------*         
+//* CREATE BP13KD39 PP-TRANS HISTORY FILE                                       
+//*-------------------------------------------------------------------*         
+//STEP14 EXEC PGM=BP13CC61,COND=(0,NE)                                          
+//BP13FD38 DD  DSN=BP13.FD38.PPTRANS.DELETE,DISP=SHR                            
+//BP13KD39 DD DSN=BP13.KD39.PPTRANS.HISTORY,DISP=SHR,                           
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* EMPTY FINANCIAL TRANSACTION FILE                                  *         
+//*-------------------------------------------------------------------*         
+//STEP15   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD  DSN=BP13.FD38.PPTRANS.DELETE,DISP=SHR                            
+//OUTPUT1  DD  DSN=BP13.FD38.PPTRANS.DELETE.ACCUM,DISP=MOD                      
+//SYSIN    DD *                                                                 
+     REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                     
+//*                                                                             
+//*-------------------------------------------------------------------*         
+//*-------------------------------------------------------------------*         
+//* SORT BM06F120 PIDB BY REGNO                                                 
+//*-------------------------------------------------------------------*         
+//STEP20 EXEC SORT,COND=(0,NE)                                                  
+//SORTIN    DD DSN=BM06.F120.FLATINV.PIDB,DISP=SHR                              
+//SORTOUT   DD DSN=&&BM06F120,DISP=(,PASS),                                     
+//          UNIT=SYSDA,SPACE=(CYL,(340,50),RLSE),                               
+//          DCB=(BLKSIZE=0,LRECL=700,RECFM=FB)                                  
+//SYSPRINT  DD SYSOUT=*                                                         
+//SYSIN     DD *                                                                
+  SORT FIELDS=(180,8,A),FORMAT=CH                                               
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* MATCH BP13FD00 AND BM06F120 TO EXTRACT ADDRESS                              
+//*-------------------------------------------------------------------*         
+//STEP21 EXEC PGM=BP13CC42,COND=(0,NE)                                          
+//BM06F120 DD DSN=&&BM06F120,DISP=(OLD,PASS)                                    
+//BP13FD00 DD DSN=BP13.FD00.DBSMAST.M713,DISP=OLD                               
+//BP13FD04 DD DSN=BP13.FD04.DBSMAST.PIDB,DISP=OLD                               
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* SORT BP13FD04 BY PROJ, MTH-INST & REGNO. OMIT MTH INSTAL = 0      *         
+//*-------------------------------------------------------------------*         
+//STEP22   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.FD04.DBSMAST.PIDB,DISP=SHR                               
+//SORTOUT  DD DSN=&&BP13FD04,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            SPACE=(CYL,(50,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=1700,BLKSIZE=0)                               
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(22,3,A,363,4,A,1,8,A),FORMAT=CH                                 
+   OMIT COND=(363,4,CH,EQ,C'0000',OR,1,8,CH,EQ,C'        ',OR,                  
+               33,1,CH,EQ,C'X')                                                 
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* ARREARS REPORT LIST                                                         
+//* P13LC44A <= 1 MTH                                                           
+//* P13LC44B >  1      TO <= 2 MTHS                                             
+//* P13LC44C >  2 MTHS TO <  3 MTHS                                             
+//* P13LC44D >= 3 MTHS                                                          
+//*-------------------------------------------------------------------*         
+//STEP23 EXEC PGM=BP13CC44,COND=(0,NE)                                          
+//BP13FD04 DD DSN=&&BP13FD04,DISP=(OLD,PASS)                                    
+//BP13K800 DD DSN=BP13.K800.APPLN,DISP=SHR,                                     
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BP13K820 DD DSN=BP13.K820.OCCUP,DISP=SHR,                                     
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BP13KA10 DD DSN=BP13.KA10.PRJCT,DISP=SHR,                                     
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//AC15K010 DD DSN=AC15.K010.MASTER,DISP=SHR,                                    
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//P13LC44A DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//P13LC44B DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//P13LC44C DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//P13LC44D DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*-------------------------------------------------------------------*         
+//STEP24A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.BLANK.CHAR1200,DISP=SHR                                  
+//SORTOUT  DD DSN=&&FD04CC4A,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            SPACE=(CYL,(50,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=1700,BLKSIZE=0)                               
+//SYSIN    DD *                                                                 
+   SORT FIELDS=COPY                                                             
+   OUTREC FIELDS=(32X,C'C',1667X)                                               
+//*-------------------------------------------------------------------*         
+//STEP24B  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.FD04.DBSMAST.PIDB,DISP=SHR                               
+//SORTOUT  DD DSN=&&FD04CC4A,DISP=(MOD,PASS)                                    
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(363,4,A,22,3,A,1,8,A),FORMAT=CH                                 
+   OMIT COND=(363,4,CH,EQ,C'0000',OR,1,8,CH,EQ,C'        ',OR,                  
+              33,1,CH,EQ,C'X')                                                  
+//*-------------------------------------------------------------------*         
+//* ARREARS REPORT LIST                                                         
+//*-------------------------------------------------------------------*         
+//STEP24C  EXEC PGM=BP13CC4A,COND=(0,NE)                                        
+//BP13FD04 DD DSN=&&FD04CC4A,DISP=(OLD,PASS)                                    
+//BP13KA10 DD DSN=BP13.KA10.PRJCT,DISP=SHR,                                     
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13LC4A DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*-------------------------------------------------------------------*         
+//STEP25A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.FD04.DBSMAST.PIDB,DISP=SHR                               
+//SORTOUT  DD DSN=&&FD04NORM,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            SPACE=(CYL,(50,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=1700,BLKSIZE=0)                               
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(22,3,A,363,4,A,1,8,A),FORMAT=CH                                 
+   OMIT COND=(33,1,CH,EQ,C'X')                                                  
+//*-------------------------------------------------------------------*         
+//* SAS PROGRAM FOR PRINTING ARREARS ANALYSIS REPORT BY ROOM TYPE     *         
+//*-------------------------------------------------------------------*         
+//STEP25B  EXEC  SAS,COND=(0,NE)                                                
+//BP13FD04 DD DSN=&&FD04NORM,DISP=(OLD,PASS)                                    
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13LC17 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13SC17),DISP=SHR                             
+//*-------------------------------------------------------------------*         
+//* X ACCOUNTS ONLY                                                             
+//*-------------------------------------------------------------------*         
+//*-------------------------------------------------------------------*         
+//* SORT BP13FD04 BY PROJ, MTH-INST & REGNO. OMIT MTH INSTAL = 0      *         
+//*-------------------------------------------------------------------*         
+//STEP26A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.FD04.DBSMAST.PIDB,DISP=SHR                               
+//SORTOUT  DD DSN=&&FD04CC4X,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            SPACE=(CYL,(50,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=1700,BLKSIZE=0)                               
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(22,3,A,363,4,A,1,8,A),FORMAT=CH                                 
+   INCLUDE COND=(33,1,CH,EQ,C'X')                                               
+/*                                                                              
+//*-------------------------------------------------------------------*         
+//* ARREARS REPORT LIST                                                         
+//* P13LC44A <= 1 MTH                                                           
+//* P13LC44B >  1      TO <= 2 MTHS                                             
+//* P13LC44C >  2 MTHS TO <  3 MTHS                                             
+//* P13LC44D >= 3 MTHS                                                          
+//*-------------------------------------------------------------------*         
+//STEP26B  EXEC PGM=BP13CC44,COND=(0,NE)                                        
+//BP13FD04 DD DSN=&&FD04CC4X,DISP=(OLD,PASS)                                    
+//BP13K800 DD DSN=BP13.K800.APPLN,DISP=SHR,                                     
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BP13K820 DD DSN=BP13.K820.OCCUP,DISP=SHR,                                     
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//BP13KA10 DD DSN=BP13.KA10.PRJCT,DISP=SHR,                                     
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//AC15K010 DD DSN=AC15.K010.MASTER,DISP=SHR,                                    
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//P13LC44A DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//P13LC44B DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//P13LC44C DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//P13LC44D DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*-------------------------------------------------------------------*         
+//* SAS PROGRAM FOR PRINTING ARREARS ANALYSIS REPORT BY ROOM TYPE     *         
+//* FOR X ACCOUNTS                                                    *         
+//*-------------------------------------------------------------------*         
+//STEP26C  EXEC  SAS,COND=(0,NE)                                                
+//BP13FD04 DD DSN=&&FD04CC4X,DISP=(OLD,PASS)                                    
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13LC30 DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13SC30),DISP=SHR                             
+//*-------------------------------------------------------------------*         
+//STEP27A  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.BLANK.CHAR1200,DISP=SHR                                  
+//SORTOUT  DD DSN=&&FD044AEX,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            SPACE=(CYL,(50,10),RLSE),                                         
+//            DCB=(RECFM=FB,LRECL=1700,BLKSIZE=0)                               
+//SYSIN    DD *                                                                 
+   SORT FIELDS=COPY                                                             
+   OUTREC FIELDS=(32X,C'X',1667X)                                               
+//*-------------------------------------------------------------------*         
+//STEP27B  EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.FD04.DBSMAST.PIDB,DISP=SHR                               
+//SORTOUT  DD DSN=&&FD044AEX,DISP=(MOD,PASS)                                    
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(363,4,A,22,3,A,1,8,A),FORMAT=CH                                 
+   INCLUDE COND=(33,1,CH,EQ,C'X')                                               
+//*-------------------------------------------------------------------*         
+//* ARREARS REPORT LIST                                                         
+//*-------------------------------------------------------------------*         
+//STEP27C  EXEC PGM=BP13CC4A,COND=(0,NE)                                        
+//BP13FD04 DD DSN=&&FD044AEX,DISP=(OLD,PASS)                                    
+//BP13KA10 DD DSN=BP13.KA10.PRJCT,DISP=SHR,                                     
+//            AMP=('BUFND=4','BUFNI=8')                                         
+//SY02F001 DD DSN=SY02.F001.DATE,DISP=SHR                                       
+//BP13LC4A DD SYSOUT=2,OUTPUT=(*.PRT01.FORMID),DEST=IOM2                        
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+

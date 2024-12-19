@@ -1,0 +1,1070 @@
+      *------------------------*                                                
+       IDENTIFICATION DIVISION.                                                 
+      *------------------------*                                                
+       PROGRAM-ID.    BP13C11A.                                                 
+      *AUTHOR.        ELGER DE GUZMAN.                                          
+      *DATE-WRITTEN.  19/10/2013.                                               
+                                                                                
+      * =========================================================== *           
+      * SYSTEM OF COMMITMENT (BP13)                                 *           
+      * =========================================================== *           
+      *   OBJECTIVE   : THIS PROGRAM WILL UPDATE THE SUMMARY COUNT  *           
+      *                 FILE USE BY PORTAL.                         *           
+      *                 PROGRAM WILL UPDATE THE SUMMARY REGISTRATION*           
+      *                 NUMBER LIST FOR SOCA SUMMARY PORTAL.        *           
+      *               : FOR OUTSTANDING SA/AO WITH OR W/O SOCA DATE.*           
+      *                                                             *           
+      *   INPUT FILES :                                             *           
+      *   1.  &&BP13F80A -- TEMP FILE CONTAINS ALL OUTSTANDING CASES*           
+      *                                                             *           
+      *   OUTPUT FILES:                                             *           
+      *   1.  BP13FB40 -- SUMMARY COUNT FILE                        *           
+      *   2.  BP13FB45 -- SUMMARY REGN LIST FILE                    *           
+      *                                                             *           
+      * REF      DATE        BY   DESCRIPTIONS                      *           
+      * -------  --------    ---- ------------                      *           
+      * BP135131 03/12/2013  ESD1 NEW PROGRAM.                      *           
+      * BP135179 12/15/2014  ESD1 CATER TO RETURN 50 MONTHS         *           
+      * BP135172 12/15/2014  ESD1 CATER TO CHECK DTE RAISE AO AND   *           
+      *                           KEY AVAIL DATE                    *           
+      * BP138261 20/11/2020  ZAR7 ADD DISPLAY STATEMENT             *           
+      * BP138336 24/11/2020  ZAR7 ENSURE DATE FIELDS IS NUMERIC     *           
+      * BP138336 27/11/2020  FP6  CHECK IF MONTH DIFF IS NOT MORE   *           
+      *                           THAN 50 BEFORE USING AS SUBSCRIPT *           
+      * BP138819 03/08/2021  ZAR7 TO CATER FOR CCA FLATS 1F         *           
+      * =========================================================== *           
+                                                                                
+      *------------------------*                                                
+       ENVIRONMENT DIVISION.                                                    
+      *------------------------*                                                
+       CONFIGURATION SECTION.                                                   
+      *------------------------*                                                
+                                                                                
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+      *------------------------*                                                
+       INPUT-OUTPUT SECTION.                                                    
+      *------------------------*                                                
+       FILE-CONTROL.                                                            
+      *------------------------*                                                
+                                                                                
+           SELECT BM06K110  ASSIGN        TO BM06K110                           
+                            ACCESS MODE   IS RANDOM                             
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K110-KEY-FLD                       
+                            FILE STATUS   IS BM06K110-STATUS.                   
+                                                                                
+           SELECT BM06K100  ASSIGN        TO BM06K100                           
+                            ACCESS MODE   IS RANDOM                             
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS K100-KEY-FLD                       
+                            FILE STATUS   IS BM06K100-STATUS.                   
+                                                                                
+           SELECT BP13F80A ASSIGN TO BP13F80A.                                  
+                                                                                
+           SELECT BP13FB40 ASSIGN TO BP13FB40.                                  
+                                                                                
+           SELECT BP13FB45 ASSIGN TO BP13FB45.                                  
+                                                                                
+           SELECT BP13L11A ASSIGN TO BP13L11A.                                  
+                                                                                
+      *------------------------*                                                
+       DATA DIVISION.                                                           
+      *------------------------*                                                
+       FILE SECTION.                                                            
+      *------------------------*                                                
+                                                                                
+       FD   BM06K110                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BM06K110.                                                           
+                                                                                
+       FD   BM06K100                                                            
+            RECORD CONTAINS 500 CHARACTERS.                                     
+       COPY BM06K100.                                                           
+                                                                                
+       FD BP13F80A                                                              
+            RECORD CONTAINS  2000  CHARACTERS                                   
+            LABEL RECORD IS STANDARD                                            
+            RECORDING MODE IS F.                                                
+       COPY BP13F800.                                                   00150000
+                                                                                
+       FD BP13FB40                                                              
+            RECORD CONTAINS 2000  CHARACTERS                                    
+            LABEL RECORD IS STANDARD                                            
+            RECORDING MODE IS F.                                                
+       COPY BP13FB40.                                                   00150000
+                                                                                
+       FD BP13FB45                                                              
+            RECORD CONTAINS 400  CHARACTERS                                     
+            LABEL RECORD IS STANDARD                                            
+            RECORDING MODE IS F.                                                
+       COPY BP13FB45.                                                   00150000
+                                                                                
+       FD BP13L11A                                                              
+            RECORD CONTAINS 132  CHARACTERS                                     
+            LABEL RECORD IS STANDARD                                            
+            RECORDING MODE IS F.                                                
+       01 PRINT-REC          PIC X(132).                                00150000
+                                                                                
+      *-------------------------------------------------------------            
+       WORKING-STORAGE SECTION.                                                 
+      *-------------------------------------------------------------            
+                                                                                
+       01  WS-FILE-STATUS.                                                      
+           05  BM06K110-STATUS            PIC 9(2)       VALUE ZEROES.          
+           05  BM06K100-STATUS            PIC 9(2)       VALUE ZEROES.          
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05  WS-FB40-WRITE              PIC 9(5)       VALUE ZEROES.          
+           05  WS-FB45-WRITE              PIC 9(5)       VALUE ZEROES.          
+           05  WS-CNT-F80A-READ           PIC 9(5)       VALUE ZEROES.          
+           05  WS-K110-NOTFND             PIC 9(5)       VALUE ZEROES.          
+           05  WS-K100-NOTFND             PIC 9(5)       VALUE ZEROES.          
+           05  WS-SKIP-COUNT              PIC 9(5)       VALUE ZEROES.          
+           05  WS-PAGE-CNT                PIC 9(5)       VALUE ZERO.            
+           05  WS-LINE-CNT                PIC 9(5)       VALUE ZERO.            
+                                                                                
+       01  WS-SWITCHES.                                                         
+           05  WS-F80A-EOF                PIC X          VALUE 'N'.             
+           05  WS-K110-REC-FND            PIC X          VALUE SPACES.          
+           05  WS-K100-REC-FND            PIC X          VALUE SPACES.          
+           05  WS-SKIP-REC                PIC X          VALUE 'N'.             
+           05  WS-ERROR-REPORT            PIC X          VALUE 'N'.             
+                                                                                
+       01  WS-DTE-CUR.                                                          
+           05  WS-CC                      PIC 99.                               
+           05  WS-YY                      PIC 99.                               
+           05  WS-MM                      PIC 99.                               
+           05  WS-DD                      PIC 99.                               
+                                                                                
+       01  WS-SAVE-AREA.                                                        
+           05  WS-REC-TYPE                PIC X.                                
+           05  WS-LOAN-TAG                PIC X.                                
+           05  WS-MONTH-OUT               PIC 9(2) VALUE ZEROES.                
+           05  WS-NEXT-MTH                PIC 9(2) VALUE ZEROES.                
+           05  WS-ROOM-TYPE               PIC X(2) VALUE SPACES.                
+           05  WS-REGN                    PIC X(8) VALUE SPACES.                
+           05  WS-CNT-LOAN-BN.                                                  
+               10 WS-CNTLOAN-BN    OCCURS 50 TIMES.                             
+                  15 WS-SA-CNT-BN             PIC 9(5) VALUE ZEROES.            
+                  15 WS-2R-CNT-BN             PIC 9(5) VALUE ZEROES.            
+                  15 WS-3R-CNT-BN             PIC 9(5) VALUE ZEROES.            
+                  15 WS-4R-CNT-BN             PIC 9(5) VALUE ZEROES.            
+                  15 WS-5R-CNT-BN             PIC 9(5) VALUE ZEROES.            
+                  15 WS-ER-CNT-BN             PIC 9(5) VALUE ZEROES.            
+                                                                                
+           05  WS-CNT-LOAN-CN.                                                  
+               10 WS-CNTLOAN-CN    OCCURS 50 TIMES.                             
+                  15 WS-SA-CNT-CN             PIC 9(5) VALUE ZEROES.            
+                  15 WS-2R-CNT-CN             PIC 9(5) VALUE ZEROES.            
+                  15 WS-3R-CNT-CN             PIC 9(5) VALUE ZEROES.            
+                  15 WS-4R-CNT-CN             PIC 9(5) VALUE ZEROES.            
+                  15 WS-5R-CNT-CN             PIC 9(5) VALUE ZEROES.            
+                  15 WS-ER-CNT-CN             PIC 9(5) VALUE ZEROES.            
+                                                                                
+           05  WS-CNT-LOAN-BB.                                                  
+               10 WS-CNTLOAN-BB    OCCURS 50 TIMES.                             
+                  15 WS-SA-CNT-BB             PIC 9(5) VALUE ZEROES.            
+                  15 WS-2R-CNT-BB             PIC 9(5) VALUE ZEROES.            
+                  15 WS-3R-CNT-BB             PIC 9(5) VALUE ZEROES.            
+                  15 WS-4R-CNT-BB             PIC 9(5) VALUE ZEROES.            
+                  15 WS-5R-CNT-BB             PIC 9(5) VALUE ZEROES.            
+                  15 WS-ER-CNT-BB             PIC 9(5) VALUE ZEROES.            
+                                                                                
+           05  WS-CNT-LOAN-CB.                                                  
+               10 WS-CNTLOAN-CB    OCCURS 50 TIMES.                             
+                  15 WS-SA-CNT-CB             PIC 9(5) VALUE ZEROES.            
+                  15 WS-2R-CNT-CB             PIC 9(5) VALUE ZEROES.            
+                  15 WS-3R-CNT-CB             PIC 9(5) VALUE ZEROES.            
+                  15 WS-4R-CNT-CB             PIC 9(5) VALUE ZEROES.            
+                  15 WS-5R-CNT-CB             PIC 9(5) VALUE ZEROES.            
+                  15 WS-ER-CNT-CB             PIC 9(5) VALUE ZEROES.            
+                                                                                
+           05  WS-CNT-LOAN-BH.                                                  
+               10 WS-CNTLOAN-BH    OCCURS 50 TIMES.                             
+                  15 WS-SA-CNT-BH             PIC 9(5) VALUE ZEROES.            
+                  15 WS-2R-CNT-BH             PIC 9(5) VALUE ZEROES.            
+                  15 WS-3R-CNT-BH             PIC 9(5) VALUE ZEROES.            
+                  15 WS-4R-CNT-BH             PIC 9(5) VALUE ZEROES.            
+                  15 WS-5R-CNT-BH             PIC 9(5) VALUE ZEROES.            
+                  15 WS-ER-CNT-BH             PIC 9(5) VALUE ZEROES.            
+                                                                                
+           05  WS-CNT-LOAN-CH.                                                  
+               10 WS-CNTLOAN-CH    OCCURS 50 TIMES.                             
+                  15 WS-SA-CNT-CH             PIC 9(5) VALUE ZEROES.            
+                  15 WS-2R-CNT-CH             PIC 9(5) VALUE ZEROES.            
+                  15 WS-3R-CNT-CH             PIC 9(5) VALUE ZEROES.            
+                  15 WS-4R-CNT-CH             PIC 9(5) VALUE ZEROES.            
+                  15 WS-5R-CNT-CH             PIC 9(5) VALUE ZEROES.            
+                  15 WS-ER-CNT-CH             PIC 9(5) VALUE ZEROES.            
+                                                                                
+           05  WS-CNT-LOAN-BP.                                                  
+               10 WS-CNTLOAN-BP    OCCURS 50 TIMES.                             
+                  15 WS-SA-CNT-BP             PIC 9(5) VALUE ZEROES.            
+                  15 WS-2R-CNT-BP             PIC 9(5) VALUE ZEROES.            
+                  15 WS-3R-CNT-BP             PIC 9(5) VALUE ZEROES.            
+                  15 WS-4R-CNT-BP             PIC 9(5) VALUE ZEROES.            
+                  15 WS-5R-CNT-BP             PIC 9(5) VALUE ZEROES.            
+                  15 WS-ER-CNT-BP             PIC 9(5) VALUE ZEROES.            
+                                                                                
+           05  WS-CNT-LOAN-CP.                                                  
+               10 WS-CNTLOAN-CP    OCCURS 50 TIMES.                             
+                  15 WS-SA-CNT-CP             PIC 9(5) VALUE ZEROES.            
+                  15 WS-2R-CNT-CP             PIC 9(5) VALUE ZEROES.            
+                  15 WS-3R-CNT-CP             PIC 9(5) VALUE ZEROES.            
+                  15 WS-4R-CNT-CP             PIC 9(5) VALUE ZEROES.            
+                  15 WS-5R-CNT-CP             PIC 9(5) VALUE ZEROES.            
+                  15 WS-ER-CNT-CP             PIC 9(5) VALUE ZEROES.            
+                                                                                
+       01  WS-REM                    PIC 99.                                    
+       01  WS-SNO                    PIC 9(6)   VALUE ZEROES.                   
+       01  WS-REMARK                 PIC X(50)  VALUE SPACES.                   
+       01  WS-YEAR-LEAP              PIC 9(4).                                  
+       01  WS-LEASE-REM              PIC 9(2)   VALUE ZEROES.                   
+       01  WS-EXP-DTE                PIC 9(4)   VALUE ZEROES.                   
+       01  WS-TENURE                 PIC 9(4)   VALUE ZEROES.                   
+       01  WS-MONTHS-OUT.                                                       
+            05  WS-ACCPT-DTE             PIC X(8)   VALUE SPACES.               
+            05  WS-ACCPT-DATE  REDEFINES WS-ACCPT-DTE.                          
+                10  WS-ACCPT-YY           PIC 9(4).                             
+                10  WS-ACCPT-MM           PIC 9(2).                             
+                10  WS-ACCPT-DD           PIC 9(2).                             
+            05  WS-TODAY-DTE              PIC X(8)   VALUE SPACES.              
+            05  WS-TODAY-DATE REDEFINES WS-TODAY-DTE.                           
+                10  WS-TODAY-YY             PIC 9(4).                           
+                10  WS-TODAY-MM             PIC 9(2).                           
+                10  WS-TODAY-DD             PIC 9(2).                           
+                                                                                
+       01  WS-DATE-DIFF.                                                        
+           05  WS-DIFF-YY           PIC 9(4).                                   
+           05  WS-DIFF-MM           PIC S9(2).                                  
+           05  WS-DIFF-DD           PIC 9(2).                                   
+                                                                                
+       01  WS-VALID-MM                      PIC 99.                             
+           88  WS-VALID-31-DAY-MONTH        VALUE 01 03 05 07 08 10 12.         
+           88  WS-VALID-30-DAY-MONTH        VALUE 04 06 09 11.                  
+           88  WS-VALID-FEB-MONTH           VALUE 02.                           
+                                                                                
+       01  L11A-ERR-HEAD-01.                                                    
+           05  FILLER              PIC X(8)      VALUE 'BP13L11A'.              
+           05  FILLER              PIC X(4)      VALUE SPACES.                  
+           05  FILLER              PIC X(8)      VALUE '        '.              
+           05  FILLER              PIC X(24)     VALUE SPACES.                  
+           05  FILLER              PIC X(20)     VALUE                          
+                                    'S Y S T E M   O F   '.                     
+           05  FILLER              PIC X(19)     VALUE                          
+                                    'C O M M I T M E N T'.                      
+           05  FILLER              PIC X(15)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE :'.                
+           05  L11A-DATE           PIC X(10)     VALUE SPACES.                  
+           05  FILLER              PIC X(4)      VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'PAGE : '.               
+           05  L11A-PAGENO         PIC ZZZZ9     VALUE ZEROES.                  
+                                                                                
+       01  L11A-ERR-HEAD-02.                                                    
+           05  FILLER              PIC X(39)     VALUE SPACES .                 
+           05  FILLER              PIC X(93)     VALUE                          
+               ' ERROR LIST OF OUTSTANDING CASES (SOCA - APPLICATION)'.         
+                                                                                
+       01  L11A-ERR-HEAD-03.                                                    
+           05  FILLER              PIC X(28)                                    
+                  VALUE '   S/NO     SCH-ACCNT NO    '.                         
+           05  FILLER              PIC X(34)                                    
+                  VALUE 'REGN NO       ERROR DESCRIPTION'.                      
+           05  FILLER              PIC X(25)     VALUE SPACES.                  
+                                                                                
+       01  L11A-ERR-DETAILS.                                                    
+           05  LL1A-SNO            PIC ZZZZZ9    VALUE ZEROES.                  
+           05  FILLER              PIC X(06)     VALUE SPACES.                  
+           05  LL1A-NUM-SCHACCNT   PIC X(11).                                   
+           05  FILLER              PIC X(04)     VALUE SPACES.                  
+           05  LL1A-REG-NO         PIC X(8).                                    
+           05  FILLER              PIC X(4)      VALUE SPACES.                  
+           05  LL1A-REMARK         PIC X(50)     VALUE SPACES.                  
+           05  FILLER              PIC X(3)      VALUE SPACES.                  
+                                                                                
+       PROCEDURE DIVISION.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+      *-------------------------------------------------------------            
+       000-MAIN-ROUTINE.                                                        
+      *-------------------------------------------------------------            
+           PERFORM 100-OPEN-FILES       THRU 100-EXIT.                          
+           PERFORM 200-READ-BP13F80A    THRU 200-EXIT.                          
+           PERFORM 300-PROCESS-FILE     THRU 300-EXIT                           
+                   UNTIL WS-F80A-EOF = 'Y'.                                     
+           PERFORM 400-WRITE-COUNT      THRU 400-EXIT.                          
+           PERFORM 999-CLOSE-FILES      THRU 999-EXIT.                          
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       100-OPEN-FILES.                                                          
+      *-------------------------------------------------------------            
+           OPEN   INPUT  BM06K100                                               
+                         BM06K110                                               
+                         BP13F80A                                               
+                  OUTPUT BP13FB40                                               
+                         BP13FB45                                               
+                         BP13L11A.                                              
+                                                                                
+           IF BM06K100-STATUS NOT = ZEROS   AND  97                             
+               DISPLAY 'ERROR OPENING - BM06K100 : ' BM06K100-STATUS            
+               MOVE BM06K100-STATUS TO RETURN-CODE                              
+               PERFORM 999-CLOSE-FILES THRU 999-EXIT.                           
+                                                                                
+           IF BM06K110-STATUS NOT = ZEROS   AND  97                             
+               DISPLAY 'ERROR OPENING - BM06K110 : ' BM06K110-STATUS            
+               MOVE BM06K110-STATUS TO RETURN-CODE                              
+               PERFORM 999-CLOSE-FILES THRU 999-EXIT.                           
+                                                                                
+           MOVE FUNCTION CURRENT-DATE TO WS-TODAY-DTE WS-DTE-CUR.               
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       200-READ-BP13F80A.                                                       
+      *-------------------------------------------------------------            
+           READ BP13F80A                                                        
+                AT END                                                          
+                MOVE HIGH-VALUES TO BP13F800-MASTER                             
+                MOVE 'Y' TO  WS-F80A-EOF                                        
+                GO TO 200-EXIT.                                                 
+           ADD 1 TO WS-CNT-F80A-READ.                                           
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       300-PROCESS-FILE.                                                        
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE 'N' TO WS-SKIP-REC                                              
+                                                                                
+           PERFORM 305-READ-BM06K110  THRU 305-EXIT                             
+           PERFORM 500-VALIDATE-REC   THRU 500-EXIT                             
+           IF WS-SKIP-REC = 'Y'                                                 
+              ADD 1   TO  WS-SKIP-COUNT                                         
+           ELSE                                                                 
+              PERFORM 510-EVALUATE-DATA  THRU 510-EXIT                          
+              PERFORM 520-SAVE-COUNT     THRU 520-EXIT                          
+              PERFORM 530-WRITE-REGN     THRU 530-EXIT                          
+           END-IF.                                                              
+                                                                                
+           PERFORM 200-READ-BP13F80A    THRU 200-EXIT.                          
+                                                                                
+       300-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       305-READ-BM06K110.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES                    TO K110-REC.                          
+           MOVE F800-NUM-SCH-ACC          TO K110-KEY-FLD.                      
+           READ BM06K110.                                                       
+                                                                                
+           EVALUATE BM06K110-STATUS                                             
+              WHEN 00                                                           
+              WHEN 02                                                           
+                   PERFORM 310-READ-BM06K100 THRU  310-EXIT                     
+              WHEN 23                                                           
+                   MOVE 'SCHEME ACCOUNT NOT FOUND ON FIS ' TO WS-REMARK         
+                   DISPLAY 'SCHEME ACC NOT FND IN FIS '  F800-NUM-REGN          
+                   ADD 1 TO WS-K110-NOTFND                                      
+                   MOVE 'Y' TO WS-SKIP-REC                                      
+                   PERFORM 800-ERROR-REPORT THRU 800-EXIT                       
+              WHEN OTHER                                                        
+                   MOVE BM06K110-STATUS    TO RETURN-CODE                       
+                   DISPLAY 'ERROR READING BM06K110, STATUS = '                  
+                                          BM06K110-STATUS                       
+                   PERFORM 999-CLOSE-FILES THRU 999-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       305-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       310-READ-BM06K100.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES      TO K100-REC                                         
+           MOVE K110-AIX1   TO K100-KEY-FLD                                     
+                                                                                
+           READ BM06K100.                                                       
+                                                                                
+           EVALUATE BM06K100-STATUS                                             
+              WHEN 00                                                           
+                   CONTINUE                                                     
+              WHEN 23                                                           
+                   MOVE 'K100 FIS REC NOT FOUND' TO  WS-REMARK                  
+                   ADD 1  TO WS-K100-NOTFND                                     
+                   MOVE 'Y' TO WS-SKIP-REC                                      
+                   PERFORM 800-ERROR-REPORT THRU 800-EXIT                       
+              WHEN OTHER                                                        
+                   MOVE BM06K100-STATUS    TO RETURN-CODE                       
+                   DISPLAY 'ERROR READING BM06K100, STATUS = '                  
+                                          BM06K100-STATUS                       
+                   PERFORM 999-CLOSE-FILES THRU 999-EXIT                        
+           END-EVALUATE.                                                        
+                                                                                
+       310-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       400-WRITE-COUNT.                                                         
+      *-------------------------------------------------------------            
+           MOVE SPACES TO BP13FB40-REC.                                         
+           INITIALIZE BP13FB40-REC.                                             
+           MOVE WS-TODAY-DTE       TO FB40-RUN-DATE                             
+                                      FB40-DTE-UPDATE                           
+           MOVE 'B'                TO FB40-NUM-RECTYPE                          
+           MOVE 'N'                TO FB40-NUM-LOAN-TAG                         
+           MOVE WS-CNT-LOAN-BN     TO FB40-NUM-COUNT                            
+           MOVE 'BP13C11A'         TO FB40-NUM-USERID                           
+                                                                                
+           WRITE BP13FB40-REC.                                                  
+           ADD 1  TO WS-FB40-WRITE                                              
+                                                                                
+           MOVE SPACES TO BP13FB40-REC.                                         
+           INITIALIZE BP13FB40-REC.                                             
+           MOVE WS-TODAY-DTE       TO FB40-RUN-DATE                             
+                                      FB40-DTE-UPDATE                           
+           MOVE 'C'                TO FB40-NUM-RECTYPE                          
+           MOVE 'N'                TO FB40-NUM-LOAN-TAG                         
+           MOVE WS-CNT-LOAN-CN     TO FB40-NUM-COUNT                            
+           MOVE 'BP13C11A'         TO FB40-NUM-USERID                           
+                                                                                
+           WRITE BP13FB40-REC.                                                  
+           ADD 1  TO WS-FB40-WRITE.                                             
+                                                                                
+           MOVE SPACES TO BP13FB40-REC.                                         
+           INITIALIZE BP13FB40-REC.                                             
+           MOVE WS-TODAY-DTE       TO FB40-RUN-DATE                             
+                                      FB40-DTE-UPDATE                           
+           MOVE 'B'                TO FB40-NUM-RECTYPE                          
+           MOVE 'B'                TO FB40-NUM-LOAN-TAG                         
+           MOVE WS-CNT-LOAN-BB     TO FB40-NUM-COUNT                            
+           MOVE 'BP13C11A'         TO FB40-NUM-USERID                           
+                                                                                
+           WRITE BP13FB40-REC.                                                  
+           ADD 1  TO WS-FB40-WRITE                                              
+                                                                                
+           MOVE SPACES TO BP13FB40-REC.                                         
+           INITIALIZE BP13FB40-REC.                                             
+           MOVE WS-TODAY-DTE       TO FB40-RUN-DATE                             
+                                      FB40-DTE-UPDATE                           
+           MOVE 'C'                TO FB40-NUM-RECTYPE                          
+           MOVE 'B'                TO FB40-NUM-LOAN-TAG                         
+           MOVE WS-CNT-LOAN-CB     TO FB40-NUM-COUNT                            
+           MOVE 'BP13C11A'         TO FB40-NUM-USERID                           
+                                                                                
+           WRITE BP13FB40-REC.                                                  
+           ADD 1  TO WS-FB40-WRITE.                                             
+                                                                                
+           MOVE SPACES TO BP13FB40-REC.                                         
+           INITIALIZE BP13FB40-REC.                                             
+           MOVE WS-TODAY-DTE       TO FB40-RUN-DATE                             
+                                      FB40-DTE-UPDATE                           
+           MOVE 'B'                TO FB40-NUM-RECTYPE                          
+           MOVE 'H'                TO FB40-NUM-LOAN-TAG                         
+           MOVE WS-CNT-LOAN-BH     TO FB40-NUM-COUNT                            
+           MOVE 'BP13C11A'         TO FB40-NUM-USERID                           
+                                                                                
+           WRITE BP13FB40-REC.                                                  
+           ADD 1  TO WS-FB40-WRITE                                              
+                                                                                
+           MOVE SPACES TO BP13FB40-REC.                                         
+           INITIALIZE BP13FB40-REC.                                             
+           MOVE WS-TODAY-DTE       TO FB40-RUN-DATE                             
+                                      FB40-DTE-UPDATE                           
+           MOVE 'C'                TO FB40-NUM-RECTYPE                          
+           MOVE 'H'                TO FB40-NUM-LOAN-TAG                         
+           MOVE WS-CNT-LOAN-CH     TO FB40-NUM-COUNT                            
+           MOVE 'BP13C11A'         TO FB40-NUM-USERID                           
+                                                                                
+           WRITE BP13FB40-REC.                                                  
+           ADD 1  TO WS-FB40-WRITE.                                             
+                                                                                
+           MOVE SPACES TO BP13FB40-REC.                                         
+           INITIALIZE BP13FB40-REC.                                             
+           MOVE WS-TODAY-DTE       TO FB40-RUN-DATE                             
+                                      FB40-DTE-UPDATE                           
+           MOVE 'B'                TO FB40-NUM-RECTYPE                          
+           MOVE 'P'                TO FB40-NUM-LOAN-TAG                         
+           MOVE WS-CNT-LOAN-BP     TO FB40-NUM-COUNT                            
+           MOVE 'BP13C11A'         TO FB40-NUM-USERID                           
+                                                                                
+           WRITE BP13FB40-REC.                                                  
+           ADD 1  TO WS-FB40-WRITE                                              
+                                                                                
+           MOVE SPACES TO BP13FB40-REC.                                         
+           INITIALIZE BP13FB40-REC.                                             
+           MOVE WS-TODAY-DTE       TO FB40-RUN-DATE                             
+                                      FB40-DTE-UPDATE                           
+           MOVE 'C'                TO FB40-NUM-RECTYPE                          
+           MOVE 'P'                TO FB40-NUM-LOAN-TAG                         
+           MOVE WS-CNT-LOAN-CP     TO FB40-NUM-COUNT                            
+           MOVE 'BP13C11A'         TO FB40-NUM-USERID                           
+                                                                                
+           WRITE BP13FB40-REC.                                                  
+           ADD 1  TO WS-FB40-WRITE.                                             
+                                                                                
+       400-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       500-VALIDATE-REC.                                                        
+      *-------------------------------------------------------------            
+                                                                                
+           IF K110-DTE-ACCEPTANCE = SPACES OR LOW-VALUES OR ZEROES              
+              MOVE ZEROES   TO   K110-DTE-ACCEPTANCE                            
+           END-IF.                                                              
+                                                                                
+           IF (K110-DTE-ACCEPTANCE = SPACES OR LOW-VALUES OR ZEROES) AND        
+              (WS-SKIP-REC NOT = 'Y')                                           
+              STRING 'E777: INVALID ACCPT DTE = '                               
+                      K110-DTE-ACCEPTANCE DELIMITED BY SIZE                     
+                      INTO WS-REMARK                                            
+              MOVE 'Y' TO WS-SKIP-REC                                           
+              PERFORM 800-ERROR-REPORT THRU 800-EXIT                            
+           ELSE                                                                 
+              MOVE  K110-DTE-ACCEPTANCE   TO  WS-ACCPT-DTE                      
+           END-IF.                                                              
+                                                                                
+           IF F800-DTE-AO-APPT = SPACES OR LOW-VALUES OR ZEROES                 
+              MOVE ZEROES   TO   F800-DTE-AO-APPT                               
+           END-IF.                                                              
+                                                                                
+           IF F800-DTE-AO-APPT = SPACES OR LOW-VALUES OR ZEROES                 
+              CONTINUE                                                          
+           ELSE                                                                 
+              STRING 'SA APPOINTMENT EXIST = '                                  
+                      F800-DTE-AO-APPT DELIMITED BY SIZE                        
+                      INTO WS-REMARK                                            
+              MOVE 'Y' TO WS-SKIP-REC                                           
+              PERFORM 800-ERROR-REPORT THRU 800-EXIT                            
+           END-IF.                                                              
+                                                                                
+           IF F800-DTE-RAISE-AO = SPACES OR LOW-VALUES OR ZEROES                
+              MOVE ZEROES   TO   F800-DTE-RAISE-AO                              
+           END-IF.                                                              
+                                                                                
+           IF F800-DTE-RAISE-AO = SPACES OR LOW-VALUES OR ZEROES                
+              CONTINUE                                                          
+           ELSE                                                                 
+              STRING 'RAISE AO DATE EXIST = '                                   
+                      F800-DTE-RAISE-AO DELIMITED BY SIZE                       
+                      INTO WS-REMARK                                            
+              MOVE 'Y' TO WS-SKIP-REC                                           
+              PERFORM 800-ERROR-REPORT THRU 800-EXIT                            
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-SCH-ACC = SPACES OR LOW-VALUES OR ZEROES                 
+              MOVE 'NO SCHEME ACCOUNT ' TO WS-REMARK                            
+              MOVE 'Y' TO WS-SKIP-REC                                           
+              PERFORM 800-ERROR-REPORT THRU 800-EXIT                            
+           END-IF.                                                              
+                                                                                
+           IF K100-DTE-KEY-AVAIL = SPACES OR LOW-VALUES OR ZEROES               
+              MOVE 'KEYS ARE NOT AVAILABLE ' TO WS-REMARK                       
+              MOVE 'Y' TO WS-SKIP-REC                                           
+              PERFORM 800-ERROR-REPORT THRU 800-EXIT                            
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-STATUS = 'C'                                             
+              MOVE 'REGN IS CANCELLED ' TO WS-REMARK                            
+              MOVE 'Y' TO WS-SKIP-REC                                           
+              PERFORM 800-ERROR-REPORT THRU 800-EXIT                            
+           END-IF.                                                              
+                                                                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       510-EVALUATE-DATA.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+           DISPLAY ' NUM-REGN       '        F800-NUM-REGN                      
+           DISPLAY ' NUM-SCH-ACC    '        K110-KEY-FLD                       
+           DISPLAY ' 1ST SOCA DTE   '        K100-DTE-1ST-SOCA                  
+                                                                                
+           IF K100-DTE-1ST-SOCA = SPACES OR LOW-VALUES OR ZEROES                
+              MOVE 'C'  TO WS-REC-TYPE                                          
+           ELSE                                                                 
+              MOVE 'B'  TO WS-REC-TYPE                                          
+           END-IF.                                                              
+                                                                                
+           IF F800-NUM-FLAT-TYPE = '1A' OR '2A' OR '1F'                         
+              MOVE 'SA'    TO   WS-ROOM-TYPE                                    
+           ELSE                                                                 
+              MOVE F800-NUM-FLAT-TYPE  TO WS-ROOM-TYPE                          
+           END-IF.                                                              
+                                                                                
+           IF  F800-NUM-LOAN-TAG  = SPACES OR LOW-VALUES                        
+               MOVE 'N'  TO WS-LOAN-TAG                                         
+           ELSE                                                                 
+              MOVE F800-NUM-LOAN-TAG  TO WS-LOAN-TAG                            
+           END-IF.                                                              
+                                                                                
+           MOVE F800-NUM-REGN      TO WS-REGN                                   
+                                                                                
+      ***COMPUTE OUTSTANDING MONTHS                                             
+           DISPLAY 'REGN - ' F800-NUM-REGN '-'                                  
+                   'ACCEPTANCE DATE - ' WS-ACCPT-DATE '/' WS-ACCPT-DTE          
+           MOVE WS-TODAY-MM                TO WS-VALID-MM.                      
+           COMPUTE WS-DIFF-YY = WS-TODAY-YY - WS-ACCPT-YY.                      
+           COMPUTE WS-DIFF-MM = WS-TODAY-MM - WS-ACCPT-MM.                      
+           COMPUTE WS-DIFF-DD = WS-TODAY-DD - WS-ACCPT-DD.                      
+                                                                                
+           IF (WS-TODAY-MM = 02) AND                                            
+              (WS-TODAY-DD > 28)                                                
+              DIVIDE 4 INTO WS-TODAY-YY GIVING WS-YEAR-LEAP                     
+                                        REMAINDER WS-REM                        
+              IF WS-REM = 0                                                     
+                 MOVE 29 TO WS-TODAY-DD                                         
+              ELSE                                                              
+                 MOVE 28 TO WS-TODAY-DD                                         
+              END-IF                                                            
+                                                                                
+              IF WS-TODAY-DD < WS-ACCPT-DD                                      
+                 COMPUTE WS-DIFF-MM = WS-DIFF-MM - 1                            
+              END-IF                                                            
+           ELSE                                                                 
+              IF WS-TODAY-DD < WS-ACCPT-DD                                      
+                 IF WS-VALID-30-DAY-MONTH AND                                   
+                    WS-TODAY-DD = 30 AND                                        
+                    WS-ACCPT-DD = 31                                            
+                    CONTINUE                                                    
+                 ELSE                                                           
+                    COMPUTE WS-DIFF-MM = WS-DIFF-MM - 1                         
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           IF WS-DIFF-MM < 0                                                    
+              COMPUTE WS-DIFF-MM = WS-DIFF-MM + 12                              
+              COMPUTE WS-DIFF-YY = WS-DIFF-YY - 1                               
+           END-IF.                                                              
+                                                                                
+           IF WS-DIFF-YY > 1                                                    
+              COMPUTE WS-DIFF-MM =((12 * WS-DIFF-YY) + WS-DIFF-MM)              
+           END-IF.                                                              
+                                                                                
+           IF WS-DIFF-MM > 50                                                   
+              MOVE 50  TO  WS-MONTH-OUT                                         
+           ELSE                                                                 
+              MOVE WS-DIFF-MM  TO  WS-MONTH-OUT                                 
+           END-IF.                                                              
+                                                                                
+       510-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       520-SAVE-COUNT.                                                          
+      *-------------------------------------------------------------            
+                                                                                
+           EVALUATE F800-NUM-LOAN-TAG                                           
+              WHEN 'N'                                                          
+                PERFORM 521-COUNT-LOAN-N THRU 521-EXIT                          
+                                                                                
+              WHEN 'B'                                                          
+                PERFORM 522-COUNT-LOAN-B THRU 522-EXIT                          
+                                                                                
+              WHEN 'H'                                                          
+                PERFORM 523-COUNT-LOAN-H THRU 523-EXIT                          
+                                                                                
+              WHEN 'P'                                                          
+                PERFORM 524-COUNT-LOAN-P THRU 524-EXIT                          
+                                                                                
+              WHEN OTHER                                                        
+                PERFORM 521-COUNT-LOAN-N THRU 521-EXIT                          
+                                                                                
+           END-EVALUATE.                                                        
+                                                                                
+       520-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       521-COUNT-LOAN-N.                                                        
+      *-------------------------------------------------------------            
+           IF WS-MONTH-OUT = 50                                                 
+              COMPUTE WS-NEXT-MTH = WS-MONTH-OUT                                
+           ELSE                                                                 
+              COMPUTE WS-NEXT-MTH = WS-MONTH-OUT + 1                            
+           END-IF.                                                              
+                                                                                
+           IF WS-REC-TYPE  =  'B'                                               
+              EVALUATE TRUE                                                     
+                 WHEN WS-ROOM-TYPE = 'SA'                                       
+                    ADD 1  TO  WS-SA-CNT-BN(WS-NEXT-MTH)                        
+                                                                                
+                 WHEN WS-ROOM-TYPE(1:1) = '2'                                   
+                    ADD 1  TO  WS-2R-CNT-BN(WS-NEXT-MTH)                        
+                    MOVE '2 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '3'                                   
+                    ADD 1  TO  WS-3R-CNT-BN(WS-NEXT-MTH)                        
+                    MOVE '3 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '4'                                   
+                    ADD 1  TO  WS-4R-CNT-BN(WS-NEXT-MTH)                        
+                    MOVE '4 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '5'                                   
+                    ADD 1  TO  WS-5R-CNT-BN(WS-NEXT-MTH)                        
+                    MOVE '5 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = 'E'                                   
+                    ADD 1  TO  WS-ER-CNT-BN(WS-NEXT-MTH)                        
+                    MOVE 'E ' TO WS-ROOM-TYPE                                   
+                 WHEN OTHER                                                     
+                    MOVE 12                 TO RETURN-CODE                      
+                    DISPLAY 'ROOM TYPE ERROR FOR: ' F800-NUM-REGN               
+                    DISPLAY 'ROOM TYPE = ' WS-ROOM-TYPE                         
+                    PERFORM 999-CLOSE-FILES THRU 999-EXIT                       
+              END-EVALUATE                                                      
+           END-IF.                                                              
+                                                                                
+           IF WS-REC-TYPE  =  'C'                                               
+              EVALUATE TRUE                                                     
+                 WHEN WS-ROOM-TYPE = 'SA'                                       
+                    ADD 1  TO  WS-SA-CNT-CN(WS-NEXT-MTH)                        
+                                                                                
+                 WHEN WS-ROOM-TYPE(1:1) = '2'                                   
+                    ADD 1  TO  WS-2R-CNT-CN(WS-NEXT-MTH)                        
+                    MOVE '2 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '3'                                   
+                    ADD 1  TO  WS-3R-CNT-CN(WS-NEXT-MTH)                        
+                    MOVE '3 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '4'                                   
+                    ADD 1  TO  WS-4R-CNT-CN(WS-NEXT-MTH)                        
+                    MOVE '4 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '5'                                   
+                    ADD 1  TO  WS-5R-CNT-CN(WS-NEXT-MTH)                        
+                    MOVE '5 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = 'E'                                   
+                    ADD 1  TO  WS-ER-CNT-CN(WS-NEXT-MTH)                        
+                    MOVE 'E ' TO WS-ROOM-TYPE                                   
+                 WHEN OTHER                                                     
+                    MOVE 12                 TO RETURN-CODE                      
+                    DISPLAY 'ROOM TYPE ERROR FOR: ' F800-NUM-REGN               
+                    DISPLAY 'ROOM TYPE = ' WS-ROOM-TYPE                         
+                    PERFORM 999-CLOSE-FILES THRU 999-EXIT                       
+              END-EVALUATE                                                      
+           END-IF.                                                              
+                                                                                
+                                                                                
+       521-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       522-COUNT-LOAN-B.                                                        
+      *-------------------------------------------------------------            
+           IF WS-MONTH-OUT = 50                                                 
+              COMPUTE WS-NEXT-MTH = WS-MONTH-OUT                                
+           ELSE                                                                 
+              COMPUTE WS-NEXT-MTH = WS-MONTH-OUT + 1                            
+           END-IF.                                                              
+                                                                                
+           IF WS-REC-TYPE  =  'B'                                               
+              EVALUATE TRUE                                                     
+                 WHEN WS-ROOM-TYPE = 'SA'                                       
+                    ADD 1  TO  WS-SA-CNT-BB(WS-NEXT-MTH)                        
+                                                                                
+                 WHEN WS-ROOM-TYPE(1:1) = '2'                                   
+                    ADD 1  TO  WS-2R-CNT-BB(WS-NEXT-MTH)                        
+                    MOVE '2 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '3'                                   
+                    ADD 1  TO  WS-3R-CNT-BB(WS-NEXT-MTH)                        
+                    MOVE '3 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '4'                                   
+                    ADD 1  TO  WS-4R-CNT-BB(WS-NEXT-MTH)                        
+                    MOVE '4 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '5'                                   
+                    ADD 1  TO  WS-5R-CNT-BB(WS-NEXT-MTH)                        
+                    MOVE '5 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = 'E'                                   
+                    ADD 1  TO  WS-ER-CNT-BB(WS-NEXT-MTH)                        
+                    MOVE 'E ' TO WS-ROOM-TYPE                                   
+                 WHEN OTHER                                                     
+                    MOVE 12                 TO RETURN-CODE                      
+                    DISPLAY 'ROOM TYPE ERROR FOR: ' F800-NUM-REGN               
+                    DISPLAY 'ROOM TYPE = ' WS-ROOM-TYPE                         
+                    PERFORM 999-CLOSE-FILES THRU 999-EXIT                       
+              END-EVALUATE                                                      
+           END-IF.                                                              
+                                                                                
+           IF WS-REC-TYPE  =  'C'                                               
+              EVALUATE TRUE                                                     
+                 WHEN WS-ROOM-TYPE = 'SA'                                       
+                    ADD 1  TO  WS-SA-CNT-CB(WS-NEXT-MTH)                        
+                                                                                
+                 WHEN WS-ROOM-TYPE(1:1) = '2'                                   
+                    ADD 1  TO  WS-2R-CNT-CB(WS-NEXT-MTH)                        
+                    MOVE '2 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '3'                                   
+                    ADD 1  TO  WS-3R-CNT-CB(WS-NEXT-MTH)                        
+                    MOVE '3 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '4'                                   
+                    ADD 1  TO  WS-4R-CNT-CB(WS-NEXT-MTH)                        
+                    MOVE '4 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '5'                                   
+                    ADD 1  TO  WS-5R-CNT-CB(WS-NEXT-MTH)                        
+                    MOVE '5 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = 'E'                                   
+                    ADD 1  TO  WS-ER-CNT-CB(WS-NEXT-MTH)                        
+                    MOVE 'E ' TO WS-ROOM-TYPE                                   
+                 WHEN OTHER                                                     
+                    MOVE 12                 TO RETURN-CODE                      
+                    DISPLAY 'ROOM TYPE ERROR FOR: ' F800-NUM-REGN               
+                    DISPLAY 'ROOM TYPE = ' WS-ROOM-TYPE                         
+                    PERFORM 999-CLOSE-FILES THRU 999-EXIT                       
+              END-EVALUATE                                                      
+           END-IF.                                                              
+                                                                                
+                                                                                
+       522-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       523-COUNT-LOAN-H.                                                        
+      *-------------------------------------------------------------            
+           IF WS-MONTH-OUT = 50                                                 
+              COMPUTE WS-NEXT-MTH = WS-MONTH-OUT                                
+           ELSE                                                                 
+              COMPUTE WS-NEXT-MTH = WS-MONTH-OUT + 1                            
+           END-IF.                                                              
+                                                                                
+           IF WS-REC-TYPE  =  'B'                                               
+              EVALUATE TRUE                                                     
+                 WHEN WS-ROOM-TYPE = 'SA'                                       
+                    ADD 1  TO  WS-SA-CNT-BH(WS-NEXT-MTH)                        
+                                                                                
+                 WHEN WS-ROOM-TYPE(1:1) = '2'                                   
+                    ADD 1  TO  WS-2R-CNT-BH(WS-NEXT-MTH)                        
+                    MOVE '2 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '3'                                   
+                    ADD 1  TO  WS-3R-CNT-BH(WS-NEXT-MTH)                        
+                    MOVE '3 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '4'                                   
+                    ADD 1  TO  WS-4R-CNT-BH(WS-NEXT-MTH)                        
+                    MOVE '4 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '5'                                   
+                    ADD 1  TO  WS-5R-CNT-BH(WS-NEXT-MTH)                        
+                    MOVE '5 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = 'E'                                   
+                    ADD 1  TO  WS-ER-CNT-BH(WS-NEXT-MTH)                        
+                    MOVE 'E ' TO WS-ROOM-TYPE                                   
+                 WHEN OTHER                                                     
+                    MOVE 12                 TO RETURN-CODE                      
+                    DISPLAY 'ROOM TYPE ERROR FOR: ' F800-NUM-REGN               
+                    DISPLAY 'ROOM TYPE = ' WS-ROOM-TYPE                         
+                    PERFORM 999-CLOSE-FILES THRU 999-EXIT                       
+              END-EVALUATE                                                      
+           END-IF.                                                              
+                                                                                
+           IF WS-REC-TYPE  =  'C'                                               
+              EVALUATE TRUE                                                     
+                 WHEN WS-ROOM-TYPE = 'SA'                                       
+                    ADD 1  TO  WS-SA-CNT-CH(WS-NEXT-MTH)                        
+                                                                                
+                 WHEN WS-ROOM-TYPE(1:1) = '2'                                   
+                    ADD 1  TO  WS-2R-CNT-CH(WS-NEXT-MTH)                        
+                    MOVE '2 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '3'                                   
+                    ADD 1  TO  WS-3R-CNT-CH(WS-NEXT-MTH)                        
+                    MOVE '3 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '4'                                   
+                    ADD 1  TO  WS-4R-CNT-CH(WS-NEXT-MTH)                        
+                    MOVE '4 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '5'                                   
+                    ADD 1  TO  WS-5R-CNT-CH(WS-NEXT-MTH)                        
+                    MOVE '5 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = 'E'                                   
+                    ADD 1  TO  WS-ER-CNT-CH(WS-NEXT-MTH)                        
+                    MOVE 'E ' TO WS-ROOM-TYPE                                   
+                 WHEN OTHER                                                     
+                    MOVE 12                 TO RETURN-CODE                      
+                    DISPLAY 'ROOM TYPE ERROR FOR: ' F800-NUM-REGN               
+                    DISPLAY 'ROOM TYPE = ' WS-ROOM-TYPE                         
+                    PERFORM 999-CLOSE-FILES THRU 999-EXIT                       
+              END-EVALUATE                                                      
+           END-IF.                                                              
+                                                                                
+                                                                                
+       523-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       524-COUNT-LOAN-P.                                                        
+      *-------------------------------------------------------------            
+                                                                                
+           IF WS-MONTH-OUT = 50                                                 
+              COMPUTE WS-NEXT-MTH = WS-MONTH-OUT                                
+           ELSE                                                                 
+              COMPUTE WS-NEXT-MTH = WS-MONTH-OUT + 1                            
+           END-IF.                                                              
+                                                                                
+           IF WS-REC-TYPE  =  'B'                                               
+              EVALUATE TRUE                                                     
+                 WHEN WS-ROOM-TYPE = 'SA'                                       
+                    ADD 1  TO  WS-SA-CNT-BP(WS-NEXT-MTH)                        
+                                                                                
+                 WHEN WS-ROOM-TYPE(1:1) = '2'                                   
+                    ADD 1  TO  WS-2R-CNT-BP(WS-NEXT-MTH)                        
+                    MOVE '2 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '3'                                   
+                    ADD 1  TO  WS-3R-CNT-BP(WS-NEXT-MTH)                        
+                    MOVE '3 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '4'                                   
+                    ADD 1  TO  WS-4R-CNT-BP(WS-NEXT-MTH)                        
+                    MOVE '4 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '5'                                   
+                    ADD 1  TO  WS-5R-CNT-BP(WS-NEXT-MTH)                        
+                    MOVE '5 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = 'E'                                   
+                    ADD 1  TO  WS-ER-CNT-BP(WS-NEXT-MTH)                        
+                    MOVE 'E ' TO WS-ROOM-TYPE                                   
+                 WHEN OTHER                                                     
+                    MOVE 12                 TO RETURN-CODE                      
+                    DISPLAY 'ROOM TYPE ERROR FOR: ' F800-NUM-REGN               
+                    DISPLAY 'ROOM TYPE = ' WS-ROOM-TYPE                         
+                    PERFORM 999-CLOSE-FILES THRU 999-EXIT                       
+              END-EVALUATE                                                      
+           END-IF.                                                              
+                                                                                
+                                                                                
+           IF WS-REC-TYPE  =  'C'                                               
+              EVALUATE TRUE                                                     
+                 WHEN WS-ROOM-TYPE = 'SA'                                       
+                    ADD 1  TO  WS-SA-CNT-CP(WS-NEXT-MTH)                        
+                                                                                
+                 WHEN WS-ROOM-TYPE(1:1) = '2'                                   
+                    ADD 1  TO  WS-2R-CNT-CP(WS-NEXT-MTH)                        
+                    MOVE '2 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '3'                                   
+                    ADD 1  TO  WS-3R-CNT-CP(WS-NEXT-MTH)                        
+                    MOVE '3 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '4'                                   
+                    ADD 1  TO  WS-4R-CNT-CP(WS-NEXT-MTH)                        
+                    MOVE '4 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = '5'                                   
+                    ADD 1  TO  WS-5R-CNT-CP(WS-NEXT-MTH)                        
+                    MOVE '5 ' TO WS-ROOM-TYPE                                   
+                 WHEN WS-ROOM-TYPE(1:1) = 'E'                                   
+                    ADD 1  TO  WS-ER-CNT-CP(WS-NEXT-MTH)                        
+                    MOVE 'E ' TO WS-ROOM-TYPE                                   
+                 WHEN OTHER                                                     
+                    MOVE 12                 TO RETURN-CODE                      
+                    DISPLAY 'ROOM TYPE ERROR FOR: ' F800-NUM-REGN               
+                    DISPLAY 'ROOM TYPE = ' WS-ROOM-TYPE                         
+                    PERFORM 999-CLOSE-FILES THRU 999-EXIT                       
+              END-EVALUATE                                                      
+           END-IF.                                                              
+                                                                                
+                                                                                
+       524-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       530-WRITE-REGN.                                                          
+      *-------------------------------------------------------------            
+                                                                                
+           MOVE SPACES TO BP13FB45-REC.                                         
+           INITIALIZE  BP13FB45-REC.                                            
+                                                                                
+           MOVE F800-NUM-ALLO-CAT TO FB45-NUM-ALLO-CAT                          
+           MOVE F800-DTE-BALLOT   TO FB45-DTE-BALLOT                            
+           MOVE WS-REC-TYPE       TO FB45-REC-TYPE                              
+           MOVE WS-LOAN-TAG       TO FB45-LOAN-TAG                              
+           MOVE WS-MONTH-OUT      TO FB45-MONTH-OUT                             
+           MOVE WS-ROOM-TYPE      TO FB45-ROOM-TYPE                             
+           MOVE WS-REGN           TO FB45-NUM-REGN                              
+           MOVE WS-TODAY-DTE      TO FB45-DTE-UPDATE                            
+           MOVE 'BP13C11A'        TO FB45-NUM-USERID                            
+                                                                                
+           WRITE BP13FB45-REC.                                                  
+           ADD 1 TO WS-FB45-WRITE.                                              
+                                                                                
+       530-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------------------------------------------------            
+       800-ERROR-REPORT.                                                        
+      *-------------------------------------------------------------            
+           IF WS-LINE-CNT > 45                                                  
+              MOVE 'N' TO WS-ERROR-REPORT                                       
+              MOVE ZEROES TO WS-LINE-CNT                                        
+           END-IF.                                                              
+                                                                                
+           IF WS-ERROR-REPORT = 'Y'                                             
+              CONTINUE                                                          
+           ELSE                                                                 
+              PERFORM 810-ERROR-HEADING THRU 810-EXIT                           
+           END-IF.                                                              
+                                                                                
+           ADD  1   TO   WS-SNO WS-LINE-CNT                                     
+           MOVE WS-SNO            TO LL1A-SNO                                   
+           MOVE F800-NUM-SCH-ACC  TO LL1A-NUM-SCHACCNT                          
+           MOVE F800-NUM-REGN     TO LL1A-REG-NO                                
+           MOVE WS-REMARK         TO LL1A-REMARK                                
+           WRITE PRINT-REC FROM L11A-ERR-DETAILS.                               
+                                                                                
+       800-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       810-ERROR-HEADING.                                                       
+      *-------------------------------------------------------------            
+                                                                                
+            ADD 1               TO WS-PAGE-CNT.                                 
+            MOVE WS-PAGE-CNT    TO L11A-PAGENO.                                 
+            STRING WS-DD '/' WS-MM '/' WS-CC WS-YY                              
+                   DELIMITED BY SIZE INTO L11A-DATE.                            
+            MOVE SPACES         TO PRINT-REC                                    
+            WRITE PRINT-REC FROM L11A-ERR-HEAD-01 AFTER PAGE.                   
+            WRITE PRINT-REC FROM L11A-ERR-HEAD-02 AFTER 2.                      
+            WRITE PRINT-REC FROM L11A-ERR-HEAD-03 AFTER 2.                      
+            INSPECT PRINT-REC REPLACING ALL SPACES BY LOW-VALUES.               
+            INSPECT PRINT-REC REPLACING CHARACTERS BY '-'.                      
+            INSPECT PRINT-REC REPLACING ALL LOW-VALUES BY SPACES.               
+            WRITE PRINT-REC .                                                   
+            MOVE SPACES TO PRINT-REC.                                           
+            WRITE PRINT-REC AFTER 2.                                            
+            MOVE 'Y'  TO WS-ERROR-REPORT.                                       
+                                                                                
+       810-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+      *-------------------------------------------------------------            
+       999-CLOSE-FILES.                                                         
+      *-------------------------------------------------------------            
+           DISPLAY '******  BP13C11A *************'.                            
+           DISPLAY 'NO OF F800 READ      (F800) : ' WS-CNT-F80A-READ.           
+           DISPLAY 'NO OF K110 NTFOUND(SKIP)(K110) : ' WS-K110-NOTFND.          
+           DISPLAY 'NO OF K100 NTFOUND(SKIP)(K100) : ' WS-K100-NOTFND.          
+           DISPLAY 'NO OF TOTAL REC SKIPPED     : ' WS-SKIP-COUNT.              
+           DISPLAY 'NO OF FB40 WRITE     (FB40) : ' WS-FB40-WRITE.              
+           DISPLAY 'NO OF FB45 WRITE     (FB45) : ' WS-FB45-WRITE.              
+                                                                                
+           CLOSE BM06K100                                                       
+                 BM06K110                                                       
+                 BP13F80A                                                       
+                 BP13FB40                                                       
+                 BP13FB45                                                       
+                 BP13L11A.                                                      
+                                                                                
+           IF BM06K110-STATUS NOT = 0 AND 97                                    
+            DISPLAY ' CLOSING ERROR, BM06K110-STATUS ' BM06K110-STATUS          
+            MOVE BM06K110-STATUS TO RETURN-CODE.                                
+                                                                                
+           IF BM06K100-STATUS NOT = 0 AND 97                                    
+            DISPLAY ' CLOSING ERROR, BM06K100-STATUS ' BM06K100-STATUS          
+            MOVE BM06K100-STATUS TO RETURN-CODE.                                
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       999-EXIT.                                                                
+            EXIT.                                                               
+

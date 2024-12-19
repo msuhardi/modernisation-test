@@ -1,0 +1,366 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C732.                                                 
+       AUTHOR.        ED.                                                       
+                                                                                
+      **********************************************************                
+      *                                                        *                
+      *    SYSTEM NAME : SYSTEM OF COMMITMENT                  *                
+      *                                                        *                
+      *    SYSTEM ID : BP13                                    *                
+      *                                                        *                
+      *    OBJECTIVE  : COMPUTE FLAT SUPPLY FOR EACH NT/FT     *                
+      *                 BASED ON STANDARD EQUATION AND MINIMUM *                
+      *                 EQUATION.                              *                
+      *                                                        *                
+      *                 IF THE MINIMUM FLAT SET ASIDE COMPUTED *                
+      *                 FROM THE FORMALAR IS MORE THAN THE     *                
+      *                 TOTAL REQUEST FOR RESIDENT, THEN GIVE  *                
+      *                 THE EXTRA UNITS TO NON-RESIDENT.       *                
+      *                                                        *                
+      *                 RE-APPLY FORMULA PER EACH MCP OR NON-  *                
+      *                 MCP CASE FOR NHH/UPG.                  *                
+      *                                                        *                
+      *            PR = PROPORTION OF REQUEST FROM RESIDENT    *                
+      *            PNR= PROPORTION OF REQUEST FROM NON-RESIDENT*                
+      *            X  = MINIMUM PROPORTION OF FLAT FOR RESIDENT*                
+      *            R  = MINIMUM NO OF FLAT ALLOC   FOR RESIDENT*                
+      *            N  = MAXIMUM NO OF FLAT ALLOC FOR NON-RES   *                
+      *            F  = NO OF FLATS FOR NT/FT/ALLOC0SCH        *                
+      *                 PA, MTF, RH, REN, CCC                  *                
+      *                                                        *                
+      *                   2 PR                                 *                
+      *            X = -------------                           *                
+      *                  PNR + 2PR                             *                
+      *                                                        *                
+      *            R = X * F                                   *                
+      *                                                        *                
+      *            N = F - R                                   *                
+      *                                                        *                
+      * CHG-NO   BY   ON     DESCRIPTION                       *                
+      *----------------------------------                      *                
+      * BP131064 ED  030801  NEW PGM                           *                
+      * BP131064 CKK 240102  CHANGE ROUNDING OF FIG BY CHANGING*                
+      *                      0.4 TO 0.0                        *                
+      * BP132596 SSD 220904  WRT TO BP13K012 INSTD OF BP13K760 *                
+      * BP134861 EAA1 220413 EXPAND BP13K010 TO 600            *                
+      **********************************************************                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER.     IBM-3090.                                           
+       OBJECT-COMPUTER.     IBM-3090.                                           
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13K012    ASSIGN TO BP13K012                                
+                              ORGANIZATION IS INDEXED                           
+                              ACCESS       IS SEQUENTIAL                        
+                              RECORD KEY   IS K012-KEY-FLD                      
+                              FILE STATUS  IS WS-K012-STATUS.                   
+                                                                                
+           SELECT BP13K010    ASSIGN TO BP13K010                                
+                              ORGANIZATION IS INDEXED                           
+                              ACCESS MODE  IS RANDOM                            
+                              RECORD KEY   IS K010-KEY-FLD                      
+                              FILE STATUS  IS WS-K010-STATUS.                   
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD  BP13K012                                                             
+                              RECORD CONTAINS 400 CHARACTERS.                   
+           COPY BP13K012.                                                       
+                                                                                
+       FD  BP13K010                                                             
+                              RECORD CONTAINS 600 CHARACTERS.                   
+           COPY BP13K010.                                                       
+                                                                                
+        WORKING-STORAGE SECTION.                                                
+        01  WS-VARIABLES.                                                       
+            05  WS-CNT-K012-READ         PIC 9(8)       VALUE 0.                
+            05  WS-CNT-K010-READ         PIC 9(8)       VALUE 0.                
+            05  WS-CNT-K012-REWRITE      PIC 9(8)       VALUE 0.                
+            05  WS-K012-STATUS           PIC 99         VALUE 0.                
+            05  WS-K010-STATUS           PIC 99         VALUE 0.                
+            05  WS-K012-EOF              PIC X          VALUE 'N'.              
+                88 K012-EOF                             VALUE 'Y'.              
+            05  WS-K012-REWRITE          PIC X          VALUE 'N'.              
+                88 K012-REWRITE                         VALUE 'Y'.              
+            05  WS-NUM-MIN-PROP          PIC 9(2)V99999 VALUE 0.                
+            05  WS-NUM-TOT-MTF           PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-CCC           PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-RH            PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-REN           PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-RDC           PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-PA            PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-TCP           PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-TOT-VAL           PIC 9(5)       VALUE 0.                
+            05  WS-BAL-CCC               PIC 9(5)       VALUE 0.                
+            05  WS-NUM-FLAT-MCP-CCC      PIC 9(5)V99    VALUE 0.                
+            05  WS-NUM-FLAT-NONMCP-CCC   PIC 9(5)V99    VALUE 0.                
+            05  WS-APP-MCP-CNT           PIC 9(5)       VALUE 0.                
+            05  WS-APP-NONMCP-CNT        PIC 9(5)       VALUE 0.                
+            05  WS-FLAT-MCP-CNT          PIC 9(5)       VALUE 0.                
+            05  WS-FLAT-NONMCP-CNT       PIC 9(5)       VALUE 0.                
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+       0000-CONTROL-RTN.                                                        
+                                                                                
+           PERFORM 1000-OPEN-FILES       THRU 1000-EXIT.                        
+           PERFORM 2000-READ-BP13K012    THRU 2000-EXIT.                        
+           PERFORM 3000-MAIN-ROUTINE     THRU 3000-EXIT                         
+             UNTIL K012-EOF.                                                    
+                                                                                
+           PERFORM 9999-CLOSE-FILES      THRU 9999-EXIT.                        
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       1000-OPEN-FILES.                                                         
+                                                                                
+           OPEN INPUT  BP13K010                                                 
+                I-O    BP13K012.                                                
+                                                                                
+           IF WS-K012-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR OPENING BP13K012, STATUS ' WS-K012-STATUS          
+              MOVE WS-K012-STATUS        TO RETURN-CODE                         
+              GO TO 9999-CLOSE-FILES.                                           
+                                                                                
+           IF WS-K010-STATUS NOT = 00 AND 97                                    
+              DISPLAY 'ERROR OPENING BP13K010, STATUS ' WS-K010-STATUS          
+              MOVE WS-K010-STATUS        TO RETURN-CODE                         
+              GO TO 9999-CLOSE-FILES.                                           
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       2000-READ-BP13K012.                                                      
+                                                                                
+           READ BP13K012 NEXT            AT END                                 
+           MOVE 'Y'                      TO WS-K012-EOF                         
+           GO TO 2000-EXIT.                                                     
+                                                                                
+           IF WS-K012-STATUS NOT = 00                                           
+              DISPLAY 'ERROR READING BP13K012, STATUS ' WS-K012-STATUS          
+              MOVE WS-K012-STATUS        TO RETURN-CODE                         
+              GO TO 9999-CLOSE-FILES.                                           
+                                                                                
+           ADD 1                         TO WS-CNT-K012-READ.                   
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       3000-MAIN-ROUTINE.                                                       
+                                                                                
+           PERFORM 3050-READ-TENDER-FILE THRU 3050-EXIT.                        
+                                                                                
+           IF WS-K010-STATUS = 00                                               
+               PERFORM 4400-COMPUTE-PA-QUOTA  THRU 4400-EXIT                    
+               PERFORM 3080-REWRITE-BP13K012  THRU 3080-EXIT.                   
+                                                                                
+           MOVE 'N'                      TO WS-K012-REWRITE.                    
+           PERFORM 2000-READ-BP13K012    THRU 2000-EXIT.                        
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       3050-READ-TENDER-FILE.                                                   
+           MOVE K012-KEY-FLD             TO K010-KEY-FLD.                       
+           READ BP13K010.                                                       
+                                                                                
+           IF WS-K010-STATUS = 00                                               
+              ADD 1                      TO WS-CNT-K010-READ                    
+           ELSE                                                                 
+           IF WS-K010-STATUS = 23                                               
+              DISPLAY 'RECORD NOT FND BP13K010 STATUS ' WS-K010-STATUS          
+              DISPLAY '                        KEY IS ' K010-KEY-FLD            
+           ELSE                                                                 
+              DISPLAY 'ERROR READING BP13K010, STATUS ' WS-K010-STATUS          
+              DISPLAY '                        KEY IS ' K010-KEY-FLD            
+              MOVE WS-K010-STATUS        TO RETURN-CODE                         
+              GO TO 9999-CLOSE-FILES.                                           
+                                                                                
+       3050-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       3080-REWRITE-BP13K012.                                                   
+           IF K012-REWRITE                                                      
+              REWRITE BP13K012-MCPSUNIT                                         
+                                                                                
+              IF WS-K012-STATUS = 00 OR 02                                      
+                 ADD 1                   TO WS-CNT-K012-REWRITE                 
+              ELSE                                                              
+                 DISPLAY 'ERROR REWRITING BP13K012, STATUS '                    
+                                            WS-K012-STATUS                      
+                 DISPLAY '                          KEY IS '                    
+                                               K012-KEY-FLD                     
+                 MOVE WS-K012-STATUS        TO RETURN-CODE                      
+                 GO TO 9999-CLOSE-FILES.                                        
+                                                                                
+       3080-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+       4400-COMPUTE-PA-QUOTA.                                                   
+           IF K012-NUM-APP-MCPH IS NUMERIC AND                                  
+              K012-NUM-APP-MCPG IS NUMERIC AND                                  
+              K012-NUM-APP-NOMCH IS NUMERIC AND                                 
+              K012-NUM-APP-NOMCG IS NUMERIC AND                                 
+              K010-NUM-TOT-PA IS NUMERIC                                        
+                                                                                
+              COMPUTE WS-APP-MCP-CNT    = K012-NUM-APP-MCPH +                   
+                                          K012-NUM-APP-MCPG                     
+              COMPUTE WS-APP-NONMCP-CNT = K012-NUM-APP-NOMCH +                  
+                                          K012-NUM-APP-NOMCG                    
+                                                                                
+              IF WS-APP-MCP-CNT > 0 AND K010-NUM-TOT-PA > 0                     
+                                                                                
+                 PERFORM 4410-GET-MCP-NONMCP-FT-CNT                             
+                    THRU 4410-EXIT                                              
+                 PERFORM 4420-GET-MCP-NHH-UPG-FT-CNT                            
+                    THRU 4420-EXIT                                              
+                 PERFORM 4430-GET-NONMCP-NHH-UPG-FT-CNT                         
+                    THRU 4430-EXIT                                              
+                                                                                
+              END-IF                                                            
+                                                                                
+              IF WS-APP-MCP-CNT = 0                                             
+                 PERFORM 4440-GET-NONMCP-NHH-UPG-FT-CNT                         
+                    THRU 4440-EXIT                                              
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       4400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *========================================================                 
+      * COMPUTE FOR MCP/NONMCP FLAT SUPPLY                                      
+      *========================================================                 
+       4410-GET-MCP-NONMCP-FT-CNT.                                              
+                                                                                
+           COMPUTE WS-NUM-MIN-PROP = ((2 * WS-APP-MCP-CNT) /                    
+                 (WS-APP-NONMCP-CNT + (2 * WS-APP-MCP-CNT))).                   
+                                                                                
+           COMPUTE WS-NUM-TOT-PA = K010-NUM-TOT-PA *                            
+                                    WS-NUM-MIN-PROP.                            
+           ADD WS-NUM-TOT-PA 0.0 GIVING     WS-NUM-TOT-VAL ROUNDED.             
+           MOVE 'Y'                      TO WS-K012-REWRITE.                    
+                                                                                
+           MOVE WS-NUM-TOT-VAL           TO WS-FLAT-MCP-CNT.                    
+           COMPUTE WS-FLAT-NONMCP-CNT =                                         
+                   K010-NUM-TOT-PA - WS-NUM-TOT-VAL.                            
+                                                                                
+       4410-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *========================================================                 
+      * COMPUTE FOR MCP-NHH/UPG FLAT SUPPLY                                     
+      *========================================================                 
+       4420-GET-MCP-NHH-UPG-FT-CNT.                                             
+                                                                                
+           IF K012-NUM-APP-MCPH > 0 AND WS-FLAT-MCP-CNT > 0                     
+              COMPUTE WS-NUM-MIN-PROP =                                         
+                     ((2 * K012-NUM-APP-MCPH) /                                 
+                      (K012-NUM-APP-MCPG +                                      
+                       2 * K012-NUM-APP-MCPH))                                  
+                                                                                
+              COMPUTE WS-NUM-TOT-PA = WS-FLAT-MCP-CNT *                         
+                                       WS-NUM-MIN-PROP                          
+              ADD WS-NUM-TOT-PA 0.0 GIVING     WS-NUM-TOT-VAL ROUNDED           
+                                                                                
+              MOVE WS-NUM-TOT-VAL    TO K012-NUM-TOT-MCPH                       
+              COMPUTE K012-NUM-TOT-MCPG =                                       
+                      WS-FLAT-MCP-CNT - WS-NUM-TOT-VAL                          
+           END-IF.                                                              
+                                                                                
+           IF K012-NUM-APP-MCPH = 0                                             
+              MOVE WS-FLAT-MCP-CNT   TO K012-NUM-TOT-MCPG                       
+           END-IF.                                                              
+                                                                                
+       4420-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *========================================================                 
+      * COMPUTE FOR NONMCP-NHH/UPG FLAT SUPPLY                                  
+      *========================================================                 
+       4430-GET-NONMCP-NHH-UPG-FT-CNT.                                          
+                                                                                
+           IF K012-NUM-APP-NOMCH > 0 AND WS-FLAT-NONMCP-CNT > 0                 
+              COMPUTE WS-NUM-MIN-PROP =                                         
+                     ((2 * K012-NUM-APP-NOMCH) /                                
+                      (K012-NUM-APP-NOMCG +                                     
+                       2 * K012-NUM-APP-NOMCH))                                 
+                                                                                
+              COMPUTE WS-NUM-TOT-PA = WS-FLAT-NONMCP-CNT *                      
+                                       WS-NUM-MIN-PROP                          
+              ADD WS-NUM-TOT-PA 0.0 GIVING     WS-NUM-TOT-VAL ROUNDED           
+                                                                                
+              MOVE WS-NUM-TOT-VAL    TO K012-NUM-TOT-NOMCH                      
+              COMPUTE K012-NUM-TOT-NOMCG =                                      
+                      WS-FLAT-NONMCP-CNT - WS-NUM-TOT-VAL                       
+           END-IF.                                                              
+                                                                                
+           IF K012-NUM-APP-NOMCH  = 0                                           
+              MOVE WS-FLAT-NONMCP-CNT  TO K012-NUM-TOT-NOMCG                    
+           END-IF.                                                              
+                                                                                
+       4430-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *==========================================================               
+      * COMPUTE FOR NONMCP-NHH/UPG FLAT SUPPLY USING K010-NUM-TOT               
+      *==========================================================               
+       4440-GET-NONMCP-NHH-UPG-FT-CNT.                                          
+           IF K012-NUM-APP-NOMCH > 0 AND                                        
+              K010-NUM-TOT-PA    > 0                                            
+                                                                                
+             MOVE 'Y'                      TO WS-K012-REWRITE                   
+             COMPUTE WS-NUM-MIN-PROP =                                          
+                    ((2 * K012-NUM-APP-NOMCH) /                                 
+                     (K012-NUM-APP-NOMCG +                                      
+                      2 * K012-NUM-APP-NOMCH))                                  
+                                                                                
+             COMPUTE WS-NUM-TOT-PA = K010-NUM-TOT-PA *                          
+                                      WS-NUM-MIN-PROP                           
+             ADD WS-NUM-TOT-PA 0.0 GIVING      WS-NUM-TOT-VAL ROUNDED           
+                                                                                
+             MOVE WS-NUM-TOT-VAL     TO K012-NUM-TOT-NOMCH                      
+             COMPUTE K012-NUM-TOT-NOMCG =                                       
+                     K010-NUM-TOT-PA - WS-NUM-TOT-VAL                           
+           END-IF.                                                              
+                                                                                
+           IF K012-NUM-APP-NOMCH = 0                                            
+             IF K012-NUM-APP-NOMCG NOT = 0                                      
+               MOVE K010-NUM-TOT-PA  TO K012-NUM-TOT-NOMCG                      
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+       4440-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+       9999-CLOSE-FILES.                                                        
+                                                                                
+           DISPLAY '>>>>>>>>>>>>>>>> BP13C732 <<<<<<<<<<<<<<<<<<'.              
+           DISPLAY '- COMPUTE MIN NO FLATS SET ASIDE FOR RESIDENT - '.          
+           DISPLAY '- AND NON-RESIDENT USING THE FORMULAR PROVIDED- '.          
+           DISPLAY '  '.                                                        
+           DISPLAY 'K012 RECORDS READ    : '  WS-CNT-K012-READ.                 
+           DISPLAY 'K010 RECORDS READ    : '  WS-CNT-K010-READ.                 
+           DISPLAY 'K012 RECORDS REWRITE : '  WS-CNT-K012-REWRITE.              
+           DISPLAY '  '.                                                        
+                                                                                
+           CLOSE BP13K012                                                       
+                 BP13K010.                                                      
+                                                                                
+           IF WS-K012-STATUS NOT = 00                                           
+               DISPLAY 'ERROR CLOSING BP13K012, STATUS ' WS-K012-STATUS         
+               MOVE WS-K012-STATUS       TO RETURN-CODE.                        
+                                                                                
+           IF WS-K010-STATUS NOT = 00                                           
+               DISPLAY 'ERROR CLOSING BP13K010, STATUS ' WS-K010-STATUS         
+               MOVE WS-K010-STATUS       TO RETURN-CODE.                        
+                                                                                
+       9999-EXIT.                                                               
+           STOP RUN.                                                            
+                                                                                
+

@@ -1,0 +1,1344 @@
+      *----------------------------------------------------------------*        
+       IDENTIFICATION DIVISION.                                                 
+      *----------------------------------------------------------------*        
+       PROGRAM-ID.    BP13CC02.                                                 
+       AUTHOR.        ARIEL HERNANDEZ.                                          
+       DATE-WRITTEN.  27/03/2006.                                               
+                                                                                
+      ******************************************************************        
+      *                                                                *        
+      *   SYSTEM NAME :  SYSTEM OF COMMITMENT  (SOC)                   *        
+      *                                                                *        
+      *   SYSTEM ID   :  BP13                                          *        
+      *                                                                *        
+      *   OBJECTIVE   :  TO UPDATE PROGRESS PAYMENT MASTER FILE FROM   *        
+      *                  TRANSACTION FILE TO REFLECT INTEREST AND LOAN *        
+      *               1. COMPUTE NEW INTEREST INCUR BY NEW LOAN        *        
+      *               2. COMPUTE NEW INSTALMENT, EFF INSTAL            *        
+      *               3. BP13KD00 - ADD INTEREST TO LOAN-BAL. UPDATE   *        
+      *                             NEXT INSTAL, EFF-INSTAL            *        
+      *               4. OUTPUT UPDATES FROM BP13KD00 TO BP13FD00      *        
+      *                                                                *        
+      *   INPUT FILES :  1.  BP13FD38                                  *        
+      *                  2.  BP13KD35                                  *        
+      *                  3.  BP13KD00                                  *        
+      *                  3.  BP13KD65                                  *        
+      *   I-O FILES      4.  BP13KD38                                  *        
+      *   OUTPUT FILES:  1.  P13FD38A - CASES WHERE INSTALMENT EFF TWO *        
+      *                                 MONTH AFTER DUE-DATE           *        
+      *                                 BP13CC16 WILL UPDATE NEW INSTAL*        
+      *                                 TO BP13KD00 AFTER CLOSING ACCT *        
+      *                  2.  BP13F125                                           
+      *                  4.  BP13FD00                                           
+      *                  5.  BP13KD99 (LOG FILE FOR BP13KD00)          *        
+      *                                                                *        
+      *----------------------------------------------------------------*        
+      *                                                                *        
+      *   CHGE-NO   BY    DATE      DESCRIPTION                        *        
+      *   --------  ---  ---------- -----------                        *        
+      *   BP132772  BA3  27/03/2006 NEW PROGRAM                        *        
+      *   BP132888  BA3  25/08/2006 CHANGED FD38-DTE-INTEREST TO       *        
+      *                             FD38-DTE-DUE.                      *        
+      *                  30/08/2006 INCLUDED UPDATE TO                 *        
+      *                             KD00-DTE-LOAN-COMM.                *        
+      *             BA3  25/09/2006 READ PREV KD38 FOR NEWLOAN DUE ON  *        
+      *                             THE SAME MONTH                     *        
+      *             LSB  25/10/2006 OUTPUT F125, LOAN, IT REC          *        
+      *             BA3  09/12/2006 OUTPUT F125, F125-DTE-PP-DUE       *        
+      *             BA3  18/01/2007 INCLUDE THE CONDITION 'WS-RATE-CPF4*        
+      *                             = ZEROES' IN COMPUTING AMT INSTAL  *        
+      *                             FOR CPF2                           *        
+      *             BA3  01/02/2007 REMOVE MOVING OF ZERO TO NUMBER    *        
+      *                             OF DAYS WHEN DUE DATE AND MONTH    *        
+      *                             END DATE ARE EQUAL                 *        
+      *                  14/03/2007 REMOVE UPDATE TO KD00. ADD BP13FD00*        
+      *                  19/03/2007 MOVE FD38-AMT-LOAN-NEW TO COMPUTE  *        
+      *                             FOR LOAN AMOUNT FOR 1ST INSTALMENT.*        
+      *   BP133095  BA3  27/08/2007 GET ORIG-INSTAL FROM PREVIOUS      *        
+      *                       BP13KD38-TRANS-REC WHEN AS AT DATE EQUAL *        
+      *                             TO THE EFFECTIVE DATE OF THE PRV PP*        
+      *                  03/10/2007 GET ORIG-INSTAL FROM PREVIOUS REC. *        
+      *                             CATER FOR THE SKIPPED PP           *        
+      *   BP133115  BA3  15/10/2007 - GET CODE LOAN SCHEME (INTO KD38  *        
+      *                               AND F125) FROM KD00              *        
+      *                             - USE CODE LOAN SCHEME TO GET      *        
+      *                               INTEREST RATE                    *        
+      *   BP133091  RB12 16/11/2007 - EXPAND KD00 LNGTH FR 1200 TO 1600*        
+      *   BP133091  LMS1 15/12/2007 - EXPAND KD99 LNGTH FR 1250 TO 1650*        
+      *   BP133175  LSB1 05/12/2007 - OUTPUT F125-AMT-INTEREST         *        
+      *                               ADD TO KD00-AMT-ARR-INTR         *        
+      *   BP133175  ED1  17/01/2008 - INIT KD00-AMT-ARR-INTR IF NOT    *        
+      *                               NUMERIC                          *        
+      *   BP133175  ED1  22/01/2008 - IF KD00-AMT-LOAN-BAL IS NOT > 0  *        
+      *                               MOVE 0 TO WS-AMT-INT-ORIG1       *        
+      *   BP133314  ED1  15/05/2008 - UPD KD38-NUM-DUE TO 'Y' FOR      *        
+      *                               DUE CASES                        *        
+      *   BP133345  JB8  02/06/2008 - BROWSE ALL THE SCHEDULE IN KD38  *        
+      *                               TO GET THE RIGHT SCHEDULE        *        
+      *   BP133545  JB8  10/02/2009 - MOVE 'Y' TO KD38-NUM-DUE IF KD00 *        
+      *                               NOT FND,AND CATER FOR 'TR'       *        
+      *   BP133572  JB8  05/06/2009 - TO RECTIFY PROGRAM               *        
+      *   BP133638  JB8  22/07/2009 - TO GET RIGHT INS-ORIG2 WHEN MORE *        
+      *                               THAN 1 SCHEDULE IN 1 MONTH       *        
+      *   BP133682  JB8  16/09/2009 - UPDATE KD00 INSTEAD OF UPDATING  *        
+      *                               IN BP13D104 USING FD00           *        
+      *   BP133907  JB8  21/07/2010 - TO CATER FOR NEW LOAN WITH ZERO  *        
+      *                               LOAN BALANCE                     *        
+      ******************************************************************        
+                                                                                
+      *----------------------------------------------------------------*        
+       ENVIRONMENT DIVISION.                                                    
+      *----------------------------------------------------------------*        
+                                                                                
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+                                                                                
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+                                                                                
+           SELECT BP13FD38  ASSIGN        TO BP13FD38.                          
+           SELECT SY02F001  ASSIGN        TO SY02F001.                          
+                                                                                
+           SELECT BP13KD35  ASSIGN        TO BP13KD35                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS KD35-KEY-FLD                       
+                            FILE STATUS   IS WS-KD35-STATUS.                    
+                                                                                
+           SELECT BP13KD38  ASSIGN        TO BP13KD38                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS KD38-KEY-FLD                       
+                            FILE STATUS   IS WS-KD38-STATUS.                    
+                                                                                
+           SELECT BP13KD00  ASSIGN        TO BP13KD00                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS KD00-KEY-FLD                       
+                            FILE STATUS   IS WS-KD00-STATUS.                    
+                                                                                
+           SELECT BP13KD65  ASSIGN        TO BP13KD65                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS KD65-CDE-FILEID                    
+                            FILE STATUS   IS WS-KD65-STATUS.                    
+                                                                                
+           SELECT BP13KD99  ASSIGN        TO BP13KD99                           
+                            ACCESS MODE   IS DYNAMIC                            
+                            ORGANIZATION  IS INDEXED                            
+                            RECORD KEY    IS KD99-KEY-FLD                       
+                            FILE STATUS   IS WS-KD99-STATUS.                    
+                                                                                
+           SELECT P13FD38A  ASSIGN        TO P13FD38A.                          
+           SELECT BP13F125  ASSIGN        TO BP13F125.                          
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       DATA DIVISION.                                                           
+      *----------------------------------------------------------------*        
+                                                                                
+       FILE SECTION.                                                            
+                                                                                
+       FD  BP13FD38                                                             
+           BLOCK  CONTAINS 0 RECORDS                                            
+           RECORD CONTAINS 400 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+                                                                                
+       COPY BP13FD38.                                                           
+                                                                                
+       FD  P13FD38A                                                             
+           BLOCK  CONTAINS 0 RECORDS                                            
+           RECORD CONTAINS 400 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+                                                                                
+       01  P13FD38A-TRANS-REC    PIC X(400).                                    
+                                                                                
+       COPY SY02F001.                                                           
+                                                                                
+       FD  BP13KD35                                                             
+           RECORD CONTAINS 3500 CHARACTERS.                                     
+                                                                                
+       COPY BP13KD35.                                                           
+                                                                                
+       FD  BP13KD38                                                             
+           RECORD CONTAINS 400 CHARACTERS.                                      
+                                                                                
+       COPY BP13KD38.                                                           
+                                                                                
+       FD  BP13KD00                                                             
+           RECORD CONTAINS 1600 CHARACTERS.                                     
+                                                                                
+       COPY BP13KD00.                                                           
+                                                                                
+       FD  BP13KD65                                                             
+           RECORD CONTAINS 200 CHARACTERS.                                      
+                                                                                
+       COPY BP13KD65.                                                           
+                                                                                
+       FD  BP13KD99                                                             
+           RECORD CONTAINS 1650 CHARACTERS.                                     
+                                                                                
+       COPY BP13KD99.                                                           
+                                                                                
+       FD  BP13F125                                                             
+           BLOCK  CONTAINS 0 RECORDS                                            
+           RECORD CONTAINS 150 CHARACTERS                                       
+           LABEL RECORDS ARE STANDARD                                           
+           RECORDING MODE IS F.                                                 
+                                                                                
+       COPY BP13F125.                                                           
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       WORKING-STORAGE SECTION.                                                 
+      *----------------------------------------------------------------*        
+                                                                                
+       COPY WSTABLES.                                                           
+                                                                                
+       01  WS-KD35-STATUS               PIC 9(2)    VALUE ZERO.                 
+       01  WS-KD38-STATUS               PIC 9(2)    VALUE ZERO.                 
+       01  WS-KD00-STATUS               PIC 9(2)    VALUE ZERO.                 
+       01  WS-KD65-STATUS               PIC 9(2)    VALUE ZERO.                 
+       01  WS-KD99-STATUS               PIC 9(2)    VALUE ZERO.                 
+       01  CNT-FD38A-WRITE              PIC 9(8)    VALUE ZERO.                 
+       01  CNT-F125-WRITE               PIC 9(8)    VALUE ZERO.                 
+       01  CNT-FD38-READ                PIC 9(8)    VALUE ZERO.                 
+       01  CNT-KD00-READ                PIC 9(8)    VALUE ZERO.                 
+       01  CNT-KD35-READ                PIC 9(8)    VALUE ZERO.                 
+       01  CNT-KD38-READ                PIC 9(8)    VALUE ZERO.                 
+       01  CNT-KD38-UPDATE              PIC 9(8)    VALUE ZERO.                 
+       01  CNT-KD00-UPDATE              PIC 9(8)    VALUE ZERO.                 
+       01  CNT-KD00-NOTFOUND            PIC 9(8)    VALUE ZERO.                 
+       01  CNT-KD35-NOTFOUND            PIC 9(8)    VALUE ZERO.                 
+       01  CNT-KD38-NOTFOUND            PIC 9(8)    VALUE ZERO.                 
+       01  CNT-KD99-WRITE               PIC 9(8)    VALUE ZERO.                 
+       01  WS-FAC                       PIC S9(2)   VALUE ZERO.                 
+       01  WS-AMT-INTAL-NEW-CASH        PIC 9(6)V99 VALUE ZERO.                 
+       01  WS-AMT-INTAL-NEW-CPF1        PIC 9(6)V99 VALUE ZERO.                 
+       01  WS-AMT-INTAL-NEW-CPF2        PIC 9(6)V99 VALUE ZERO.                 
+       01  WS-AMT-INTAL-NEW-CPF3        PIC 9(6)V99 VALUE ZERO.                 
+       01  WS-AMT-INTAL-NEW-CPF4        PIC 9(6)V99 VALUE ZERO.                 
+       01  WS-AMT-INTAL-NEW-TOT         PIC 9(6)V99 VALUE ZERO.                 
+       01  WS-AMT-INTEREST              PIC 9(6)V99 VALUE ZERO.                 
+       01  WS-RATE-CPF1                 PIC 9(6)V99 VALUE ZERO.                 
+       01  WS-RATE-CPF2                 PIC 9(6)V99 VALUE ZERO.                 
+       01  WS-RATE-CPF3                 PIC 9(6)V99 VALUE ZERO.                 
+       01  WS-RATE-CPF4                 PIC 9(6)V99 VALUE ZERO.                 
+       01  WS-RATE-CPF-TOT              PIC 9(03)   VALUE ZERO.                 
+       01  WS-NUM-DAYS                  PIC 9(03)   VALUE ZERO.                 
+       01  WS-FD38-AMT-INTEREST         PIC 9(5)V99 VALUE ZERO.                 
+       01  WS-QUOTIENT                  PIC 9(04)   VALUE ZERO.                 
+       01  WS-REMAINDER                 PIC 9(04)   VALUE ZERO.                 
+       01  WS-FD38-CDE-INTEREST-RATE    PIC 9(2)V99 VALUE ZERO.                 
+       01  WS-INTEREST-RATE             PIC S9(2)V9(8)    VALUE ZERO.           
+       01  WS-NUM-PERIOD                PIC 9(01)V9(15)   VALUE ZERO.           
+       01  WS-KD00-LOAN-BAL             PIC S9(07)V99     VALUE ZERO.           
+       01  WS-LOAN-BAL-NEW              PIC S9(07)V99     VALUE ZERO.           
+       01  WS-LOAN-TOT-DUE              PIC S9(07)V99     VALUE ZERO.           
+       01  WS-DIV                       PIC S9(2)V9(8)    VALUE ZERO.           
+       01  WS-INT-AMT                   PIC S9(12)V9(06)  VALUE ZERO.           
+       01  WS-NEW-INSTAL-AMT            PIC S9(12)V9(06)  VALUE ZERO.           
+       01  WS-CPF-AMT                   PIC S9(12)V9(06)  VALUE ZERO.           
+       01  WS-INSTAL                    PIC S9(5)V9(8)    VALUE ZERO.           
+       01  WS-AMT-OPEN-BAL1             PIC S9(6)V99      VALUE ZERO.           
+       01  WS-AMT-OPEN-BAL2             PIC S9(6)V99      VALUE ZERO.           
+       01  WS-AMT-INT-ORIG1             PIC 9(5)V99       VALUE ZERO.           
+       01  WS-AMT-INT-ORIG2             PIC 9(5)V99       VALUE ZERO.           
+       01  WS-AMT-INS-ORIG1             PIC 9(6)V99       VALUE ZERO.           
+       01  WS-AMT-INS-ORIG2             PIC 9(6)V99       VALUE ZERO.           
+       01  WS-TMP-INTRATE               PIC 99V99         VALUE ZERO.           
+       01  WS-INT-FORM REDEFINES WS-TMP-INTRATE.                                
+           05 WS-PCT1                   PIC X.                                  
+           05 WS-PCT2                   PIC X.                                  
+           05 WS-PCT3                   PIC X(2).                               
+       01  WS-TEMP-FD38-PP              PIC X(2)          VALUE SPACES.         
+       01  WS-AMT-OPEN-NEWLOAN          PIC S9(7)V99      VALUE ZERO.           
+                                                                                
+       01  WS-SYS-DATE                  PIC X(8)    VALUE SPACES.               
+       01  WS-TMP-DATE                  PIC X(8)    VALUE SPACES.               
+       01  WS-SYS-TIME                  PIC X(8)    VALUE SPACES.               
+       01  WS-EOF-FD38                  PIC X(1)    VALUE SPACES.               
+       01  WS-EOF-KD38                  PIC X(1)    VALUE SPACES.               
+       01  WS-KD35-FOUND                PIC X(1)    VALUE SPACES.               
+       01  WS-KD00-FD                   PIC X(1)    VALUE SPACES.               
+       01  WS-GET-PREV-INSTAL           PIC X(1)    VALUE SPACES.               
+       01  WS-FND-PREV-PP               PIC X(1)    VALUE SPACES.               
+                                                                                
+       01  WS-DTE-FROM.                                                         
+           05 WS-DTE-FROM-CCYY          PIC 9(04)   VALUE ZERO.                 
+           05 WS-DTE-FROM-MM            PIC 9(02)   VALUE ZERO.                 
+           05 WS-DTE-FROM-DD            PIC 9(02)   VALUE ZERO.                 
+                                                                                
+       01  WS-DTE-LAST.                                                         
+           05 WS-DTE-LAST-CCYY          PIC 9(04)   VALUE ZERO.                 
+           05 REDEFINES WS-DTE-LAST-CCYY.                                       
+              10 WS-DTE-LAST-CC         PIC 9(02).                              
+              10 WS-DTE-LAST-YY         PIC 9(02).                              
+           05 WS-DTE-LAST-MM            PIC 9(02)   VALUE ZERO.                 
+           05 WS-DTE-LAST-DD            PIC 9(02)   VALUE ZERO.                 
+                                                                                
+       01  WS-DTE-NEXT.                                                         
+           05 WS-DTE-NEXT-CCYY          PIC 9(04)   VALUE ZERO.                 
+           05 WS-DTE-NEXT-MM            PIC 9(02)   VALUE ZERO.                 
+           05 WS-DTE-NEXT-DD            PIC 9(02)   VALUE ZERO.                 
+                                                                                
+       01  WS-DTE-NEXT-TMP.                                                     
+           05 WS-DTE-NEXT-TMP-CCYY      PIC 9(04)   VALUE ZERO.                 
+           05 WS-DTE-NEXT-TMP-MM        PIC 9(02)   VALUE ZERO.                 
+                                                                                
+       01  WS-DTE-AS-AT-TMP.                                                    
+           05 WS-DTE-AS-AT-CY           PIC 9(04)   VALUE ZERO.                 
+           05 WS-DTE-AS-AT-MM           PIC 9(02)   VALUE ZERO.                 
+       01  WS-TMP-DUE-DATE              PIC X(08)   VALUE ZEROES.               
+                                                                                
+       01  WS-REPAY-PERIOD              PIC 9(2)V9(6) VALUE ZEROS.              
+       01  REDEFINES WS-REPAY-PERIOD.                                           
+           05  WS-KD00-REPAY            PIC 9(2).                               
+           05  WS-KD00-REPAY-DEC        PIC 9(6).                               
+                                                                                
+      *-----------------------------------------------------------*             
+      *    WS VARIABLES PASSED  TO SUB-PROGRAM "BP13C952"         *             
+      *-----------------------------------------------------------*             
+       01  WS-LINK-C952.                                                        
+           05  WS-C952-INT              PIC 9V9(4)  VALUE ZEROES.               
+           05  WS-C952-FAC              PIC 9(2)    VALUE ZEROES.               
+           05  WS-C952-ERL              PIC X       VALUE SPACE.                
+           05  WS-C952-LOAN-AMT         PIC 9(7)V99 VALUE ZEROES.               
+           05  WS-C952-ERL-LOAN-AMT     PIC 9(7)V99 VALUE ZEROES.               
+           05  WS-C952-REPAY-PD         PIC 9(2)V9(6)     VALUE ZEROES.         
+           05  WS-C952-RM               PIC X(2)    VALUE SPACES.               
+           05  WS-C952-DESIGN           PIC X(3)    VALUE SPACES.               
+           05  FILLER                   PIC X(1)    VALUE SPACE.                
+           05  WS-C952-MTH-INSTAL       PIC S9(5)V99      VALUE +0.             
+           05  WS-C952-SUB-INSTAL       PIC S9(5)V99      VALUE +0.             
+                                                                                
+      *-----------------------------------------------------------*             
+      *    WS VARIABLES PASSED  TO SUB-PROGRAM "BP13C950"         *             
+      *-----------------------------------------------------------*             
+       01  C950-FIELD.                                                          
+           05  C950-PROCESS-DATE       PIC X(08).                               
+           05  C950-PROCESS-DATE-NUM REDEFINES C950-PROCESS-DATE.               
+               10  C950-PROCESS-CC     PIC 99.                                  
+               10  C950-PROCESS-YY     PIC 99.                                  
+               10  C950-PROCESS-MM     PIC 99.                                  
+               10  C950-PROCESS-DD     PIC 99.                                  
+           05  C950-INTREST-RATE       PIC 9(02)V9(4).                          
+           05  C950-FACT               PIC 9(02).                               
+           05  C950-REPYMT-PERIOD      PIC 9(02).                               
+           05  C950-CDE-LOAN-SCH       PIC X(01).                               
+                                                                                
+      *-----------------------------------------------------------*             
+      *    WS VARIABLES PASSED  TO SUB-PROGRAM "BP13C951"         *             
+      *-----------------------------------------------------------*             
+       01  C951-FIELD.                                                          
+           05  C951-EFFECTIVE-DATE         PIC X(08).                           
+           05  C951-EXPIRY-DATE-IN         PIC X(08).                           
+           05  C951-AMT-LOAN-BAL           PIC 9(7)V99.                         
+           05  C951-NUM-LOAN-REPYMT-PERIOD PIC 99.                              
+           05  C951-DTE-LOAN-EXPIRY-CYMD   PIC X(08).                           
+           05  C951-BAL-REPAY-PERIOD       PIC 9(2)V9(6).                       
+                                                                                
+      *----------------------------------------------------------------*        
+       PROCEDURE DIVISION.                                                      
+      *----------------------------------------------------------------*        
+                                                                                
+      *----------------------------------------------------------------*        
+       0000-MAIN-ROUTINE.                                                       
+      *----------------------------------------------------------------*        
+           PERFORM  1000-OPEN-FILES        THRU    1000-EXIT.                   
+           PERFORM  2000-READ-FD38         THRU    2000-EXIT.                   
+           PERFORM  3000-PROCESS           THRU    3000-EXIT                    
+                    UNTIL WS-EOF-FD38 = 'Y'.                                    
+           PERFORM  9000-CLOSE-ROUTINE     THRU    9000-EXIT.                   
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       1000-OPEN-FILES.                                                         
+      *----------------------------------------------------------------*        
+                                                                                
+           OPEN INPUT  BP13FD38                                                 
+                       SY02F001                                                 
+                       BP13KD35                                                 
+                       BP13KD65                                                 
+                I-O    BP13KD38                                                 
+                       BP13KD00                                                 
+                       BP13KD99                                                 
+               OUTPUT  P13FD38A                                                 
+                       BP13F125.                                                
+                                                                                
+           IF WS-KD35-STATUS NOT = 00 AND 97                                    
+               DISPLAY 'OPENING ERROR, BP13KD35-STATUS ' WS-KD35-STATUS         
+               MOVE     WS-KD35-STATUS     TO RETURN-CODE                       
+               PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                       
+           END-IF.                                                              
+           IF WS-KD38-STATUS NOT = 00 AND 97                                    
+               DISPLAY 'OPENING ERROR, BP13KD38-STATUS ' WS-KD38-STATUS         
+               MOVE     WS-KD38-STATUS     TO RETURN-CODE                       
+               PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                       
+           END-IF.                                                              
+           IF WS-KD00-STATUS NOT = 00 AND 97                                    
+               DISPLAY 'OPENING ERROR, BP13KD00-STATUS ' WS-KD00-STATUS         
+               MOVE     WS-KD00-STATUS     TO RETURN-CODE                       
+               PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                       
+           END-IF.                                                              
+           IF WS-KD99-STATUS NOT = 00 AND 97                                    
+               DISPLAY 'OPENING ERROR, BP13KD99-STATUS ' WS-KD99-STATUS         
+               MOVE     WS-KD99-STATUS     TO RETURN-CODE                       
+               PERFORM  9000-CLOSE-ROUTINE THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           PERFORM 2500-READ-SY02F001   THRU 2500-EXIT.                         
+           PERFORM 3020-READ-BP13KD65   THRU 3020-EXIT.                         
+                                                                                
+       1000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       2000-READ-FD38.                                                          
+      *----------------------------------------------------------------*        
+                                                                                
+           READ BP13FD38                                                        
+                AT END MOVE 'Y' TO WS-EOF-FD38                                  
+                       GO TO 2000-EXIT                                          
+           END-READ.                                                            
+                                                                                
+           ADD 1 TO CNT-FD38-READ.                                              
+                                                                                
+       2000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       2500-READ-SY02F001.                                                      
+      *-------------------------------------------------------------            
+                                                                                
+           READ SY02F001.                                                       
+           MOVE F001-DTE-CURRENT      TO WS-SYS-DATE.                           
+                                                                                
+       2500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3000-PROCESS.                                                            
+      *----------------------------------------------------------------*        
+                                                                                
+           MOVE ZEROES  TO WS-AMT-INTAL-NEW-CPF1  WS-AMT-INTAL-NEW-CPF2         
+                           WS-AMT-INTAL-NEW-CPF3  WS-AMT-INTAL-NEW-CPF4         
+                           WS-AMT-INTAL-NEW-TOT                                 
+                           WS-LOAN-BAL-NEW        WS-FD38-AMT-INTEREST          
+                           WS-FD38-CDE-INTEREST-RATE WS-INTEREST-RATE           
+                           WS-INT-AMT             WS-NEW-INSTAL-AMT             
+                           WS-QUOTIENT            WS-REMAINDER                  
+                           WS-AMT-OPEN-BAL1       WS-AMT-OPEN-BAL2              
+                           WS-AMT-INT-ORIG1       WS-AMT-INT-ORIG2              
+                           WS-AMT-INS-ORIG1       WS-AMT-INS-ORIG2              
+                           WS-LOAN-TOT-DUE        WS-RATE-CPF-TOT               
+                           WS-AMT-INTAL-NEW-CASH  WS-AMT-INTEREST.              
+           MOVE SPACES  TO WS-DTE-NEXT            WS-DTE-NEXT-TMP.              
+           MOVE 'N'     TO WS-KD00-FD.                                          
+           IF FD38-AMT-INTEREST-NEWLOAN IS NOT NUMERIC                          
+              MOVE 0 TO FD38-AMT-INTEREST-NEWLOAN                               
+           END-IF.                                                              
+           IF FD38-AMT-LOAN-NEW IS NOT NUMERIC                                  
+              MOVE 0 TO FD38-AMT-LOAN-NEW                                       
+           END-IF.                                                              
+                                                                                
+           IF KD65-DTE-BAL-CLOSE = F001-DTE-LAST-DAY-PREV(1:6) AND              
+              FD38-DTE-DUE(1:6) = WS-SYS-DATE(1:6) AND                          
+              FD38-DTE-DUE(7:2) <= WS-SYS-DATE(7:2) AND                         
+              (FD38-NUM-DUE = SPACES OR LOW-VALUES)                             
+                                                                                
+              PERFORM 3010-READ-KD00 THRU 3010-EXIT                             
+              IF WS-KD00-FD = 'Y'                                               
+                 IF KD00-AMT-OPEN-LOAN-BAL NOT NUMERIC                          
+                    MOVE 0 TO KD00-AMT-OPEN-LOAN-BAL                            
+                 END-IF                                                         
+                 IF KD00-AMT-LOAN-BAL IS NOT NUMERIC                            
+                    MOVE 0 TO KD00-AMT-LOAN-BAL                                 
+                 END-IF                                                         
+                 IF KD00-AMT-LOAN-DISBURSED IS NOT NUMERIC                      
+                    MOVE 0 TO KD00-AMT-LOAN-DISBURSED                           
+                 END-IF                                                         
+                 IF KD00-AMT-ARR-INTR IS NOT NUMERIC                            
+                    MOVE 0 TO KD00-AMT-ARR-INTR                                 
+                 END-IF                                                         
+                                                                                
+      *--------  COMPUTE EFFECTIVE NEXT INSTALMENT DATE                         
+                 MOVE FD38-DTE-DUE(1:6) TO WS-DTE-NEXT-TMP                      
+                 PERFORM 3500-GET-EFF-NEXT-INSTDATE  THRU 3500-EXIT             
+                                                                                
+      *--------  COMPUTE LOAN EXPIRY DATE AND BALANCE REPAY PERIOD              
+                 STRING WS-DTE-NEXT-TMP '01'                                    
+                        DELIMITED BY SIZE INTO WS-DTE-NEXT                      
+                 PERFORM 3160-COMP-LON-XPRY-BL-RPAY-PD                          
+                                                     THRU 3160-EXIT             
+                                                                                
+      *--------- GET DAYS INTEREST                                              
+                 PERFORM 3050-GET-DAYS-INT           THRU 3050-EXIT             
+                                                                                
+      *--------- COMPUTE CPF-RATE - CALL BP13C950                               
+                 PERFORM 3200-GET-INTEREST-RATE      THRU 3200-EXIT             
+                                                                                
+      *--------  MOVE KD00-AMT-LOAN-BAL TO WS-KD00-LOAN-BAL                     
+                 MOVE KD00-AMT-LOAN-BAL TO WS-KD00-LOAN-BAL                     
+                 COMPUTE WS-LOAN-BAL-NEW = WS-KD00-LOAN-BAL +                   
+                                        FD38-AMT-LOAN-NEW                       
+                                                                                
+      *--------  COMPUTE INTEREST                                               
+                 PERFORM 3250-COMPUTE-INTEREST-NEWLOAN THRU 3250-EXIT           
+                                                                                
+      *--------  COMPUTE LOAN BALANCE                                           
+                 PERFORM 3300-READ-KD35              THRU 3300-EXIT             
+                 PERFORM 3100-COMPUTE-LOAN-BALANCE   THRU 3100-EXIT             
+                                                                                
+      *--------  COMPUTE INSTALMENT FOR CASH AND CPF1 TO CPF4                   
+                 PERFORM 3260-COMPUTE-INSTALMENT  THRU 3260-EXIT                
+                 PERFORM 3150-COMPUTE-NEW-INST-CASH  THRU 3150-EXIT             
+                                                                                
+                 PERFORM 4200-WRITE-KD99             THRU 4200-EXIT             
+                 PERFORM 4100-REWRITE-KD00           THRU 4100-EXIT             
+                 PERFORM 6000-MOVE-KD38-DATA         THRU 6000-EXIT             
+                 PERFORM 6100-REWRITE-KD38-DATA      THRU 6100-EXIT             
+                 PERFORM 6200-WRITE-FD38A            THRU 6200-EXIT             
+                 PERFORM 6300-WRITE-F125             THRU 6300-EXIT             
+              ELSE                                                              
+                 PERFORM 6120-READ-KD38              THRU 6120-EXIT             
+                 MOVE 'Y' TO KD38-NUM-DUE                                       
+                 PERFORM 6150-REWRITE-KD38           THRU 6150-EXIT             
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           PERFORM 2000-READ-FD38  THRU 2000-EXIT.                              
+                                                                                
+       3000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3010-READ-KD00.                                                          
+      *----------------------------------------------------------------*        
+           MOVE FD38-NUM-REGN TO KD00-NUM-REGN.                                 
+                                                                                
+           READ BP13KD00                                                        
+           EVALUATE WS-KD00-STATUS                                              
+              WHEN 00                                                           
+                 IF KD00-CDE-LOAN-SCH = 'P' OR 'C' OR 'S' OR 'M' OR 'A'         
+                    MOVE 'Y' TO WS-KD00-FD                                      
+                    ADD 1 TO CNT-KD00-READ                                      
+                 END-IF                                                         
+              WHEN 23                                                           
+                 ADD 1 TO CNT-KD00-NOTFOUND                                     
+              WHEN OTHER                                                        
+                 DISPLAY 'ERROR IN READING BP13KD00 - STATUS '                  
+                             WS-KD00-STATUS                                     
+                 MOVE        WS-KD00-STATUS    TO RETURN-CODE                   
+                 PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       3010-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3020-READ-BP13KD65.                                                      
+      *----------------------------------------------------------------*        
+                                                                                
+           MOVE 'KD65'        TO KD65-CDE-FILEID.                               
+                                                                                
+           READ BP13KD65                                                        
+           EVALUATE WS-KD00-STATUS                                              
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN 23                                                           
+                 MOVE ZEROES  TO KD65-DTE-BAL-CLOSE                             
+              WHEN OTHER                                                        
+                 DISPLAY 'ERROR IN READING BP13KD65 - STATUS '                  
+                             WS-KD65-STATUS                                     
+                 MOVE        WS-KD65-STATUS    TO RETURN-CODE                   
+                 PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       3020-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3050-GET-DAYS-INT.                                                       
+      *----------------------------------------------------------------*        
+                                                                                
+           MOVE FD38-DTE-DUE                TO WS-DTE-FROM                      
+                                               WS-DTE-LAST.                     
+                                                                                
+      *----------------------------------------------------------------*        
+      *    GET LAST DAY OF THE MONTH. CHECK FOR LEAP YEAR FOR THE MONTH         
+      *    OF FEBRUARY.                                                         
+      *-----------------------------------------------------------------        
+           SET  WS-MTH-IND                  TO WS-DTE-LAST-MM.                  
+           MOVE WS-DTE-LAST-DAY(WS-MTH-IND) TO WS-DTE-LAST-DD.                  
+                                                                                
+           IF WS-DTE-LAST-MM = 2                                                
+              IF WS-DTE-LAST-YY = 0                                             
+                 DIVIDE WS-DTE-LAST-CCYY BY 400 GIVING WS-QUOTIENT              
+                                             REMAINDER WS-REMAINDER             
+              ELSE                                                              
+                 DIVIDE WS-DTE-LAST-CCYY BY   4 GIVING WS-QUOTIENT              
+                                             REMAINDER WS-REMAINDER             
+              END-IF                                                            
+              IF WS-REMAINDER = 0                                               
+                 MOVE 29 TO WS-DTE-LAST-DD                                      
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+           COMPUTE WS-NUM-DAYS = WS-DTE-LAST-DD - WS-DTE-FROM-DD + 1.           
+                                                                                
+           COMPUTE WS-NUM-PERIOD = WS-NUM-DAYS / WS-DTE-LAST-DD.                
+                                                                                
+       3050-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3100-COMPUTE-LOAN-BALANCE.                                               
+      *----------------------------------------------------------------*        
+                                                                                
+           IF KD00-AMT-ARR-INSTAL IS NOT NUMERIC                                
+              MOVE 0              TO KD00-AMT-ARR-INSTAL.                       
+           IF KD00-AMT-INSTAL     IS NOT NUMERIC                                
+              MOVE 0              TO KD00-AMT-INSTAL.                           
+           IF KD00-AMT-ARR-INTR   IS NOT NUMERIC                                
+              MOVE 0              TO KD00-AMT-ARR-INTR                          
+           END-IF.                                                              
+                                                                                
+      *___ CHECK ANY PP DUE ON THE SAME MONTH TO GET OPEN BAL                   
+                                                                                
+           PERFORM 3110-CHECK-PP-DUE-SAME-MTH THRU 3110-EXIT                    
+                                                                                
+      *___ COMPUTE AMT INTEREST ORIG 1, AND AMT INSTAL ORIG 1                   
+                                                                                
+           IF WS-AMT-OPEN-NEWLOAN > ZEROS                                       
+              MOVE WS-AMT-OPEN-NEWLOAN TO WS-AMT-OPEN-BAL1                      
+           ELSE                                                                 
+              COMPUTE WS-AMT-OPEN-BAL1 = KD00-AMT-OPEN-LOAN-BAL                 
+           END-IF.                                                              
+                                                                                
+      *___ COMPUTE INT ORIG1 ONLY FOR LOAN WITH DIFFERENT MONTH DUE             
+           IF KD00-DTE-NEXT-INSTAL (1:6) NOT = WS-DTE-NEXT (1:6)                
+              COMPUTE WS-AMT-INS-ORIG1 = KD00-AMT-INSTAL                        
+                                                                                
+              IF KD00-AMT-LOAN-BAL > 0                                          
+                 COMPUTE WS-AMT-INT-ORIG1   ROUNDED =                           
+                        (WS-AMT-OPEN-BAL1 * WS-INTEREST-RATE) / 12              
+              ELSE                                                              
+                 MOVE  0 TO WS-AMT-INT-ORIG1                                    
+              END-IF                                                            
+                                                                                
+           END-IF.                                                              
+                                                                                
+           IF KD00-AMT-LOAN-BAL = 0                                             
+              COMPUTE WS-AMT-INT-ORIG1 = 0                                      
+              COMPUTE WS-AMT-INS-ORIG1 = 0                                      
+           END-IF.                                                              
+                                                                                
+      *___ COMPUTE AMT INTEREST ORIG 2, AND AMT INSTAL ORIG 2                   
+                                                                                
+           COMPUTE WS-AMT-OPEN-BAL2 = WS-AMT-OPEN-BAL1                          
+                                    + WS-AMT-INT-ORIG1                          
+                                    - WS-AMT-INS-ORIG1                          
+                                    + FD38-AMT-LOAN-NEW                         
+                                    + WS-FD38-AMT-INTEREST.                     
+                                                                                
+           COMPUTE WS-AMT-INT-ORIG2   ROUNDED =                                 
+                  (WS-AMT-OPEN-BAL2 * WS-INTEREST-RATE) / 12                    
+                                                                                
+           IF WS-GET-PREV-INSTAL = 'Y'                                          
+              CONTINUE                                                          
+           ELSE                                                                 
+              IF WS-DTE-NEXT = FD38-DTE-INSTAL-NEW                              
+                 COMPUTE WS-AMT-INS-ORIG2 = FD38-AMT-INSTAL-ORIG2               
+              ELSE                                                              
+                 IF KD00-AMT-LOAN-BAL = 0                                       
+                    COMPUTE WS-AMT-INS-ORIG2 = 0                                
+                 ELSE                                                           
+                    COMPUTE WS-AMT-INS-ORIG2 = KD00-AMT-INSTAL                  
+                 END-IF                                                         
+              END-IF                                                            
+           END-IF                                                               
+                                                                                
+           COMPUTE WS-LOAN-TOT-DUE = WS-AMT-OPEN-BAL2                           
+                                   + WS-AMT-INT-ORIG2                           
+                                   - WS-AMT-INS-ORIG2.                          
+                                                                                
+       3100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3110-CHECK-PP-DUE-SAME-MTH.                                              
+      *----------------------------------------------------------------*        
+           MOVE SPACES            TO WS-DTE-AS-AT-TMP                           
+           MOVE ZEROES            TO WS-AMT-OPEN-NEWLOAN.                       
+           MOVE 'N'               TO WS-GET-PREV-INSTAL                         
+                                     WS-FND-PREV-PP.                            
+           MOVE ZEROES            TO WS-TEMP-FD38-PP.                           
+                                                                                
+           MOVE FD38-DTE-DUE      TO WS-DTE-AS-AT-TMP.                          
+           IF WS-DTE-AS-AT-TMP IS NOT NUMERIC                                   
+              MOVE ZEROES         TO WS-DTE-AS-AT-TMP                           
+           END-IF.                                                              
+           IF WS-DTE-AS-AT-MM = 12                                              
+              MOVE 01             TO WS-DTE-AS-AT-MM                            
+              ADD  01             TO WS-DTE-AS-AT-CY                            
+           ELSE                                                                 
+              ADD  01             TO WS-DTE-AS-AT-MM                            
+           END-IF.                                                              
+                                                                                
+      *******                                                                   
+      * TO GET THE LASTEST SCHEDULE BEFORE CURRENT DATE                         
+      *******                                                                   
+           IF FD38-NUM-SCHEDULE = 'TR'                                          
+              CONTINUE                                                          
+           ELSE                                                                 
+              PERFORM 3120-BROWSE-BP13KD38     THRU 3120-EXIT                   
+              IF WS-FND-PREV-PP = 'Y' AND                                       
+                 (WS-TEMP-FD38-PP > ZEROES OR WS-TEMP-FD38-PP = 'TR')           
+                 PERFORM 3111-READ-PREV-KD38   THRU 3111-EXIT                   
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+       3110-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3111-READ-PREV-KD38.                                                     
+      *----------------------------------------------------------------*        
+                                                                                
+           MOVE FD38-NUM-REGN  TO KD38-NUM-REGN.                                
+           MOVE FD38-NUM-TRANS TO KD38-NUM-TRANS.                               
+           MOVE WS-TEMP-FD38-PP TO KD38-NUM-SCHEDULE.                           
+                                                                                
+           READ BP13KD38                                                        
+           EVALUATE WS-KD38-STATUS                                              
+              WHEN 00                                                           
+                 ADD 1                         TO CNT-KD38-READ                 
+                 MOVE KD38-AMT-OPEN-BAL2       TO WS-AMT-OPEN-NEWLOAN           
+              WHEN 23                                                           
+                 ADD 1                         TO CNT-KD38-NOTFOUND             
+              WHEN OTHER                                                        
+                 DISPLAY 'ERROR IN READING BP13KD38 - STATUS '                  
+                             WS-KD38-STATUS                                     
+                 MOVE        WS-KD38-STATUS    TO RETURN-CODE                   
+                 PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+                                                                                
+       3111-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3120-BROWSE-BP13KD38.                                                    
+      *----------------------------------------------------------------*        
+                                                                                
+           MOVE SPACES               TO BP13KD38-TRANS-REC.                     
+           INITIALIZE                   BP13KD38-TRANS-REC.                     
+                                                                                
+           MOVE FD38-NUM-REGN        TO KD38-NUM-REGN.                          
+           MOVE FD38-NUM-TRANS       TO KD38-NUM-TRANS.                         
+           MOVE LOW-VALUES           TO WS-TMP-DUE-DATE.                        
+                                                                                
+           START BP13KD38 KEY > KD38-KEY-FLD.                                   
+                                                                                
+           EVALUATE WS-KD38-STATUS                                              
+              WHEN 00                                                           
+              WHEN 02                                                           
+                 PERFORM 3125-READNEXT-BP13KD38   THRU 3125-EXIT                
+                    UNTIL KD38-NUM-REGN  NOT = FD38-NUM-REGN                    
+                       OR KD38-NUM-TRANS NOT = FD38-NUM-TRANS                   
+                       OR WS-EOF-KD38        = 'Y'                              
+              WHEN 23                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'BP13KD38 - ERROR BROWSING : '                         
+                         WS-KD38-STATUS                                         
+                 GO TO 9000-CLOSE-ROUTINE                                       
+           END-EVALUATE.                                                        
+                                                                                
+       3120-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3125-READNEXT-BP13KD38.                                                  
+      *----------------------------------------------------------------*        
+                                                                                
+           READ BP13KD38 NEXT RECORD                                            
+                AT END MOVE 'Y' TO WS-EOF-KD38                                  
+                GO TO 3125-EXIT.                                                
+                                                                                
+           EVALUATE WS-KD38-STATUS                                              
+              WHEN 00                                                           
+              WHEN 02                                                           
+                 IF KD38-NUM-REGN  = FD38-NUM-REGN AND                          
+                    KD38-NUM-TRANS = FD38-NUM-TRANS                             
+                    IF KD38-DTE-DUE < FD38-DTE-DUE AND                          
+                       KD38-DTE-DUE > WS-TMP-DUE-DATE                           
+                       MOVE 'Y'                   TO WS-FND-PREV-PP             
+                       MOVE KD38-DTE-DUE          TO WS-TMP-DUE-DATE            
+                       MOVE KD38-NUM-SCHEDULE     TO WS-TEMP-FD38-PP            
+                    END-IF                                                      
+                    IF KD38-DTE-INSTAL-NEW(1:6) = WS-DTE-AS-AT-TMP AND          
+                       KD38-AMT-INSTAL-NEW-TOT > WS-AMT-INS-ORIG2               
+                       MOVE 'Y'                   TO WS-GET-PREV-INSTAL         
+                       COMPUTE WS-AMT-INS-ORIG2 =                               
+                                              KD38-AMT-INSTAL-NEW-TOT           
+                    END-IF                                                      
+                 END-IF                                                         
+              WHEN 23                                                           
+                 MOVE 'Y'                         TO WS-EOF-KD38                
+              WHEN OTHER                                                        
+                 DISPLAY 'BP13KD38 - ERROR READING : '                          
+                         WS-KD38-STATUS                                         
+                 GO TO 9000-CLOSE-ROUTINE                                       
+           END-EVALUATE.                                                        
+                                                                                
+       3125-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3150-COMPUTE-NEW-INST-CASH.                                              
+      *----------------------------------------------------------------*        
+                                                                                
+      *--- COMPUTE WS-NEW-INSTAL-CASH/CPF1-4 - REFER TO B0C7                    
+      *    PERFORM 3300-READ-KD35 THRU 3300-EXIT.                               
+           IF WS-KD35-FOUND = 'Y'                                               
+              PERFORM 3400-NEW-INSTALL THRU 3400-EXIT                           
+           END-IF.                                                              
+                                                                                
+                                                                                
+       3150-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3160-COMP-LON-XPRY-BL-RPAY-PD.                                           
+      *----------------------------------------------------------------*        
+                                                                                
+      *___ CALL C951 TO GET LOAN EXPIRY DATE AND BALANCE REPAY PERIOD           
+      *                                                                         
+      *    1) - COMPUTE LOAN EXPIRY DATE WHEN KD00-AMT-LOAN-BAL = 0             
+      *       - PARAMETERS USED IN COMPUTING LOAN EXPIRY DATE ARE               
+      *         C951-EFFECTIVE-DATE AND C951-NUM-LOAN-REPYMT-PERIOD.            
+      *                                                                         
+      *    2) - COMPUTE BALANCE REPAY WHEN KD00-AMT-LOAN-BAL > 0                
+      *       - PARAMETERS USED IN COMPUTING BALANCE REPAY PERIOD ARE           
+      *         C951-EFFECTIVE-DATE AND C951-EXPIRY-DATE-IN.                    
+                                                                                
+           INITIALIZE C951-FIELD.                                               
+           MOVE WS-DTE-NEXT           TO C951-EFFECTIVE-DATE.                   
+           MOVE KD00-DTE-LOAN-EXPIRY  TO C951-EXPIRY-DATE-IN.                   
+           IF KD00-DTE-LOAN-COMM NOT = SPACES AND LOW-VALUES                    
+              MOVE 1                  TO C951-AMT-LOAN-BAL                      
+           ELSE                                                                 
+              MOVE 0                  TO C951-AMT-LOAN-BAL                      
+           END-IF                                                               
+           MOVE KD00-NUM-LOAN-REPYMT-PERIOD                                     
+                                      TO C951-NUM-LOAN-REPYMT-PERIOD.           
+                                                                                
+           CALL 'BP13C951' USING C951-FIELD.                                    
+                                                                                
+       3160-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3200-GET-INTEREST-RATE.                                                  
+      *----------------------------------------------------------------*        
+                                                                                
+      *___ CALL C950 TO GET INTEREST RATE                                       
+                                                                                
+           MOVE FD38-DTE-INTEREST        TO C950-PROCESS-DATE.                  
+           MOVE KD00-NUM-LOAN-REPYMT-PERIOD                                     
+                                         TO C950-REPYMT-PERIOD.                 
+           MOVE KD00-CDE-LOAN-SCH        TO C950-CDE-LOAN-SCH.                  
+                                                                                
+           CALL 'BP13C950' USING C950-FIELD.                                    
+                                                                                
+           IF C950-INTREST-RATE NOT NUMERIC                                     
+              MOVE 0                 TO C950-INTREST-RATE                       
+           END-IF.                                                              
+           MOVE C950-INTREST-RATE    TO WS-INTEREST-RATE.                       
+           COMPUTE WS-FD38-CDE-INTEREST-RATE = C950-INTREST-RATE * 100.         
+                                                                                
+       3200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3250-COMPUTE-INTEREST-NEWLOAN.                                           
+      *----------------------------------------------------------------*        
+                                                                                
+           COMPUTE WS-INT-AMT =                                                 
+           (FD38-AMT-LOAN-NEW * WS-INTEREST-RATE * WS-NUM-PERIOD) / 12.         
+           COMPUTE WS-FD38-AMT-INTEREST ROUNDED = WS-INT-AMT.                   
+                                                                                
+       3250-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3260-COMPUTE-INSTALMENT.                                                 
+      *----------------------------------------------------------------*        
+      *___ CALL C952 INSTALMENT                                                 
+      *___ NOTE: IF KD00-AMT-LOAN-BAL IS ZERO,                                  
+      *___          KD00-NUM-LOAN-REPYMT-PERIOD IS USED IN                      
+      *___          COMPUTING THE INSTALMENT                                    
+      *___       ELSE, THE BALANCE REPAY-PERIOD IS USED                         
+                                                                                
+           MOVE   'N'                    TO WS-C952-ERL.                        
+           MOVE    SPACES                TO WS-C952-RM.                         
+           MOVE    SPACES                TO WS-C952-DESIGN.                     
+                                                                                
+      **   IF KD00-AMT-LOAN-BAL = 0                                             
+           IF KD00-DTE-LOAN-COMM = SPACES OR LOW-VALUES                         
+              MOVE ZEROS                 TO WS-REPAY-PERIOD                     
+              MOVE KD00-NUM-LOAN-REPYMT-PERIOD                                  
+                                         TO WS-KD00-REPAY                       
+              MOVE WS-REPAY-PERIOD       TO WS-C952-REPAY-PD                    
+           ELSE                                                                 
+              MOVE C951-BAL-REPAY-PERIOD TO WS-C952-REPAY-PD                    
+           END-IF.                                                              
+                                                                                
+           MOVE    C950-FACT             TO WS-C952-FAC.                        
+                                                                                
+           MOVE    WS-INTEREST-RATE      TO WS-C952-INT.                        
+                                                                                
+           IF FD38-NUM-1ST-LOAN = 'Y'                                           
+              MOVE    FD38-AMT-LOAN-NEW  TO WS-C952-LOAN-AMT                    
+           ELSE                                                                 
+              MOVE    WS-LOAN-TOT-DUE    TO WS-C952-LOAN-AMT                    
+           END-IF.                                                              
+                                                                                
+           MOVE    ZEROES                TO WS-C952-ERL-LOAN-AMT.               
+                                                                                
+           CALL   'BP13C952' USING WS-LINK-C952.                                
+                                                                                
+           MOVE    WS-C952-MTH-INSTAL    TO WS-NEW-INSTAL-AMT.                  
+           COMPUTE WS-AMT-INTAL-NEW-TOT ROUNDED = WS-NEW-INSTAL-AMT.            
+                                                                                
+       3260-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3300-READ-KD35.                                                          
+      *----------------------------------------------------------------*        
+                                                                                
+           MOVE FD38-NUM-REGN TO KD35-NUM-REGN.                                 
+                                                                                
+           READ BP13KD35                                                        
+           EVALUATE WS-KD35-STATUS                                              
+              WHEN 00                                                           
+                 MOVE 'Y' TO WS-KD35-FOUND                                      
+                 ADD 1 TO CNT-KD35-READ                                         
+              WHEN 23                                                           
+                 ADD 1 TO CNT-KD35-NOTFOUND                                     
+              WHEN OTHER                                                        
+                 DISPLAY 'ERROR IN READING BP13KD35 - STATUS '                  
+                             WS-KD35-STATUS                                     
+                 MOVE        WS-KD35-STATUS    TO RETURN-CODE                   
+                 PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       3300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3400-NEW-INSTALL.                                                        
+      *----------------------------------------------------------------*        
+           IF KD35-NUM-INSTAL-RATE-CPF1 NOT NUMERIC                             
+              MOVE ZERO  TO  KD35-NUM-INSTAL-RATE-CPF1                          
+           END-IF.                                                              
+           IF KD35-NUM-INSTAL-RATE-CPF2 NOT NUMERIC                             
+              MOVE ZERO  TO  KD35-NUM-INSTAL-RATE-CPF2                          
+           END-IF.                                                              
+           IF KD35-NUM-INSTAL-RATE-CPF3 NOT NUMERIC                             
+              MOVE ZERO  TO  KD35-NUM-INSTAL-RATE-CPF3                          
+           END-IF.                                                              
+           IF KD35-NUM-INSTAL-RATE-CPF4 NOT NUMERIC                             
+              MOVE ZERO  TO  KD35-NUM-INSTAL-RATE-CPF4                          
+           END-IF.                                                              
+                                                                                
+           MOVE KD35-NUM-INSTAL-RATE-CPF1 TO   WS-RATE-CPF1.                    
+           MOVE KD35-NUM-INSTAL-RATE-CPF2 TO   WS-RATE-CPF2.                    
+           MOVE KD35-NUM-INSTAL-RATE-CPF3 TO   WS-RATE-CPF3.                    
+           MOVE KD35-NUM-INSTAL-RATE-CPF4 TO   WS-RATE-CPF4.                    
+                                                                                
+           COMPUTE WS-RATE-CPF-TOT = KD35-NUM-INSTAL-RATE-CPF1                  
+                                   + KD35-NUM-INSTAL-RATE-CPF2                  
+                                   + KD35-NUM-INSTAL-RATE-CPF3                  
+                                   + KD35-NUM-INSTAL-RATE-CPF4.                 
+                                                                                
+           IF WS-RATE-CPF-TOT < 100                                             
+              COMPUTE WS-CPF-AMT = WS-AMT-INTAL-NEW-TOT                         
+                                 * WS-RATE-CPF1 * .01                           
+              COMPUTE WS-AMT-INTAL-NEW-CPF1 ROUNDED = WS-CPF-AMT                
+                                                                                
+              COMPUTE WS-CPF-AMT = WS-AMT-INTAL-NEW-TOT                         
+                                 * WS-RATE-CPF2 * .01                           
+              COMPUTE WS-AMT-INTAL-NEW-CPF2 ROUNDED = WS-CPF-AMT                
+                                                                                
+              COMPUTE WS-CPF-AMT = WS-AMT-INTAL-NEW-TOT                         
+                                 * WS-RATE-CPF3 * .01                           
+              COMPUTE WS-AMT-INTAL-NEW-CPF3 ROUNDED = WS-CPF-AMT                
+                                                                                
+              COMPUTE WS-CPF-AMT = WS-AMT-INTAL-NEW-TOT                         
+                                 * WS-RATE-CPF4 * .01                           
+              COMPUTE WS-AMT-INTAL-NEW-CPF4 ROUNDED = WS-CPF-AMT                
+                                                                                
+              COMPUTE WS-AMT-INTAL-NEW-CASH = WS-AMT-INTAL-NEW-TOT              
+                                            - WS-AMT-INTAL-NEW-CPF1             
+                                            - WS-AMT-INTAL-NEW-CPF2             
+                                            - WS-AMT-INTAL-NEW-CPF3             
+                                            - WS-AMT-INTAL-NEW-CPF4             
+           ELSE                                                                 
+              COMPUTE WS-CPF-AMT = WS-AMT-INTAL-NEW-TOT                         
+                                 * WS-RATE-CPF1 * .01                           
+              COMPUTE WS-AMT-INTAL-NEW-CPF1 ROUNDED = WS-CPF-AMT                
+                                                                                
+              IF WS-RATE-CPF2 > 0 AND WS-RATE-CPF3 = ZEROES                     
+                                  AND WS-RATE-CPF4 = ZEROES                     
+                 COMPUTE WS-AMT-INTAL-NEW-CPF2 = WS-AMT-INTAL-NEW-TOT           
+                                               - WS-AMT-INTAL-NEW-CPF1          
+              ELSE                                                              
+                 COMPUTE WS-CPF-AMT = WS-AMT-INTAL-NEW-TOT                      
+                                    * WS-RATE-CPF2 * .01                        
+                 COMPUTE WS-AMT-INTAL-NEW-CPF2 ROUNDED = WS-CPF-AMT             
+              END-IF                                                            
+                                                                                
+              IF WS-RATE-CPF3 > 0 AND WS-RATE-CPF4 = ZEROES                     
+                 COMPUTE WS-AMT-INTAL-NEW-CPF3 = WS-AMT-INTAL-NEW-TOT           
+                                               - WS-AMT-INTAL-NEW-CPF1          
+                                               - WS-AMT-INTAL-NEW-CPF2          
+              ELSE                                                              
+                 COMPUTE WS-CPF-AMT = WS-AMT-INTAL-NEW-TOT                      
+                                    * WS-RATE-CPF3 * .01                        
+                 COMPUTE WS-AMT-INTAL-NEW-CPF3 ROUNDED = WS-CPF-AMT             
+              END-IF                                                            
+                                                                                
+              IF WS-RATE-CPF4 > 0                                               
+                 COMPUTE WS-AMT-INTAL-NEW-CPF4 = WS-AMT-INTAL-NEW-TOT           
+                                               - WS-AMT-INTAL-NEW-CPF1          
+                                               - WS-AMT-INTAL-NEW-CPF2          
+                                               - WS-AMT-INTAL-NEW-CPF3          
+              END-IF                                                            
+           END-IF.                                                              
+                                                                                
+                                                                                
+       3400-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       3500-GET-EFF-NEXT-INSTDATE.                                              
+      *----------------------------------------------------------------*        
+                                                                                
+           COMPUTE WS-DTE-NEXT-TMP-MM      = WS-DTE-NEXT-TMP-MM + 2.            
+           IF WS-DTE-NEXT-TMP-MM > 12                                           
+              COMPUTE WS-DTE-NEXT-TMP-MM   = WS-DTE-NEXT-TMP-MM - 12            
+              COMPUTE WS-DTE-NEXT-TMP-CCYY = WS-DTE-NEXT-TMP-CCYY + 1           
+           END-IF.                                                              
+                                                                                
+       3500-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       4100-REWRITE-KD00.                                                       
+      *----------------------------------------------------------------*        
+                                                                                
+      **   IF KD00-AMT-LOAN-BAL = 0                                             
+           IF KD00-DTE-LOAN-COMM = SPACES OR LOW-VALUES                         
+              MOVE C951-DTE-LOAN-EXPIRY-CYMD TO KD00-DTE-LOAN-EXPIRY            
+              MOVE FD38-DTE-DUE              TO KD00-DTE-LOAN-COMM              
+              MOVE 'C'                       TO KD00-CDE-ACCT-STAT              
+           END-IF.                                                              
+           COMPUTE KD00-AMT-LOAN-BAL      = KD00-AMT-LOAN-BAL +                 
+                   WS-FD38-AMT-INTEREST   + FD38-AMT-LOAN-NEW.                  
+           COMPUTE KD00-AMT-LOAN-DISBURSED =                                    
+                   KD00-AMT-LOAN-DISBURSED + FD38-AMT-LOAN-NEW.                 
+           MOVE FD38-DTE-DUE TO KD00-DTE-LOAN-DISBURSED.                        
+           MOVE WS-AMT-INTAL-NEW-TOT  TO KD00-AMT-NEXT-INSTAL.                  
+           MOVE WS-DTE-NEXT           TO KD00-DTE-NEXT-INSTAL.                  
+                                                                                
+           MOVE WS-SYS-DATE TO KD00-DTE-UPDATE.                                 
+           MOVE FUNCTION CURRENT-DATE(9:8) TO KD00-TME-UPDATE.                  
+           MOVE 'BP13CC02'  TO KD00-NUM-USERID.                                 
+                                                                                
+           COMPUTE KD00-AMT-ARR-INTR = KD00-AMT-ARR-INTR +                      
+                   WS-FD38-AMT-INTEREST.                                        
+      **                                                                        
+           REWRITE BP13KD00-REC.                                                
+                                                                                
+           IF WS-KD00-STATUS = 0                                                
+              CONTINUE                                                          
+           ELSE                                                                 
+              DISPLAY 'ERROR REWRITING BP13KD00 , KEY = ' KD00-NUM-REGN         
+                      ', STATUS = ' WS-KD00-STATUS                              
+              MOVE WS-KD00-STATUS            TO RETURN-CODE                     
+              PERFORM 9000-CLOSE-ROUTINE   THRU 9000-EXIT                       
+           END-IF.                                                              
+                                                                                
+           ADD 1 TO CNT-KD00-UPDATE.                                            
+                                                                                
+       4100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       4200-WRITE-KD99.                                                         
+      *----------------------------------------------------------------*        
+                                                                                
+           MOVE BP13KD00-REC               TO BP13KD99-REC.                     
+           MOVE KD00-NUM-REGN              TO KD99-NUM-REGN-LOG.                
+           MOVE WS-SYS-DATE                TO KD99-DTE-UPDATE-LOG.              
+           MOVE FUNCTION CURRENT-DATE(9:8) TO KD99-TME-UPDATE-LOG.              
+                                                                                
+           WRITE BP13KD99-REC.                                                  
+           EVALUATE WS-KD99-STATUS                                              
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'ERROR IN WRITING  BP13KD99 - STATUS '                 
+                             WS-KD99-STATUS                                     
+                 MOVE        WS-KD99-STATUS    TO RETURN-CODE                   
+                 PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+           ADD 1 TO CNT-KD99-WRITE.                                             
+                                                                                
+       4200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       6000-MOVE-KD38-DATA.                                                     
+      *----------------------------------------------------------------*        
+                                                                                
+           PERFORM 6120-READ-KD38     THRU 6120-EXIT.                           
+                                                                                
+           MOVE WS-C952-REPAY-PD      TO KD38-NUM-LOAN-REPYMT-BALYR.            
+           MOVE WS-AMT-OPEN-BAL1      TO KD38-AMT-OPEN-BAL1.                    
+           MOVE WS-AMT-OPEN-BAL2      TO KD38-AMT-OPEN-BAL2.                    
+           MOVE WS-AMT-INT-ORIG1      TO KD38-AMT-INTEREST-ORIG1.               
+           MOVE WS-AMT-INT-ORIG2      TO KD38-AMT-INTEREST-ORIG2.               
+           MOVE WS-AMT-INS-ORIG1      TO KD38-AMT-INSTAL-ORIG1.                 
+           MOVE WS-AMT-INS-ORIG2      TO KD38-AMT-INSTAL-ORIG2.                 
+                                                                                
+           MOVE KD00-DTE-LOAN-EXPIRY  TO KD38-DTE-LOAN-EXPIRY.                  
+           MOVE KD00-AMT-INSTAL       TO KD38-AMT-INSTAL-OLD-TOT.               
+           MOVE KD00-AMT-INSTAL-CASH  TO KD38-AMT-INSTAL-OLD-CASH.              
+           MOVE KD00-AMT-INSTAL-CPF1  TO KD38-AMT-INSTAL-OLD-CPF1.              
+           MOVE KD00-AMT-INSTAL-CPF2  TO KD38-AMT-INSTAL-OLD-CPF2.              
+           MOVE KD00-AMT-INSTAL-CPF3  TO KD38-AMT-INSTAL-OLD-CPF3.              
+           MOVE KD00-AMT-INSTAL-CPF4  TO KD38-AMT-INSTAL-OLD-CPF4.              
+           MOVE 'Y'                   TO KD38-NUM-DUE.                          
+                                                                                
+       6000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       6100-REWRITE-KD38-DATA.                                                  
+      *----------------------------------------------------------------*        
+                                                                                
+           MOVE WS-AMT-INTAL-NEW-CASH TO KD38-AMT-INSTAL-NEW-CASH.              
+           MOVE WS-AMT-INTAL-NEW-CPF1 TO KD38-AMT-INSTAL-NEW-CPF1.              
+           MOVE WS-AMT-INTAL-NEW-CPF2 TO KD38-AMT-INSTAL-NEW-CPF2.              
+           MOVE WS-AMT-INTAL-NEW-CPF3 TO KD38-AMT-INSTAL-NEW-CPF3.              
+           MOVE WS-AMT-INTAL-NEW-CPF4 TO KD38-AMT-INSTAL-NEW-CPF4.              
+           MOVE WS-AMT-INTAL-NEW-TOT  TO KD38-AMT-INSTAL-NEW-TOT.               
+           MOVE WS-KD00-LOAN-BAL      TO KD38-AMT-LOAN-BAL-DUEDTE.              
+           MOVE WS-LOAN-TOT-DUE       TO KD38-AMT-LOAN-TOT-DUEDTE.              
+                                                                                
+           MOVE WS-FD38-AMT-INTEREST  TO KD38-AMT-INTEREST-NEWLOAN.             
+           MOVE WS-FD38-CDE-INTEREST-RATE TO KD38-CDE-INTEREST-RATE.            
+                                                                                
+           MOVE WS-NUM-DAYS           TO KD38-NUM-INTEREST-DAY.                 
+                                                                                
+           MOVE WS-DTE-NEXT           TO KD38-DTE-INSTAL-NEW.                   
+                                                                                
+           PERFORM 6150-REWRITE-KD38  THRU 6150-EXIT.                           
+                                                                                
+       6100-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       6120-READ-KD38.                                                          
+      *----------------------------------------------------------------*        
+                                                                                
+           MOVE FD38-KEY-FLD TO KD38-KEY-FLD.                                   
+                                                                                
+           READ BP13KD38                                                        
+           EVALUATE WS-KD38-STATUS                                              
+              WHEN 00                                                           
+                 ADD 1 TO CNT-KD38-READ                                         
+              WHEN 23                                                           
+                 ADD 1 TO CNT-KD38-NOTFOUND                                     
+              WHEN OTHER                                                        
+                 DISPLAY 'ERROR IN READING BP13KD38 - STATUS '                  
+                             WS-KD38-STATUS                                     
+                 MOVE        WS-KD38-STATUS    TO RETURN-CODE                   
+                 PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+       6120-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       6150-REWRITE-KD38.                                                       
+      *----------------------------------------------------------------*        
+                                                                                
+           MOVE WS-SYS-DATE TO KD38-DTE-UPDATE.                                 
+           MOVE FUNCTION CURRENT-DATE(9:8) TO KD38-TME-UPDATE.                  
+           MOVE 'BP13CC02'  TO KD38-NUM-USERID.                                 
+                                                                                
+           REWRITE BP13KD38-TRANS-REC.                                          
+                                                                                
+           EVALUATE WS-KD38-STATUS                                              
+              WHEN 00                                                           
+                 CONTINUE                                                       
+              WHEN OTHER                                                        
+                 DISPLAY 'ERROR IN UPDATING BP13KD38 - STATUS '                 
+                             WS-KD38-STATUS                                     
+                 MOVE        WS-KD38-STATUS    TO RETURN-CODE                   
+                 PERFORM 9000-CLOSE-ROUTINE    THRU 9000-EXIT                   
+           END-EVALUATE.                                                        
+                                                                                
+           ADD 1 TO CNT-KD38-UPDATE.                                            
+                                                                                
+       6150-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       6200-WRITE-FD38A.                                                        
+      *----------------------------------------------------------------*        
+                                                                                
+           WRITE P13FD38A-TRANS-REC FROM BP13KD38-TRANS-REC.                    
+           ADD   1                  TO CNT-FD38A-WRITE.                         
+                                                                                
+       6200-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       6300-WRITE-F125.                                                         
+      *----------------------------------------------------------------*        
+                                                                                
+           MOVE SPACES              TO BP13F125-CASHTRAN.                       
+           INITIALIZE                  BP13F125-CASHTRAN.                       
+                                                                                
+           MOVE FD38-NUM-REGN       TO F125-NUM-REGN.                           
+           MOVE '66'                TO F125-CDE-TRANS-TYPE.                     
+           MOVE 'LON'               TO F125-CDE-PAYMENT-TYPE.                   
+           MOVE FD38-DTE-DUE        TO F125-DTE-POST                            
+                                       F125-DTE-TRANS.                          
+           MOVE ZEROES              TO F125-COUNT-HISTORY.                      
+           MOVE FD38-NUM-SCH-ACC    TO F125-NUM-SCH-ACCT.                       
+           MOVE FD38-AMT-LOAN-NEW   TO F125-AMT-RECEIPT.                        
+           MOVE FD38-DTE-DUE        TO F125-DTE-PP-DUE.                         
+           MOVE 'D'                 TO F125-CDE-CRDR.                           
+           MOVE KD00-CDE-LOAN-SCH   TO F125-NUM-LOAN-SCH.                       
+                                                                                
+           WRITE BP13F125-CASHTRAN.                                             
+           ADD 1 TO CNT-F125-WRITE.                                             
+                                                                                
+           MOVE SPACES              TO BP13F125-CASHTRAN.                       
+           INITIALIZE                  BP13F125-CASHTRAN.                       
+                                                                                
+           MOVE FD38-NUM-REGN       TO F125-NUM-REGN.                           
+           MOVE '67'                TO F125-CDE-TRANS-TYPE.                     
+           MOVE 'IT'                TO F125-CDE-PAYMENT-TYPE.                   
+           MOVE FD38-DTE-DUE        TO F125-DTE-POST                            
+                                       F125-DTE-TRANS.                          
+           MOVE ZEROES              TO F125-COUNT-HISTORY.                      
+           MOVE FD38-NUM-SCH-ACC    TO F125-NUM-SCH-ACCT.                       
+                                                                                
+           MOVE WS-FD38-CDE-INTEREST-RATE TO WS-TMP-INTRATE.                    
+           IF  WS-PCT1 = 0                                                      
+               STRING 'I'               DELIMITED BY SIZE                       
+                      KD00-CDE-LOAN-SCH DELIMITED BY SIZE                       
+                      '-'               DELIMITED BY SIZE                       
+                      WS-PCT2           DELIMITED BY SIZE                       
+                      '.'               DELIMITED BY SIZE                       
+                      WS-PCT3           DELIMITED BY SIZE                       
+                      INTO              F125-NUM-RECPT-JRNO                     
+           ELSE                                                                 
+               STRING 'I'               DELIMITED BY SIZE                       
+                      KD00-CDE-LOAN-SCH DELIMITED BY SIZE                       
+                      '-'               DELIMITED BY SIZE                       
+                      WS-PCT1           DELIMITED BY SIZE                       
+                      WS-PCT2           DELIMITED BY SIZE                       
+                      '.'               DELIMITED BY SIZE                       
+                      WS-PCT3           DELIMITED BY SIZE                       
+                      INTO              F125-NUM-RECPT-JRNO                     
+           END-IF.                                                              
+                                                                                
+           MOVE WS-FD38-AMT-INTEREST TO F125-AMT-RECEIPT.                       
+           MOVE WS-FD38-AMT-INTEREST TO F125-AMT-INTEREST.                      
+           MOVE FD38-DTE-DUE         TO F125-DTE-PP-DUE.                        
+           MOVE 'D'                  TO F125-CDE-CRDR.                          
+           MOVE KD00-CDE-LOAN-SCH    TO F125-NUM-LOAN-SCH.                      
+                                                                                
+           WRITE BP13F125-CASHTRAN.                                             
+           ADD 1 TO CNT-F125-WRITE.                                             
+                                                                                
+       6300-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       9000-CLOSE-ROUTINE.                                                      
+      *----------------------------------------------------------------*        
+           CLOSE BP13FD38                                                       
+                 SY02F001                                                       
+                 BP13KD35                                                       
+                 BP13KD38                                                       
+                 BP13KD00                                                       
+                 BP13KD99                                                       
+                 P13FD38A                                                       
+                 BP13F125.                                                      
+                                                                                
+           IF WS-KD35-STATUS NOT = 00                                           
+              DISPLAY 'CLOSING ERROR, BP13KD35-STATUS ' WS-KD35-STATUS.         
+              MOVE WS-KD35-STATUS TO RETURN-CODE.                               
+           IF WS-KD38-STATUS NOT = 00                                           
+              DISPLAY 'CLOSING ERROR, BP13KD38-STATUS ' WS-KD38-STATUS.         
+              MOVE WS-KD38-STATUS TO RETURN-CODE.                               
+           IF WS-KD00-STATUS NOT = 00                                           
+              DISPLAY 'CLOSING ERROR, BP13KD00-STATUS ' WS-KD00-STATUS.         
+              MOVE WS-KD00-STATUS TO RETURN-CODE.                               
+           IF WS-KD99-STATUS NOT = 00                                           
+              DISPLAY 'CLOSING ERROR, BP13KD99-STATUS ' WS-KD99-STATUS.         
+              MOVE WS-KD99-STATUS TO RETURN-CODE.                               
+                                                                                
+                                                                                
+           DISPLAY '                                    '.                      
+           DISPLAY '***** BP13CC02 CONTROL TOTALS ***** '.                      
+           DISPLAY '                                    '.                      
+           DISPLAY 'NO OF RECORDS READ FROM  (BP13FD38) = '                     
+                    CNT-FD38-READ.                                              
+           DISPLAY 'NO OF RECORDS NOT FOUND    (BP13KD38) = '                   
+                    CNT-KD38-NOTFOUND.                                          
+           DISPLAY 'NO OF RECORDS WRITTEN    (P13FD38A) = '                     
+                    CNT-FD38A-WRITE.                                            
+           DISPLAY 'NO OF RECORDS FOUND FROM (BP13KD00) = '                     
+                    CNT-KD00-READ.                                              
+           DISPLAY 'NO OF RECORDS NOT FOUND  (BP13KD00) = '                     
+                    CNT-KD00-NOTFOUND.                                          
+           DISPLAY 'NO OF RECORDS NOT FOUND  (BP13KD35) = '                     
+                    CNT-KD35-NOTFOUND.                                          
+           DISPLAY 'NO OF RECORDS WRITTEN    (BP13KD00) = '                     
+                    CNT-KD00-UPDATE.                                            
+           DISPLAY 'NO OF RECORDS UPDATED    (BP13KD38) = '                     
+                    CNT-KD38-UPDATE.                                            
+           DISPLAY 'NO OF RECORDS WRITTEN    (BP13KD99) = '                     
+                    CNT-KD99-WRITE.                                             
+           DISPLAY 'NO OF RECORDS WRITTEN    (BP13F125) = '                     
+                    CNT-F125-WRITE.                                             
+                                                                                
+           STOP RUN.                                                            
+                                                                                
+       9000-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+                                                                                
+

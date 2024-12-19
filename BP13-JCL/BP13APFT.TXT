@@ -1,0 +1,329 @@
+//BP13APFT JOB (BP13P),'BP13APFT',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),            
+//         NOTIFY=CSD0071                                                       
+//JOBLIB   DD DSN=BP13.BATCH.LOADCOB,DISP=SHR                                   
+//*--------------------------------------------------------------------         
+//*********************************************************************         
+//* CHG REF   BY     DATE    DESCRIPTION                                        
+//* -------- ---- -------- -------------------------------------                
+//* BP138076 IL5  20190808 NEW (FOR SHORTLISTING OF FT APPL IN NT WITH          
+//*                        <= 1 APPLICATION RATE                                
+//* BP138301 AM25 20200514 HARDCOPY REPORTS CONVERSION                          
+//* BP138511 IL5  20201217 ADD BP13.K769.BE.DEMAND                              
+//* BP139411 AM25 12122022 CHANGE TESTRLS TO PRODRLS FOR BP13K712               
+//* BP139411 AM25 07122022 ADD SYSIN FOR BP13CF78                               
+//*---------------------------------------------------------------------        
+//**********************************************************************        
+//*      VERIFY FILES BEFORE JOB RUN                                            
+//**********************************************************************        
+//STEP00   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//INPUT1   DD DSN=BP13.K010.TENDER,DISP=OLD                                     
+//INPUT2   DD DSN=BP13.K740.MATUREBA,DISP=OLD                                   
+//INPUT3   DD DSN=BP13.K712.FLATNHUG,DISP=OLD                                   
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+          VFY FILE(INPUT1)                                                      
+          VFY FILE(INPUT2)                                                      
+          VFY FILE(INPUT3)                                                      
+//*---------------------------------------------------------------------        
+//*  REPRO VSAM FILE TO SEQUENTIAL FILES                                        
+//*--------------------------------------------------------------------         
+//STEP01   EXEC PGM=IDCAMS,COND=(0,NE)                                          
+//SYSPRINT DD SYSOUT=*                                                          
+//INPUT1   DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//INPUT2   DD DSN=BP13.K740.MATUREBA,DISP=SHR                                   
+//OUTPUT1  DD DSN=BP13.F010.TENDER.BP13APFT,DISP=OLD                            
+//OUTPUT2  DD DSN=BP13.F740.MATUREBA.BP13APFT,DISP=OLD                          
+//SYSIN    DD  *                                                                
+   REPRO INFILE(INPUT1)  OUTFILE(OUTPUT1)                                       
+   REPRO INFILE(INPUT2)  OUTFILE(OUTPUT2)                                       
+//*---------------------------------------------------------------------        
+//* SORT BP13K762 BY KEY-FLD                                                    
+//*---------------------------------------------------------------------        
+//STEP02   EXEC SORT,COND=(0,NE)                                                
+//SORTIN01 DD DSN=BP13.K762.BTO.DEMAND,DISP=SHR                                 
+//SORTIN02 DD DSN=BP13.K769.BE.DEMAND,DISP=SHR                                  
+//SORTOUT  DD DSN=BP13.F762.BTO.DEMAND.BP13APFT,DISP=OLD                        
+//SYSIN    DD  *                                                                
+    MERGE FIELDS=(1,5,A),FORMAT=CH                                              
+    INCLUDE COND=(4,2,CH,EQ,C'2F')                                              
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT BP13F740 BY NT1 AND FLAT TYPE                                          
+//*---------------------------------------------------------------------        
+//STEP03   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K740.MATUREBA,DISP=SHR                                   
+//SORTOUT  DD DSN=&&BP13F740,DISP=(,PASS),                                      
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            SPACE=(CYL,(80,10),RLSE)                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+    SORT FIELDS=(187,3,A,211,2,A,123,8,A),FORMAT=CH                             
+    INCLUDE COND=(211,2,CH,EQ,C'2F',AND,                                        
+                  461,1,CH,NE,C'G',AND,                                         
+                  210,1,CH,NE,C'F',AND,                                         
+                  210,1,CH,NE,C'S',AND,                                         
+                  213,3,CH,NE,C'FTS')                                           
+//*---------------------------------------------------------------------        
+//* EXTRACT UNSUCC FT IF APPLICATION RATE IS =< 1.0                             
+//*---------------------------------------------------------------------        
+//STEP04 EXEC PGM=BP13CZ2N,COND=(0,NE)                                          
+//BP13F762 DD DSN=BP13.F762.BTO.DEMAND.BP13APFT,DISP=SHR                        
+//BP13F740 DD DSN=&&BP13F740,DISP=(OLD,PASS)                                    
+//P13F740A DD DSN=BP13.F740.MATUREBA.BP13APFT.UNSUCC,DISP=OLD                   
+//P13F740B DD DSN=BP13.F740.MATUREBA.BP13APFT.SUCC,DISP=OLD                     
+//SYSOUT DD SYSOUT=*                                                            
+//SYSIN DD *                                                                    
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT OUT 1,2 FLATS TO PRINT FLAT SUPPLY BEFORE ADJUST PA FLAT               
+//*-----------------------------------------------------------------            
+//STEP05   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//SORTOUT  DD DSN=&&K0102FBF,DISP=(,PASS),                                      
+//            UNIT=(SYSDA,1),SPACE=(CYL,(5,3),RLSE),                            
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=0)                                
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,5,A),FORMAT=CH                                                
+   INCLUDE COND=(4,2,CH,EQ,C'2F')                                               
+//*-----------------------------------------------------------------            
+//* PRINT TENDER PROGRAM SUMMARY REPORT BEFORE ADJUST PA FLAT SUPPLY            
+//*-----------------------------------------------------------------            
+//STEP06    EXEC PGM=BP13C524,COND=(0,NE)                                       
+//SYSPRINT  DD SYSOUT=*                                                         
+//BP13F010  DD DSN=&&K0102FBF,DISP=(OLD,PASS)                                   
+//BP13F713  DD DSN=BP13.F713.PIGEON.MATUREPA,DISP=SHR                           
+//BP13L524  DD SYSOUT=8,DEST=IOM8                                               
+//SYSDBG    DD SYSOUT=*                                                         
+//SYSDBOUT  DD SYSOUT=*                                                         
+//SYSOUT    DD SYSOUT=*                                                         
+/*                                                                              
+//*-----------------------------------------------------------------            
+//* INCLUDE APPLICATIONS 2F UNSUCC FT                                           
+//*-----------------------------------------------------------------            
+//STEP07  EXEC SORT,COND=(0,NE)                                                 
+//SORTIN  DD DSN=BP13.F740.MATUREBA.BP13APFT.UNSUCC,DISP=SHR                    
+//SORTOUT DD DSN=&&F520PUB,DISP=(NEW,PASS),                                     
+//        UNIT=(SYSDA,1),SPACE=(CYL,(130,20),RLSE),                             
+//        DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                                
+//SYSIN   DD  *                                                                 
+    SORT FIELDS=(345,2,D,1,28,A),FORMAT=CH                                      
+    INCLUDE COND=(226,3,CH,EQ,C'   ')                                           
+//*-----------------------------------------------------------------            
+//* PRINT REPORT FOR 2F UNSUCC FT                                               
+//*-----------------------------------------------------------------            
+//STEP08   EXEC SAS,OPTIONS='MACRO DQUOTE,TEXT82',COND=(0,NE)                   
+//WORK     DD UNIT=SYSDA,SPACE=(CYL,(40,10))                                    
+//BP13F740 DD DSN=&&F520PUB,DISP=(OLD,PASS)                                     
+//BP13L569 DD SYSOUT=8,DEST=IOM8                                                
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13S569),DISP=SHR                             
+//*---------------------------------------------------------------------        
+//* TO PROCESS THE PIGEON-HOLDING FOR MATURE PA CASES, THE PROGRAM WI           
+//* ONLY ALLOCATE THE PRIORITY SUPPLY QUOTA FOR ALL SCHEME                      
+//*---------------------------------------------------------------------        
+//STEP09   EXEC PGM=BP13U532,COND=(0,NE)                                        
+//STEPLIB  DD DSN=BP13.BATCH.LOADCOB.BALLOT,DISP=SHR                            
+//BP13K010 DD DSN=BP13.K010.TENDER,DISP=OLD                                     
+//BP13F740 DD DSN=&&F520PUB,DISP=(OLD,DELETE)                                   
+//BP13K740 DD DSN=BP13.K740.MATUREBA,DISP=OLD,                                  
+//            AMP=('BUFND=23')                                                  
+//BP13F525 DD DSN=BP13.F525.APPL,DISP=OLD                                       
+//BP13L532 DD SYSOUT=8,DEST=IOM8                                                
+//P13L532A DD SYSOUT=8,DEST=IOM8                                                
+//SYSPRINT DD SYSOUT=*                                                          
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+/*                                                                              
+//*---------------------------------------------------------------------        
+//* SORT OUT 1,2 FLATS TO PRINT FLAT SUPPLY BEFORE ADJUST PA FLAT               
+//*-----------------------------------------------------------------            
+//STEP10   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//SORTOUT  DD DSN=&&K0102FAF,DISP=(,PASS),                                      
+//            UNIT=(SYSDA,1),SPACE=(CYL,(5,3),RLSE),                            
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=0)                                
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,5,A),FORMAT=CH                                                
+   INCLUDE COND=(4,2,CH,EQ,C'2F')                                               
+//*-----------------------------------------------------------------            
+//* PRINT TENDER PROGRAM SUMMARY REPORT BEFORE ADJUST PA FLAT SUPPLY            
+//*-----------------------------------------------------------------            
+//STEP11    EXEC PGM=BP13C524,COND=(0,NE)                                       
+//SYSPRINT  DD SYSOUT=*                                                         
+//BP13F010  DD DSN=&&K0102FAF,DISP=(OLD,PASS)                                   
+//BP13F713  DD DSN=BP13.F713.PIGEON.MATUREPA,DISP=SHR                           
+//BP13L524  DD SYSOUT=8,DEST=IOM8                                               
+//SYSDBG    DD SYSOUT=*                                                         
+//SYSDBOUT  DD SYSOUT=*                                                         
+//SYSOUT    DD SYSOUT=*                                                         
+/*                                                                              
+//*-----------------------------------------------------------------            
+//* SORT BY REGN                                                                
+//* INCLUDE APPLICATIONS 2F UNSUCC FT                                           
+//*-----------------------------------------------------------------            
+//STEP12  EXEC SORT,COND=(0,NE)                                                 
+//SORTIN  DD DSN=BP13.F740.MATUREBA.BP13APFT.UNSUCC,DISP=SHR                    
+//SORTOUT DD DSN=&&F520REGN,DISP=(,PASS),                                       
+//        UNIT=(SYSDA,1),SPACE=(CYL,(130,20),RLSE),                             
+//        DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                                
+//SYSIN   DD  *                                                                 
+    SORT FIELDS=(123,8,A),FORMAT=CH                                             
+    INCLUDE COND=(226,3,CH,EQ,C'   ')                                           
+//*-----------------------------------------------------------------            
+//* SORT BY REGN ON BALLOT FILE TO GET RESULT                                   
+//*-----------------------------------------------------------------            
+//STEP13  EXEC SORT,COND=(0,NE)                                                 
+//SORTIN  DD DSN=BP13.K740.MATUREBA,DISP=SHR,                                   
+//        AMP=('BUFND=23')                                                      
+//SORTOUT DD DSN=&&F520BALT,DISP=(,PASS),                                       
+//        UNIT=(SYSDA,1),SPACE=(CYL,(130,20),RLSE),                             
+//        DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                                
+//SYSIN   DD  *                                                                 
+    SORT FIELDS=(123,8,A),FORMAT=CH                                             
+//*---------------------------------------------------------------------        
+//* MATCH PRIORITY SUCC AND UNSUCC CASES FOR REPORTING                          
+//*---------------------------------------------------------------------        
+//STEP14   EXEC  PGM=BP13C817,COND=(0,NE)                                       
+//BP13F510 DD DSN=&&F520REGN,DISP=(OLD,PASS)                                    
+//BP13F520 DD DSN=&&F520BALT,DISP=(OLD,PASS)                                    
+//P13UNSUC DD DSN=&&P13UNSUC,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(50,10),RLSE),                              
+//            DCB=(BLKSIZE=27500,LRECL=500,RECFM=FB)                            
+//P13SUCC  DD DSN=&&P13SUCC,DISP=(NEW,PASS),                                    
+//            UNIT=SYSDA,SPACE=(CYL,(50,10),RLSE),                              
+//            DCB=(BLKSIZE=27500,LRECL=500,RECFM=FB)                            
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* SORT DAILY APPLICATIONS BY REFERENCE NUMBER                                 
+//*------------------------------------------------------------------           
+//STEP15   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=&&P13SUCC,DISP=(OLD,PASS)                                     
+//SORTOUT  DD DSN=&&F740SUCC,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,                                                       
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500),                           
+//            SPACE=(CYL,(70,10),RLSE)                                          
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(187,3,A,211,1,A,123,8,A),FORMAT=CH                              
+//*------------------------------------------------------------------           
+//* PRINT REPORT ON SUCC FOR THIS ROUND BY ALLOC-SCHEME                         
+//*------------------------------------------------------------------           
+//STEP16   EXEC PGM=BP13C525,COND=(0,NE)                                        
+//BP13F730 DD DSN=&&F740SUCC,DISP=(OLD,PASS)                                    
+//P13L525A DD SYSOUT=*                                                          
+//P13L525B DD SYSOUT=*                                                          
+//P13L525C DD SYSOUT=8,DEST=IOM8                                                
+//SYSIN    DD *                                                                 
+FTR                                                                             
+BP13APFT                                                                        
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*-----------------------------------------------------------------            
+//* PRINT REPORT ON SUCC PPS & NON-PPS APPLICANTS                               
+//*-----------------------------------------------------------------            
+//STEP17   EXEC SAS,OPTIONS='MACRO DQUOTE,TEXT82',COND=(0,NE)                   
+//WORK     DD UNIT=SYSDA,SPACE=(CYL,(40,10))                                    
+//BP13F740 DD DSN=&&F740SUCC,DISP=(OLD,PASS)                                    
+//BP13L569 DD SYSOUT=8,DEST=IOM8                                                
+//SYSIN    DD DSN=BP13.BATCH.SRC(BP13S569),DISP=SHR                             
+//*---------------------------------------------------------------------        
+//* FOR MATURE NT                                                               
+//* SORT UNSUCC PRIORITY,SAS AND PUBLIC CASES FOR PA PIGEONHOLONG               
+//*---------------------------------------------------------------------        
+//STEP20   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.K740.MATUREBA,DISP=SHR,                                  
+//            AMP=('BUFND=23')                                                  
+//SORTOUT  DD DSN=BP13.F740.MATUREBA.PA,DISP=OLD                                
+//SYSIN    DD *                                                                 
+   SORT FIELDS=(123,8,A),FORMAT=CH                                              
+   INCLUDE COND=(226,3,CH,EQ,C'   ',AND,213,3,CH,NE,C'GRO',AND,                 
+                 245,1,CH,EQ,C' ')                                              
+//*---------------------------------------------------------------------        
+//* CREATE/DEFINE BP13K712 FLAT NHH/UPG FILE                                    
+//*---------------------------------------------------------------------        
+//STEP21    EXEC PGM=IDCAMS,COND=(0,NE)                                         
+//SYSPRINT  DD SYSOUT=*                                                         
+//INPUT1    DD DSN=BP13.BLANK.CHAR350,DISP=SHR                                  
+//SYSIN     DD  *                                                               
+          DEL (BP13.K712.FLATNHUG) CL PURGE                                     
+          DEF CLUSTER                                -                          
+              (NAME(BP13.K712.FLATNHUG)              -                          
+              CYL(1 1)                               -                          
+              UNIQUE                                 -                          
+              STORCLAS(PRODRLS)               -                                 
+              LOG(NONE)                       -                                 
+              SHR(2 3))                              -                          
+              DATA                                   -                          
+              (NAME(BP13.K712.FLATNHUG.DATA)         -                          
+              KEYS(10 0)                             -                          
+              RECSZ(350 350)                         -                          
+              CISZ(4096)                             -                          
+              FSPC(10 10))                           -                          
+              INDEX                                  -                          
+              (NAME(BP13.K712.FLATNHUG.INDEX))                                  
+      IF MAXCC = 0  THEN                             -                          
+         REPRO IFILE(INPUT1)                         -                          
+              ODS(BP13.K712.FLATNHUG)                                           
+//*---------------------------------------------------------------------        
+//* SORT THE BALLOT FILE FOR PA SCHEME (NEW TOWN, FLAT TYPE, ALLOC SCH)         
+//* SORT OUT FLAT TYPE '2' NON-ELDERLY APPLICATIONS                             
+//*---------------------------------------------------------------------        
+//STEP22   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F740.MATUREBA.PA,DISP=SHR                                
+//SORTOUT  DD DSN=&&F520NHUG,DISP=(NEW,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(120,10),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD *                                                                 
+     SORT FIELDS=(187,3,A,211,2,A,213,3,A),FORMAT=CH                            
+     INCLUDE COND=(211,1,CH,EQ,C'2',AND,                                        
+                  (210,1,CH,EQ,C'N',OR,210,1,CH,EQ,C' '))                       
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* SORT THE BALLOT FILE FOR PA SCHEME (NEW TOWN, FLAT TYPE, ALLOC SCH)         
+//* SORT OUT OTHER FLAT TYPES                                                   
+//*---------------------------------------------------------------------        
+//STEP23   EXEC SORT,COND=(0,NE)                                                
+//SORTIN   DD DSN=BP13.F740.MATUREBA.PA,DISP=SHR                                
+//SORTOUT  DD DSN=&&F520NHUG,DISP=(MOD,PASS),                                   
+//            UNIT=SYSDA,SPACE=(CYL,(120,10),RLSE),                             
+//            DCB=(RECFM=FB,LRECL=500,BLKSIZE=27500)                            
+//SYSIN    DD *                                                                 
+     SORT FIELDS=(187,3,A,211,2,A,213,3,A),FORMAT=CH                            
+     INCLUDE COND=(211,1,CH,NE,C'2')                                            
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* COMPUTE NO OF TOTAL REQUESTS FOR NHH/UPG FOR PA ONLY                        
+//*---------------------------------------------------------------------        
+//STEP24   EXEC PGM=BP13C54A,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.MATUREPA,DISP=SHR                            
+//BP13F520 DD DSN=&&F520NHUG,DISP=(OLD,PASS)                                    
+//BP13K712 DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//*---------------------------------------------------------------------        
+//* COMPUTE NO OF UNITS SET ASIDE FOR NHH/UPG FOR PRIORITY SCHEME               
+//* COMPUTE FOR PA SCHEME                                                       
+//*---------------------------------------------------------------------        
+//STEP25   EXEC PGM=BP13CF78,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.MATUREPA,DISP=SHR                            
+//BP13K010 DD DSN=BP13.K010.TENDER,DISP=SHR                                     
+//BP13K712 DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+//SYSIN    DD *                                                                 
+//*---------------------------------------------------------------------        
+//* PRINT REPORT ON REQUEST/FLAT FOR NHH/UPG FOR EACH COHORT                    
+//* (WILL ONLY HAVE PA COHORT)                                                  
+//*---------------------------------------------------------------------        
+//STEP26   EXEC PGM=BP13C552,COND=(0,NE)                                        
+//BP13F713 DD DSN=BP13.F713.PIGEON.MATUREPA,DISP=SHR                            
+//BP13K712 DD DSN=BP13.K712.FLATNHUG,DISP=SHR                                   
+//BP13L552 DD SYSOUT=8,DEST=IOM8                                                
+//SYSDBG   DD SYSOUT=*                                                          
+//SYSDBOUT DD SYSOUT=*                                                          
+//SYSOUT   DD SYSOUT=*                                                          
+

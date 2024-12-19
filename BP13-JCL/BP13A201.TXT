@@ -1,0 +1,364 @@
+//BP13A201 JOB (BP13P),'USER:BP13',CLASS=I,MSGCLASS=N,MSGLEVEL=(1,1),           
+//             NOTIFY=CSD0071                                                   
+//JOBLIB   DD  DSN=BP13.BATCH.LOADCOB,                                          
+//             DISP=SHR                                                         
+//*********************************************************************         
+//* IMPORTANT NOTE :                                                            
+//* THIS JCL IS FOR PRINTING CHECKLIST OF APPOINTMENT LETTERS FOR               
+//* NON-MATURE NEW TOWNS ONLY (BOOKING EXERCISE ON ZONE BASIS).                 
+//*********************************************************************         
+//* PRINT CHECKLIST OF APPOINTMENT LETTER                                       
+//* NO UPDATE OF APPOINTMENT DATE/TIME TO BP13K800 AND BP13K200                 
+//*********************************************************************         
+//* CHG-NO   BY   DATE     DESCRIPTION                                          
+//* -------- ---- -------- --------------------------------------------         
+//* BP135404 EL27 20140711 CHANGE PRINTER FROM L03Z TO X6AI                     
+//* BP135404 NST1 20140719 CHANGE PRINTER FROM X6AI TO X6AU(LANDSCAPE)          
+//* BP135561 ESA1 20150115 OUTPUT TO DATASET BEFORE SENDING TO PRINTER          
+//* BP13XXXX EL27 20190920 REMOVE BP13.F200.BKAPPMT DUPLICATES                  
+//*---------------------------------------------------------------------        
+//* SORT OUT THE CONTROL REC FOR THIS OPTION                                    
+//*--------------------------------------------------------------------         
+//STEP01 EXEC    SORT,COND=(0,NE)                                               
+//SORTIN   DD  DSN=BP13.K205.CTLREC,                                            
+//             DISP=SHR                                                         
+//SORTOUT  DD  DSN=BP13.F205.ATTREC,                                            
+//             DISP=OLD                                                         
+//SYSIN    DD  *                                                                
+   SORT FIELDS=(1,15,A),FORMAT=CH                                               
+   INCLUDE COND=(14,2,CH,EQ,C'DF',&,30,1,CH,EQ,C'Z')                            
+/*                                                                              
+//*--------------------------------------------------------------------         
+//*  TO CREATE VSAM FILE BP13K200 (BP13.K200.BKAPPMT.DRAFT)                     
+//*--------------------------------------------------------------------         
+//STEP02 EXEC    PGM=IDCAMS,COND=(0,NE),                                        
+//             REGION=4096K                                                     
+//SYSPRINT DD  SYSOUT=*                                                         
+//INPUT    DD  DSN=BP13.BLANK.CHAR300,                                          
+//             DISP=SHR                                                         
+//SYSIN    DD  *                                                                
+           DEL (BP13.K200.BKAPPMT.DRAFT) CL PURGE                               
+           DEF CLUSTER                                     -                    
+               (NAME(BP13.K200.BKAPPMT.DRAFT)              -                    
+                CYL(4 2)                                   -                    
+                UNIQUE                                     -                    
+                SHR(2 3))                                  -                    
+               DATA                                        -                    
+               (NAME(BP13.K200.BKAPPMT.DRAFT.DATA)         -                    
+                KEYS(21 0)                                 -                    
+                RECSZ(300 300)                             -                    
+                CISZ(4096)                                 -                    
+                FSPC(10 10))                               -                    
+               INDEX                                       -                    
+               (NAME(BP13.K200.BKAPPMT.DRAFT.INDEX)        -                    
+                CISZ(4096))                                                     
+           IF MAXCC = 0  THEN                              -                    
+              REPRO IFILE(INPUT)                           -                    
+              ODS(BP13.K200.BKAPPMT.DRAFT)                                      
+      DEF AIX (NAME(BP13.K200.BKAPPMT.DRAFT.ALTX1)        -                     
+          REL(BP13.K200.BKAPPMT.DRAFT)                    -                     
+          TRK(2 3)                                   -                          
+          SHR(2 3)                                   -                          
+          UNIQUE                                     -                          
+          KEYS(8 13)                                 -                          
+          CISZ(4096)                                 -                          
+          RECSZ(33 117))                                                        
+      IF LASTCC = 0 THEN                             -                          
+         DEF PATH(NAME(BP13.K200.BKAPPMT.DRAFT.PATH1)     -                     
+             PENT(BP13.K200.BKAPPMT.DRAFT.ALTX1))                               
+      IF LASTCC = 0 THEN                             -                          
+         BIX IDS(BP13.K200.BKAPPMT.DRAFT)                 -                     
+             ODS(BP13.K200.BKAPPMT.DRAFT.ALTX1)                                 
+/*                                                                              
+//*--------------------------------------------------------------------*        
+//*  SORT BP13F200 BY ALLOC-DATE, NT/ZONE, FT, QUEUE-POSITION                   
+//*--------------------------------------------------------------------*        
+//STEP03 EXEC    SORT,COND=(0,NE)                                               
+//SORTIN   DD  DSN=BP13.F200.BKAPPMT,                                           
+//             DISP=SHR                                                         
+//SORTOUT  DD  DSN=&&P13F200A,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=(SYSDA,10),                                                 
+//             SPACE=(CYL,(10,5),RLSE),                                         
+//             DCB=(BLKSIZE=23400,LRECL=300,RECFM=FB)                           
+//SYSIN    DD  *                                                                
+    SUM FIELDS=NONE                                                             
+    SORT FIELDS=(9,3,A,12,2,A,50,6,A,57,5,A),FORMAT=CH                          
+/*                                                                              
+//*--------------------------------------------------------------------*        
+//* TO CHECK BOOKING APPOINTMENT FILE AGAINST SOC MASTER TO REMOVE              
+//* CANCELLATION RECORDS.                                                       
+//*--------------------------------------------------------------------*        
+//STEP04 EXEC    PGM=BP13C240,COND=(0,NE)                                       
+//BP13F200 DD  DSN=&&P13F200A,                                                  
+//             DISP=(SHR,PASS)                                                  
+//BP13F205 DD  DSN=BP13.F205.ATTREC,                                            
+//             DISP=SHR                                                         
+//BP13K800 DD  DSN=BP13.K800.APPLN,                                             
+//             DISP=SHR                                                         
+//P13F200O DD  DSN=&&P13F200B,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=(SYSDA,10),                                                 
+//             SPACE=(CYL,(10,5),RLSE),                                         
+//             DCB=(BLKSIZE=23400,LRECL=300,RECFM=FB)                           
+//P13F240O DD DSN=&&P13F240O,DISP=(NEW,PASS),                                   
+//            SPACE=(CYL,(20,10),RLSE),                                         
+//            DCB=(RECFM=FBA,LRECL=133)                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+/*                                                                              
+//*--------------------------------------------------------------------         
+//*   SEND REPORT OUT FROM STEP04 IN XDA2 PRINTER                               
+//*--------------------------------------------------------------------         
+//STEP4A EXEC    PGM=IEBGENER                                                   
+//SYSUT1   DD  DSN=&&P13F240O,                                                  
+//             DISP=(OLD,PASS)                                                  
+//SYSUT2   DD SYSOUT=A,DEST=XDA2                                                
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  DUMMY                                                            
+//*--------------------------------------------------------------------*        
+//* TO CHECK BOOKING APPOINTMENT FILE AGAINST SOC MASTER TO REMOVE              
+//* CASES WITH DIFFERENT BALLOT QUARTER.                                        
+//*--------------------------------------------------------------------*        
+//STEP4B EXEC    PGM=BP13C273,COND=(0,NE)                                       
+//BP13F200 DD  DSN=&&P13F200B,                                                  
+//             DISP=(SHR,PASS)                                                  
+//BP13F205 DD  DSN=BP13.F205.ATTREC,                                            
+//             DISP=SHR                                                         
+//BP13K800 DD  DSN=BP13.K800.APPLN,                                             
+//             DISP=SHR                                                         
+//P13F200O DD  DSN=&&P13F200C,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=(SYSDA,10),                                                 
+//             SPACE=(CYL,(10,5),RLSE),                                         
+//             DCB=(BLKSIZE=23400,LRECL=300,RECFM=FB)                           
+//BP13L273 DD DSN=&&BP13L273,DISP=(NEW,PASS),                                   
+//            SPACE=(CYL,(20,10),RLSE),                                         
+//            DCB=(RECFM=FBA,LRECL=133)                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+/*                                                                              
+//*--------------------------------------------------------------------         
+//*   SEND REPORT OUT FROM STEP4B IN XDA2 PRINTER                               
+//*--------------------------------------------------------------------         
+//STEP4C EXEC    PGM=IEBGENER                                                   
+//SYSUT1   DD  DSN=&&BP13L273,                                                  
+//             DISP=(OLD,PASS)                                                  
+//SYSUT2   DD SYSOUT=A,DEST=XDA2                                                
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  DUMMY                                                            
+//*--------------------------------------------------------------------*        
+//* TO CHECK SOC MASTER FILE FOR CASES ALREADY ACCEPTED A FLAT.                 
+//*--------------------------------------------------------------------*        
+//STEP4D EXEC    PGM=BP13C285,COND=(0,NE)                                       
+//BP13F200 DD  DSN=&&P13F200C,                                                  
+//             DISP=(SHR,PASS)                                                  
+//BP13F205 DD  DSN=BP13.F205.ATTREC,                                            
+//             DISP=SHR                                                         
+//BP13K800 DD  DSN=BP13.K800.APPLN,                                             
+//             DISP=SHR                                                         
+//P13F200O DD  DSN=&&P13F200D,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=(SYSDA,10),                                                 
+//             SPACE=(CYL,(10,5),RLSE),                                         
+//             DCB=(BLKSIZE=23400,LRECL=300,RECFM=FB)                           
+//BP13L285 DD DSN=&&BP13L285,DISP=(NEW,PASS),                                   
+//            SPACE=(CYL,(20,10),RLSE),                                         
+//            DCB=(RECFM=FBA,LRECL=133)                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+/*                                                                              
+//*--------------------------------------------------------------------         
+//*   SEND REPORT OUT FROM STEP4D IN XDA2 PRINTER                               
+//*--------------------------------------------------------------------         
+//STEP4E EXEC    PGM=IEBGENER                                                   
+//SYSUT1   DD  DSN=&&BP13L285,                                                  
+//             DISP=(OLD,PASS)                                                  
+//SYSUT2   DD SYSOUT=A,DEST=XDA2                                                
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  DUMMY                                                            
+//*--------------------------------------------------------------------*        
+//* TO CHECK BOOKING APPOINTMENT FILE AGAINST SOC MASTER TO REMOVE              
+//* CASES WITH DIFFERENT ZONE/NT/FT.                                            
+//*--------------------------------------------------------------------*        
+//STEP4F EXEC    PGM=BP13C27A,COND=(0,NE)                                       
+//BP13F200 DD  DSN=&&P13F200D,                                                  
+//             DISP=(SHR,PASS)                                                  
+//BP13F205 DD  DSN=BP13.F205.ATTREC,                                            
+//             DISP=SHR                                                         
+//BP13K800 DD  DSN=BP13.K800.APPLN,                                             
+//             DISP=SHR                                                         
+//P13F200O DD  DSN=&&P13F200E,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=(SYSDA,10),                                                 
+//             SPACE=(CYL,(10,5),RLSE),                                         
+//             DCB=(BLKSIZE=23400,LRECL=300,RECFM=FB)                           
+//BP13L27A DD DSN=&&BP13L27A,DISP=(NEW,PASS),                                   
+//            SPACE=(CYL,(20,10),RLSE),                                         
+//            DCB=(RECFM=FBA,LRECL=133)                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+/*                                                                              
+//*--------------------------------------------------------------------         
+//*   SEND REPORT OUT FROM STEP4F IN XDA2 PRINTER                               
+//*--------------------------------------------------------------------         
+//STEP4G EXEC    PGM=IEBGENER                                                   
+//SYSUT1   DD  DSN=&&BP13L27A,                                                  
+//             DISP=(OLD,PASS)                                                  
+//SYSUT2   DD SYSOUT=A,DEST=XDA2                                                
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  DUMMY                                                            
+//*--------------------------------------------------------------------*        
+//*  TO SCHEDULE BOOKING APPOINTMENT BY NT/FT/REGN-NO BASED ON THE     *        
+//*  BOOKING WORK PLAN                                                 *        
+//*--------------------------------------------------------------------*        
+//STEP05 EXEC    PGM=BP13C249,COND=(0,NE)                                       
+//BP13F200 DD  DSN=&&P13F200E,                                                  
+//             DISP=(SHR,DELETE)                                                
+//BP13K800 DD  DSN=BP13.K800.APPLN,                                             
+//             DISP=SHR                                                         
+//BP13K200 DD  DSN=BP13.K200.BKAPPMT.DRAFT,                                     
+//             DISP=SHR,                                                        
+//             AMP=('BUFND=8','BUFNI=4')                                        
+//BP13K201 DD  DSN=BP13.K200.BKAPPMT.DRAFT.PATH1,                               
+//             DISP=SHR,                                                        
+//             AMP=('BUFND=8','BUFNI=4')                                        
+//BP13K210 DD  DSN=BP13.K210.BKWKPLAN,                                          
+//             DISP=SHR,                                                        
+//             AMP=('BUFND=8','BUFNI=4')                                        
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=A,                                                        
+//             DEST=XDA2                                                        
+/*                                                                              
+//*--------------------------------------------------------------------*        
+//*  SORT BP13F200 BY ALLOC-DATE, NT/ZONE, FT, CUR-REG-NO                       
+//*--------------------------------------------------------------------*        
+//STEP06 EXEC    SORT,COND=(0,NE)                                               
+//SORTIN   DD  DSN=BP13.K200.BKAPPMT.DRAFT,                                     
+//             DISP=SHR                                                         
+//SORTOUT  DD  DSN=&&P13F200F,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(10,5),RLSE),                                         
+//             DCB=(BLKSIZE=23400,LRECL=300,RECFM=FB)                           
+//SYSIN    DD  *                                                                
+    SORT FIELDS=(1,13,A,57,5,A),FORMAT=CH                                       
+//*----------------------------------------------------------------             
+//*   TO PRINT CHECK LIST OF APPOINTMENT LETTER                                 
+//*----------------------------------------------------------------             
+//STEP07 EXEC    PGM=BP13C246,COND=(0,NE)                                       
+//BP13F205 DD  DSN=BP13.F205.ATTREC,                                            
+//             DISP=SHR                                                         
+//BP13F200 DD  DSN=&&P13F200F,                                                  
+//             DISP=(SHR,DELETE)                                                
+//BP13K800 DD  DSN=BP13.K800.APPLN,                                             
+//             DISP=SHR,                                                        
+//             AMP=('BUFNI=8','BUFND=4')                                        
+//BP13K820 DD  DSN=BP13.K820.OCCUP,                                             
+//             DISP=SHR,                                                        
+//             AMP=('BUFNI=8','BUFND=4')                                        
+//BP13K830 DD  DSN=BP13.K830.ADDR,                                              
+//             DISP=SHR,                                                        
+//             AMP=('BUFNI=8','BUFND=4')                                        
+//BP13K831 DD  DSN=BP13.K830.ADDR.PATH1,                                        
+//             DISP=SHR,                                                        
+//             AMP=('BUFNI=8','BUFND=4')                                        
+//BP13L246 DD DSN=&&BP13L246,DISP=(NEW,PASS),                                   
+//            SPACE=(CYL,(20,10),RLSE),                                         
+//            DCB=(RECFM=FBA,LRECL=133)                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+//*--------------------------------------------------------------------         
+//*   SEND REPORT OUT FROM STEP07 IN XDA2 PRINTER                               
+//*--------------------------------------------------------------------         
+//STEP7B EXEC    PGM=IEBGENER                                                   
+//SYSUT1   DD  DSN=&&BP13L246,                                                  
+//             DISP=(OLD,PASS)                                                  
+//SYSUT2   DD SYSOUT=A,DEST=XDA2                                                
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  DUMMY                                                            
+//*--------------------------------------------------------------------*        
+//*  SORT BP13F200 BY ALLOC-DATE, NT/ZONE, FT, CUR-REG-NO                       
+//*--------------------------------------------------------------------*        
+//STEP6A EXEC    SORT,COND=(0,NE)                                               
+//SORTIN   DD  DSN=BP13.K200.BKAPPMT.DRAFT,                                     
+//             DISP=SHR                                                         
+//SORTOUT  DD  DSN=&&P13F200G,                                                  
+//             DISP=(NEW,PASS),                                                 
+//             UNIT=SYSDA,                                                      
+//             SPACE=(CYL,(10,5),RLSE),                                         
+//             DCB=(BLKSIZE=23400,LRECL=300,RECFM=FB)                           
+//SYSIN    DD  *                                                                
+    INCLUDE COND=(185,1,CH,EQ,C'P',OR,185,1,CH,EQ,C'C')                         
+    SORT FIELDS=(187,5,A,185,1,D),FORMAT=CH                                     
+//*----------------------------------------------------------------             
+//*   TO PRINT CHECK LIST OF APPOINTMENT LETTER                                 
+//*----------------------------------------------------------------             
+//STEP7A EXEC    PGM=BP13C24J,COND=(0,NE)                                       
+//BP13F200 DD  DSN=&&P13F200G,                                                  
+//             DISP=(SHR,DELETE)                                                
+//BP13K800 DD  DSN=BP13.K800.APPLN,                                             
+//             DISP=SHR,                                                        
+//             AMP=('BUFNI=8','BUFND=4')                                        
+//BP13K820 DD  DSN=BP13.K820.OCCUP,                                             
+//             DISP=SHR,                                                        
+//             AMP=('BUFNI=8','BUFND=4')                                        
+//BP13K830 DD  DSN=BP13.K830.ADDR,                                              
+//             DISP=SHR,                                                        
+//             AMP=('BUFNI=8','BUFND=4')                                        
+//BP13K831 DD  DSN=BP13.K830.ADDR.PATH1,                                        
+//             DISP=SHR,                                                        
+//             AMP=('BUFNI=8','BUFND=4')                                        
+//BP13L24J DD DSN=&&BP13L24J,DISP=(NEW,PASS),                                   
+//            SPACE=(CYL,(20,10),RLSE),                                         
+//            DCB=(RECFM=FBA,LRECL=133)                                         
+//SYSDBG   DD  SYSOUT=*                                                         
+//SYSDBOUT DD  SYSOUT=*                                                         
+//SYSOUT   DD  SYSOUT=*                                                         
+//*--------------------------------------------------------------------         
+//*   SEND REPORT OUT FROM STEP7A IN XDA2 PRINTER                               
+//*--------------------------------------------------------------------         
+//STEP7C EXEC    PGM=IEBGENER                                                   
+//SYSUT1   DD  DSN=&&BP13L24J,                                                  
+//             DISP=(OLD,PASS)                                                  
+//SYSUT2   DD SYSOUT=A,DEST=XDA2                                                
+//SYSPRINT DD  SYSOUT=*                                                         
+//SYSIN    DD  DUMMY                                                            
+//*----------------------------------------------------------------             
+//*  ACCUMULATE THE CONTROL REC INTO CTLREC-ACC FILE                            
+//*----------------------------------------------------------------             
+//STEP08 EXEC    PGM=IDCAMS,COND=(0,NE)                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//INPUT1   DD  DSN=BP13.F205.ATTREC,                                            
+//             DISP=SHR                                                         
+//OUTPUT1  DD  DSN=BP13.F205.ACCUM,                                             
+//             DISP=MOD                                                         
+//SYSIN    DD  *                                                                
+      REPRO INFILE(INPUT1) OUTFILE(OUTPUT1)                                     
+//*                                                                             
+//*----------------------------------------------------------------             
+//*  CREATE SOFTCOPY REPORT FOR ALL REPORTS PRINTED                             
+//*----------------------------------------------------------------             
+//STEP09 EXEC    PGM=IDCAMS,COND=(0,NE)                                         
+//SYSPRINT DD  SYSOUT=*                                                         
+//INPUT1   DD  DSN=&&P13F240O,DISP=(SHR,PASS)                                   
+//         DD  DSN=&&BP13L273,DISP=(SHR,PASS)                                   
+//         DD  DSN=&&BP13L285,DISP=(SHR,PASS)                                   
+//         DD  DSN=&&BP13L27A,DISP=(SHR,PASS)                                   
+//         DD  DSN=&&BP13L246,DISP=(SHR,PASS)                                   
+//         DD  DSN=&&BP13L24J,DISP=(SHR,PASS)                                   
+//OUTPUT1  DD  DSN=BP13.L201.RPT,                                               
+//             DISP=SHR                                                         
+//SYSIN    DD  *                                                                
+      REPRO INFILE(INPUT1) OUTFILE(OUTPUT1)                                     
+//*                                                                             
+//*---------------------------------------------------------------------        
+//* END BP13A201                                                                
+//*---------------------------------------------------------------------        
+

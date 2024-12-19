@@ -1,0 +1,905 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13C282.                                                 
+       AUTHOR.        SURESH.                                                   
+      *DATE-WRITTEN.  23/10/2000.                                               
+      *****************************************************************         
+      *                                                               *         
+      *  SYSTEM NAME :  SYSTEM OF COMMITMENT                          *         
+      *  SYSTEM ID   :  BP13                                          *         
+      *                                                               *         
+      *  OBJECTIVE :  TO UPDATE CURRENT SELLING PRICE AND FLAT        *         
+      *               DISCOUNT FOR REN FLAT BASED ON TENANCY PERIOD.  *         
+      *                                                               *         
+      * CHG-NO   BY   ON      DESCRIPTION                             *         
+      * ------   --  ------  ------------                             *         
+      * BP130938 SN  23102000 NEW PGM                                 *         
+      * BP131014 SN  03052001 - COMPUTE DISCOUNT FR K110-1ST-OFFER-DTE*         
+      * BP131050 SN  12062001 - TO ADD DISCOUNT BEFORE ROUNDED IN THE *         
+      *                         IN THE REPORT AND TO MOVE ROUNDED DISC*         
+      *                         INTO  K110-AMT-FLAT-DISCOUNT.         *         
+      *                         TO PRINT ERR MESSAGE WHEN DIFFERENCE  *         
+      *                         BEFORE ROUNDED AND AFTER ROUNDED IS   *         
+      *                         GREATER THAN 99.                      *         
+      * BP132807 LMS 19012006 - TO REMOVE UPDATE OF SELLING PRICE.    *         
+      *****************************************************************         
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT BP13F310 ASSIGN TO BP13F310.                                  
+                                                                                
+           SELECT BM06K110 ASSIGN TO BM06K110                                   
+                  ACCESS MODE     IS RANDOM                                     
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K110-KEY-FLD                               
+                  FILE STATUS     IS BM06K110-STATUS.                           
+                                                                                
+           SELECT BP13K800 ASSIGN TO BP13K800                                   
+                  ACCESS MODE     IS RANDOM                                     
+                  ORGANIZATION    IS INDEXED                                    
+                  RECORD KEY      IS K800-NUM-REGN                              
+                  FILE STATUS     IS K800-STATUS.                               
+                                                                                
+           SELECT BP13K820 ASSIGN TO BP13K820                                   
+                  ORGANIZATION    IS INDEXED                                    
+                  ACCESS MODE     IS DYNAMIC                                    
+                  RECORD KEY      IS K820-KEY-FLD                               
+                  FILE STATUS     IS WS-K820-STATUS.                            
+                                                                                
+            SELECT BP13K830  ASSIGN TO BP13K830                                 
+                   ORGANIZATION         IS INDEXED                              
+                   ACCESS MODE          IS RANDOM                               
+                   RECORD KEY           IS K830-KEY-FLD                         
+                   ALTERNATE RECORD KEY IS K830-NUM-REGN                        
+                                           WITH DUPLICATES                      
+                   FILE STATUS          IS WS-K830-STATUS.                      
+                                                                                
+           SELECT P13L282A ASSIGN TO P13L282A.                                  
+                                                                                
+           SELECT P13L282B ASSIGN TO P13L282B.                                  
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD  BP13F310                                                             
+           RECORDING MODE IS F                                                  
+           BLOCK  CONTAINS 0 CHARACTERS                                         
+           RECORD CONTAINS 150 CHARACTERS                                       
+           LABEL RECORDS IS STANDARD.                                           
+       COPY BP13F310.                                                           
+                                                                                
+       FD  BM06K110                                                             
+           RECORD CONTAINS 500 CHARACTERS.                                      
+       COPY BM06K110.                                                           
+                                                                                
+       FD  BP13K800                                                             
+           RECORD CONTAINS 2000 CHARACTERS.                                     
+       COPY BP13K800.                                                           
+                                                                                
+       FD BP13K820                                                              
+           RECORD CONTAINS 400 CHARACTERS.                                      
+       COPY BP13K820.                                                           
+                                                                                
+       FD BP13K830                                                              
+           RECORD CONTAINS 250 CHARACTERS.                                      
+       COPY BP13K830.                                                           
+                                                                                
+       FD  P13L282A                                                             
+           RECORDING MODE IS F                                                  
+           RECORD CONTAINS 132 CHARACTERS                                       
+           LABEL RECORDS ARE OMITTED.                                           
+       01  P13L282A-REC            PIC X(132).                                  
+                                                                                
+       FD  P13L282B                                                             
+           RECORDING MODE IS F                                                  
+           RECORD CONTAINS 132 CHARACTERS                                       
+           LABEL RECORDS ARE OMITTED.                                           
+       01  P13L282B-REC            PIC X(132).                                  
+                                                                                
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-DATE                 PIC X(8)   VALUE SPACES.                     
+                                                                                
+       01  WS-SCH-ACC-NO.                                                       
+           05  WS-SCHEME           PIC X(4)     VALUE SPACES.                   
+           05  WS-ACC              PIC X(4)     VALUE SPACES.                   
+           05  WS-CHK              PIC X        VALUE SPACES.                   
+           05  WS-ACC-TY           PIC X(2)     VALUE SPACES.                   
+                                                                                
+       01  WS-TENANCY-DATE.                                                     
+           05  WS-TEN-CC                    PIC X(2).                           
+           05  WS-TEN-YY                    PIC X(2).                           
+           05  WS-TEN-MM                    PIC X(2).                           
+           05  WS-TEN-DD                    PIC X(2).                           
+                                                                                
+       01  BM06K110-STATUS         PIC 99       VALUE ZEROS.                    
+       01  K800-STATUS             PIC 99       VALUE ZEROS.                    
+       01  WS-K820-STATUS          PIC 99       VALUE ZEROS.                    
+       01  WS-K830-STATUS          PIC 99       VALUE ZEROS.                    
+       01  WS-K800-MATCH           PIC X.                                       
+       01  WS-K110-MATCH           PIC X.                                       
+       01  WS-K830-MATCH           PIC X.                                       
+       01  WS-EOF-F310             PIC X.                                       
+       01  WS-FLAG                 PIC X        VALUE 'N'.                      
+       01  WS-AMT-MUP-COST         PIC S9(06) VALUE ZEROES.                     
+                                                                                
+       01  WS-K110-REC             PIC X(500).                                  
+       01  WS-CNT-READ-F310        PIC 9(5)     VALUE ZEROS.                    
+                                                                                
+       01  WS-LISTING-CONTROLS.                                                 
+           05  WS-SEQ              PIC 9(5)        VALUE ZEROS.                 
+           05  WS-SEQ1             PIC 9(5)        VALUE ZEROS.                 
+           05  CNT-PAGE            PIC 9(5)        VALUE ZEROS.                 
+           05  CNT-PAGE1           PIC 9(5)        VALUE ZEROS.                 
+           05  CNT-NUM-LINE        PIC 9(5)        VALUE ZEROS.                 
+           05  CNT-NUM-LINE1       PIC 9(5)        VALUE ZEROS.                 
+                                                                                
+      ******************************************************************        
+      *    P13L282A-REC                                                *        
+      ******************************************************************        
+                                                                                
+       01  L28A-PR-HEAD-01.                                                     
+           05  FILLER              PIC X(8)      VALUE 'P13L282A'.              
+           05  FILLER              PIC X(4)      VALUE SPACES .                 
+           05  FILLER              PIC X(8)      VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(35)     VALUE SPACES.                  
+           05  FILLER              PIC X(20)     VALUE                          
+                                    'SYSTEM OF COMMITMENT'.                     
+           05  FILLER              PIC X(20)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE :'.                
+           05  L28A-DATE           PIC X(10).                                   
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'PAGE : '.               
+           05  L28A-PAGENO         PIC ZZZZ9 .                                  
+           05  FILLER              PIC X(6)      VALUE SPACES.                  
+                                                                                
+       01  L28A-PR-HEAD-02.                                                     
+           05  FILLER              PIC X(42)     VALUE SPACES.                  
+           05  FILLER              PIC X(48)     VALUE                          
+           'REPORT ON UPDATE OF CURRENT SELLING PRICE FOR   '.                  
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(27)     VALUE                          
+           'USER : SALES UNIT, RHS, PPU'.                                       
+                                                                                
+       01  L28A-PR-HEAD-03.                                                     
+           05  FILLER              PIC X(42)     VALUE SPACES.                  
+           05  FILLER              PIC X(49)     VALUE                          
+           'APPLICATIONS UNDER RED SCHEME - AFTER ACCEPTANCE'.                  
+           05  FILLER              PIC X(03) VALUE SPACES.                      
+           05  FILLER              PIC X(11) VALUE ' USER ID : '.               
+           05  L28A-USERID         PIC X(08).                                   
+                                                                                
+       01  L28A-PR-HEAD-04.                                                     
+           05  FILLER              PIC X(14) VALUE ' S/NO  REGN NO'.            
+           05  FILLER              PIC X(09) VALUE SPACES.                      
+           05  FILLER              PIC X(03) VALUE 'NT '.                       
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(02) VALUE 'FT'.                        
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(07) VALUE 'OFFER  '.                   
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(07) VALUE 'CURR   '.                   
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(08) VALUE 'REN DISC'.                  
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'POD '.                      
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'POF '.                      
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(07) VALUE 'UPGRADE'.                   
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(23) VALUE 'FLAT ADDRESS'.              
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(10) VALUE 'ACCEPTANCE'.                
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(02) VALUE 'PD'.                        
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(05) VALUE 'START'.                     
+                                                                                
+       01  L28A-PR-HEAD-05.                                                     
+           05  FILLER              PIC X(07) VALUE SPACES.                      
+           05  FILLER              PIC X(11) VALUE 'HDB-REF    '.               
+           05  FILLER              PIC X(12) VALUE SPACES.                      
+           05  FILLER              PIC X(02) VALUE 'SP'.                        
+           05  FILLER              PIC X(06) VALUE SPACES.                      
+           05  FILLER              PIC X(02) VALUE 'SP'.                        
+           05  FILLER              PIC X(06) VALUE SPACES.                      
+           05  FILLER              PIC X(08) VALUE 'AMOUNT '.                   
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'AMT '.                      
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'AMT '.                      
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'COST'.                      
+           05  FILLER              PIC X(27) VALUE SPACES.                      
+           05  FILLER              PIC X(10) VALUE 'DATE      '.                
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(03) VALUE 'TEN'.                       
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'DATE'.                      
+                                                                                
+       01  L28A-PR-HEAD-06.                                                     
+           05  FILLER              PIC X(07) VALUE SPACES.                      
+           05  FILLER              PIC X(12) VALUE 'CORR-ADDRESS'.              
+                                                                                
+       01  L28A-PR-HEAD-07.                                                     
+           05  FILLER              PIC X(07) VALUE SPACES.                      
+           05  FILLER              PIC X(11) VALUE 'NRIC NO    '.               
+           05  FILLER              PIC X(04) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'NAME'.                      
+           05  FILLER              PIC X(44) VALUE SPACES.                      
+           05  FILLER              PIC X(05) VALUE '   T1'.                     
+           05  FILLER              PIC X(03) VALUE SPACES.                      
+           05  FILLER              PIC X(05) VALUE '   T2'.                     
+           05  FILLER              PIC X(40) VALUE SPACES.                      
+                                                                                
+      ******************************************************************        
+      *    P13L282B-REC                                                *        
+      ******************************************************************        
+                                                                                
+       01  L28B-PR-HEAD-01.                                                     
+           05  FILLER              PIC X(8)      VALUE 'P13L282B'.              
+           05  FILLER              PIC X(4)      VALUE SPACES .                 
+           05  FILLER              PIC X(8)      VALUE 'HDBCAT 3'.              
+           05  FILLER              PIC X(35)     VALUE SPACES.                  
+           05  FILLER              PIC X(20)     VALUE                          
+                                    'SYSTEM OF COMMITMENT'.                     
+           05  FILLER              PIC X(20)     VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'DATE :'.                
+           05  L28B-DATE           PIC X(10).                                   
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  FILLER              PIC X(7)      VALUE 'PAGE : '.               
+           05  L28B-PAGENO         PIC ZZZZ9 .                                  
+           05  FILLER              PIC X(6)      VALUE SPACES.                  
+                                                                                
+       01  L28B-PR-HEAD-02.                                                     
+           05  FILLER              PIC X(42)     VALUE SPACES.                  
+           05  FILLER              PIC X(48)     VALUE                          
+           'REPORT ON UPDATE OF CURRENT SELLING PRICE FOR   '.                  
+           05  FILLER              PIC X(05)     VALUE SPACES.                  
+           05  FILLER              PIC X(27)     VALUE                          
+           'USER : SALES UNIT, RHS, PPU'.                                       
+                                                                                
+       01  L28B-PR-HEAD-03.                                                     
+           05  FILLER              PIC X(42)     VALUE SPACES.                  
+           05  FILLER              PIC X(49)     VALUE                          
+           'APPLICATIONS UNDER RED SCHEME - AFTER ACCEPTANCE'.                  
+           05  FILLER              PIC X(03) VALUE SPACES.                      
+           05  FILLER              PIC X(11) VALUE ' USER ID : '.               
+           05  L28B-USERID         PIC X(08).                                   
+                                                                                
+       01  L28B-PR-HEAD-04.                                                     
+           05  FILLER              PIC X(14) VALUE ' S/NO  REGN NO'.            
+           05  FILLER              PIC X(09) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'NT  '.                      
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'FLAT'.                      
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(10) VALUE 'OFFER    '.                 
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(10) VALUE 'CURRENT  '.                 
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(08) VALUE 'REN DISC'.                  
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(08) VALUE 'OCS DISC'.                  
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(23) VALUE 'FLAT ADDRESS'.              
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(10) VALUE 'ACCEPTANCE'.                
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(02) VALUE 'PD'.                        
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(05) VALUE 'START'.                     
+                                                                                
+       01  L28B-PR-HEAD-05.                                                     
+           05  FILLER              PIC X(07) VALUE SPACES.                      
+           05  FILLER              PIC X(11) VALUE 'HDB-REF    '.               
+           05  FILLER              PIC X(10) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'TYPE'.                      
+           05  FILLER              PIC X(03) VALUE SPACES.                      
+           05  FILLER              PIC X(10) VALUE 'SELL PRICE'.                
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(10) VALUE 'SELL PRICE'.                
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(10) VALUE 'AMOUNT    '.                
+           05  FILLER              PIC X(33) VALUE SPACES.                      
+           05  FILLER              PIC X(10) VALUE 'DATE      '.                
+           05  FILLER              PIC X(02) VALUE SPACES.                      
+           05  FILLER              PIC X(03) VALUE 'TEN'.                       
+           05  FILLER              PIC X(01) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'DATE'.                      
+                                                                                
+       01  L28B-PR-HEAD-06.                                                     
+           05  FILLER              PIC X(07) VALUE SPACES.                      
+           05  FILLER              PIC X(11) VALUE 'NRIC NO    '.               
+           05  FILLER              PIC X(04) VALUE SPACES.                      
+           05  FILLER              PIC X(04) VALUE 'NAME'.                      
+           05  FILLER              PIC X(44) VALUE SPACES.                      
+           05  FILLER              PIC X(05) VALUE '   T1'.                     
+           05  FILLER              PIC X(03) VALUE SPACES.                      
+           05  FILLER              PIC X(05) VALUE '   T2'.                     
+           05  FILLER              PIC X(40) VALUE SPACES.                      
+                                                                                
+       01  L28B-PR-HEAD-07.                                                     
+           05  FILLER              PIC X(13) VALUE 'CHECKED BY : '.             
+           05  FILLER              PIC X(36) VALUE                              
+                            '------------------------------------'.             
+       01  L28B-PR-HEAD-08.                                                     
+           05  FILLER              PIC X(34) VALUE                              
+                      '            (NAME AND DESIGNATION)'.                     
+                                                                                
+       01  L28B-PR-HEAD-09.                                                     
+           05  FILLER              PIC X(18) VALUE 'DATE AND INITIAL :'.        
+           05  FILLER              PIC X(36) VALUE                              
+                            '------------------------------------'.             
+                                                                                
+       01  L28A-PR-DETAIL.                                                      
+           05  L28A-NO             PIC ZZZZ9.                                   
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  L28A-CUR-REGN-NO    PIC X(8).                                    
+           05  FILLER              PIC X(8)      VALUE SPACES.                  
+           05  L28A-NT             PIC X(3).                                    
+           05  FILLER              PIC X(01)      VALUE SPACES.                 
+           05  L28A-FLAT           PIC X(2).                                    
+           05  FILLER              PIC X(01)      VALUE SPACES.                 
+           05  L28A-OFFR-SPRICE    PIC ZZZ,ZZ9.                                 
+           05  FILLER              PIC X(1) VALUE SPACES.                       
+           05  L28A-CURR-SPRICE    PIC ZZZ,ZZ9.                                 
+           05  FILLER              PIC X(1)      VALUE SPACES.                  
+           05  L28A-AMT-FLAT-DISC  PIC ZZ,ZZ9.                                  
+           05  FILLER              PIC X(3)      VALUE SPACES.                  
+           05  L28A-POD-AMT        PIC ZZZ9.                                    
+           05  FILLER              PIC X(1)      VALUE SPACES.                  
+           05  L28A-POF-AMT        PIC ZZZ9.                                    
+           05  FILLER              PIC X(1)      VALUE SPACES.                  
+           05  L28A-UPG-COST       PIC ZZZ,ZZ9.                                 
+           05  FILLER              PIC X(1)      VALUE SPACES.                  
+           05  L28A-BLK            PIC X(04)     VALUE 'BLK '.                  
+           05  L28A-BLK-NO         PIC X(05).                                   
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  L28A-FLAT-NO.                                                    
+               10  L28A-HEX        PIC X(02)     VALUE '# '.                    
+               10  L28A-LEVEL-NO   PIC X(02).                                   
+               10  L28A-DASH       PIC X(01)     VALUE '-'.                     
+               10  L28A-UNIT-NO    PIC X(04).                                   
+               10  L28A-SUB-UNIT   PIC X(03).                                   
+           05  FILLER              PIC X(01)  VALUE SPACES.                     
+           05  L28A-DTE-ACCEPT     PIC X(10)  VALUE SPACES.                     
+           05  FILLER              PIC X(2)   VALUE SPACES.                     
+           05  L28A-PERIOD-TENANCY PIC X(02)  VALUE SPACES.                     
+           05  FILLER              PIC X(2)   VALUE SPACES.                     
+           05  L28A-ST-DATE        PIC X(10)  VALUE SPACES.                     
+                                                                                
+       01  L28A-PR-DETAIL-A.                                                    
+           05  FILLER              PIC X(7) VALUE SPACES.                       
+           05  L28A-SCHEME         PIC 9(4).                                    
+           05  L28A-D1             PIC X.                                       
+           05  L28A-ACC            PIC 9(4).                                    
+           05  L28A-D2             PIC X.                                       
+           05  L28A-CHK            PIC 9.                                       
+           05  L28A-D3             PIC X.                                       
+           05  L28A-ACC-TYPE       PIC 9(2).                                    
+           05  FILLER              PIC X(48)     VALUE SPACES.                  
+           05  L28A-STREET         PIC X(20).                                   
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  FILLER              PIC X(2)      VALUE 'S('.                    
+           05  L28A-POSTAL-CODE    PIC X(6).                                    
+           05  FILLER              PIC X(1)      VALUE ')'.                     
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+                                                                                
+       01  L28A-PR-DETAIL-B.                                                    
+           05  FILLER              PIC X(7)      VALUE SPACES.                  
+           05  L28A-NRIC           PIC X(9).                                    
+           05  FILLER              PIC X(6)      VALUE SPACES.                  
+           05  L28A-NAME           PIC X(40).                                   
+           05  FILLER              PIC X(12)     VALUE SPACES.                  
+           05  L28A-SHAP1          PIC X.                                       
+           05  FILLER              PIC X(06)     VALUE SPACES.                  
+           05  L28A-SHAP2          PIC X.                                       
+           05  FILLER              PIC X(52)     VALUE SPACES.                  
+                                                                                
+       01  L280-PR-DETAIL-B.                                                    
+           05  FILLER              PIC X(7)      VALUE SPACES.                  
+           05  L280-BLK            PIC X(04)     VALUE SPACES.                  
+           05  L280-BLK-NO         PIC X(05).                                   
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  L280-FLAT-NO.                                                    
+               10  L280-HEX        PIC X(02)     VALUE SPACES.                  
+               10  L280-LEVEL-NO   PIC X(02).                                   
+               10  L280-DASH       PIC X(01)     VALUE SPACES.                  
+               10  L280-UNIT-NO    PIC X(04).                                   
+               10  L280-SUB-UNIT   PIC X(03).                                   
+           05  FILLER              PIC X(02)     VALUE SPACES.                  
+           05  L280-STREET         PIC X(20).                                   
+           05  FILLER              PIC X(2)      VALUE SPACES.                  
+           05  L280-POSTAL1        PIC X(2)      VALUE SPACES.                  
+           05  L280-POSTAL-CODE    PIC X(6).                                    
+           05  L280-POSTAL2        PIC X(1)      VALUE SPACES.                  
+                                                                                
+       01  L28A-PR-LINE.                                                        
+           05  FILLER              PIC X         VALUE SPACES.                  
+           05  FILLER              PIC X(131)    VALUE ALL '-'.                 
+                                                                                
+      *****************************************************************         
+       PROCEDURE DIVISION.                                                      
+      *****************************************************************         
+       MAIN.                                                                    
+           PERFORM 000-OPENING-ROUTINE THRU 000-EXIT.                           
+           PERFORM 100-READ-F310       THRU 100-EXIT.                           
+           PERFORM 200-PROCESS-F310    THRU 200-EXIT                            
+               UNTIL WS-EOF-F310 = 'Y'.                                         
+           PERFORM 999-CLOSING-ROUTINE.                                         
+                                                                                
+      *--------------------*                                                    
+       000-OPENING-ROUTINE.                                                     
+      *--------------------*                                                    
+           OPEN INPUT  BP13F310                                                 
+                       BP13K800                                                 
+                       BP13K820                                                 
+                       BP13K830                                                 
+                       BM06K110                                                 
+                OUTPUT P13L282A                                                 
+                       P13L282B.                                                
+                                                                                
+           IF BM06K110-STATUS NOT = 0 AND 97                                    
+              DISPLAY 'OPENING ERROR, K110-STATUS ' BM06K110-STATUS             
+              MOVE BM06K110-STATUS TO RETURN-CODE                               
+              PERFORM 999-CLOSING-ROUTINE                                       
+           END-IF.                                                              
+                                                                                
+           IF K800-STATUS NOT = 0 AND 97                                        
+              DISPLAY 'OPENING ERROR, K800-STATUS ' K800-STATUS                 
+              MOVE K800-STATUS TO RETURN-CODE                                   
+              PERFORM 999-CLOSING-ROUTINE                                       
+           END-IF.                                                              
+                                                                                
+           IF WS-K820-STATUS NOT = 0  AND  97                                   
+              DISPLAY 'OPENING ERROR, K820-STATUS ' WS-K820-STATUS              
+              MOVE WS-K820-STATUS       TO RETURN-CODE                          
+              PERFORM 999-CLOSING-ROUTINE                                       
+                                                                                
+           IF WS-K830-STATUS  =  0  OR  97                                      
+              CONTINUE                                                          
+           ELSE                                                                 
+              DISPLAY 'OPENING ERROR, K830-STATUS ' WS-K830-STATUS              
+              MOVE WS-K830-STATUS       TO RETURN-CODE                          
+              PERFORM 999-CLOSING-ROUTINE                                       
+           END-IF.                                                              
+           MOVE 60                   TO CNT-NUM-LINE.                           
+           MOVE 60                   TO CNT-NUM-LINE1.                          
+                                                                                
+       000-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------*                                                          
+       100-READ-F310.                                                           
+      *--------------*                                                          
+            READ BP13F310 AT END                                                
+                MOVE 'Y' TO WS-EOF-F310                                         
+                GO TO 100-EXIT.                                                 
+                                                                                
+            ADD 1                    TO WS-CNT-READ-F310.                       
+                                                                                
+       100-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      **************************************************************            
+       200-PROCESS-F310.                                                        
+      **************************************************************            
+                                                                                
+           MOVE SPACES TO WS-K800-MATCH.                                        
+           MOVE SPACES TO WS-K110-MATCH.                                        
+           MOVE F310-REGN-NO  TO   K800-NUM-REGN.                               
+           PERFORM 310-READ-K800 THRU 310-EXIT.                                 
+           PERFORM  900-K830-READ   THRU 900-EXIT.                              
+                                                                                
+           IF WS-K800-MATCH = 'Y'                                               
+            IF  K800-NUM-TENANCY-DISC = 'Y'  AND                                
+                     K800-NUM-ALLO-SCHEME = 'RED'                               
+                IF F310-SCH-ACC = K800-NUM-SCH-ACC                              
+                   PERFORM 210-PROCESS-SELL-PRICE THRU 210-EXIT                 
+                ELSE                                                            
+                    DISPLAY 'F310-SCH-ACC NOT TALLY '                           
+                             F310-SCH-ACC ' REGN=' F310-REGN-NO                 
+                    DISPLAY 'K800 --> SCH-ACC, REGN'                            
+                             K800-NUM-SCH-ACC ',' K800-NUM-REGN                 
+                END-IF                                                          
+             ELSE                                                               
+                 DISPLAY 'NOT RED CASE F310-SCH= '                              
+                             F310-SCH-ACC ' REGN=' F310-REGN-NO                 
+                 DISPLAY 'K800-ALLOC-SCHEME --> ' K800-NUM-ALLO-SCHEME          
+            END-IF                                                              
+           END-IF.                                                              
+                                                                                
+           PERFORM 100-READ-F310 THRU 100-EXIT.                                 
+                                                                                
+       200-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+       210-PROCESS-SELL-PRICE.                                                  
+                 MOVE K800-NUM-SCH-ACC TO K110-KEY-FLD                          
+                 PERFORM 320-READ-K110 THRU 320-EXIT                            
+                 IF WS-K110-MATCH = 'Y'                                         
+                    PERFORM 500-PROCESS-LIST                                    
+                       THRU 500-EXIT                                            
+                    PERFORM 525-PROCESS-LIST                                    
+                       THRU 525-EXIT                                            
+                 END-IF.                                                        
+       210-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+                                                                                
+      *--------------*                                                          
+       310-READ-K800.                                                           
+      *--------------*                                                          
+           READ BP13K800.                                                       
+           IF K800-STATUS = 0                                                   
+              MOVE 'Y' TO WS-K800-MATCH                                         
+           ELSE                                                                 
+              IF K800-STATUS = 23                                               
+                 MOVE 'N' TO WS-K800-MATCH                                      
+              ELSE                                                              
+                 DISPLAY 'READ ERROR, K800-STATUS = ' K800-STATUS               
+                 DISPLAY 'K800-NUM-REGN = ' K800-NUM-REGN                       
+                 MOVE K800-STATUS TO RETURN-CODE                                
+                 GO TO 999-CLOSING-ROUTINE.                                     
+                                                                                
+       310-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *--------------*                                                          
+       320-READ-K110.                                                           
+      *--------------*                                                          
+           READ BM06K110.                                                       
+           IF BM06K110-STATUS = 0                                               
+              MOVE 'Y' TO WS-K110-MATCH                                         
+              MOVE K110-REC TO WS-K110-REC                                      
+           ELSE                                                                 
+              IF BM06K110-STATUS = 23                                           
+                 MOVE 'N' TO WS-K110-MATCH                                      
+                 DISPLAY 'REC NOT FOUND IN K110 ' K110-KEY-FLD                  
+              ELSE                                                              
+                 DISPLAY 'READ ERROR, K110-STATUS = ' BM06K110-STATUS           
+                 DISPLAY 'K110-KEY-FLD = ' K110-KEY-FLD                         
+                 MOVE BM06K110-STATUS TO RETURN-CODE                            
+                 GO TO 999-CLOSING-ROUTINE                                      
+              END-IF                                                            
+           END-IF.                                                              
+       320-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ************************************************************              
+       500-PROCESS-LIST.                                                        
+      ************************************************************              
+                                                                                
+           MOVE 'N'               TO WS-FLAG.                                   
+           IF CNT-NUM-LINE > 53                                                 
+               PERFORM 600-PRINT-LIST THRU 600-EXIT                             
+           END-IF.                                                              
+                                                                                
+           ADD 1                  TO WS-SEQ.                                    
+           MOVE WS-SEQ            TO L28A-NO.                                   
+           PERFORM 550-PREP-LIST  THRU 550-EXIT.                                
+       500-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      ************************************************************              
+       525-PROCESS-LIST.                                                        
+      ************************************************************              
+           MOVE 'Y'               TO WS-FLAG.                                   
+           IF CNT-NUM-LINE1 > 53                                                
+               PERFORM 600-PRINT-LIST THRU 600-EXIT                             
+           END-IF.                                                              
+                                                                                
+           ADD 1                  TO WS-SEQ1.                                   
+           MOVE WS-SEQ1           TO L28A-NO.                                   
+           PERFORM 550-PREP-LIST  THRU 550-EXIT.                                
+       525-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *--------------*                                                          
+       550-PREP-LIST.                                                           
+      *--------------*                                                          
+                                                                                
+            MOVE F310-REGN-NO         TO L28A-CUR-REGN-NO.                      
+            MOVE '-'                  TO L28A-D1 L28A-D2                        
+                                         L28A-D3.                               
+            MOVE K110-SCHEME          TO L28A-SCHEME.                           
+            MOVE K110-ACC             TO L28A-ACC.                              
+            MOVE K110-CHK             TO L28A-CHK.                              
+            MOVE K110-ACC-TYPE        TO L28A-ACC-TYPE.                         
+            MOVE K800-NUM-NEW-TOWN    TO L28A-NT.                               
+            MOVE F310-CDE-FLAT-TYPE   TO L28A-FLAT.                             
+            MOVE F310-NUM-BLK         TO L28A-BLK-NO.                           
+            MOVE F310-NME-STREET      TO L28A-STREET.                           
+            MOVE F310-NUM-LEVEL       TO L28A-LEVEL-NO.                         
+            MOVE F310-NUM-MAIN (1:4)  TO L28A-UNIT-NO.                          
+            MOVE F310-NUM-MAIN (5:1)  TO L28A-SUB-UNIT.                         
+            MOVE F310-NUM-POSTAL      TO L28A-POSTAL-CODE.                      
+                                                                                
+            MOVE K800-NUM-DISCOUNT-PERIOD  TO L28A-PERIOD-TENANCY.              
+            MOVE K800-DTE-TENANCY-COMMENCE TO WS-TENANCY-DATE.                  
+               STRING WS-TEN-DD '/'                                             
+                      WS-TEN-MM '/'                                             
+                      WS-TEN-CC                                                 
+                      WS-TEN-YY                                                 
+                      DELIMITED BY SIZE                                         
+                 INTO L28A-ST-DATE.                                             
+                                                                                
+                                                                                
+            STRING F310-DTE-DD '/'                                              
+                   F310-DTE-MM '/'                                              
+                   F310-DTE-CC                                                  
+                   F310-DTE-YY                                                  
+                   DELIMITED BY SIZE                                            
+              INTO L28A-DTE-ACCEPT.                                             
+                                                                                
+            MOVE K110-1ST-OFFER-SELLING-PRICE TO L28A-OFFR-SPRICE.              
+            MOVE K110-CURR-SELLING-PRICE      TO L28A-CURR-SPRICE.              
+            MOVE K110-AMT-FLAT-DISCOUNT       TO L28A-AMT-FLAT-DISC.            
+            MOVE K110-AMT-POD                 TO L28A-POD-AMT.                  
+            MOVE K110-AMT-POF                 TO L28A-POF-AMT.                  
+                                                                                
+            IF K800-NUM-UTS-STATUS = 'MU2'                                      
+               PERFORM 560-GET-MUP-COST     THRU 560-EXIT                       
+            ELSE                                                                
+               MOVE +0                      TO   WS-AMT-MUP-COST                
+            END-IF.                                                             
+                                                                                
+            MOVE WS-AMT-MUP-COST TO L28A-UPG-COST.                              
+                                                                                
+            IF WS-FLAG = 'Y'                                                    
+              WRITE P13L282B-REC FROM L28A-PR-DETAIL   AFTER 1                  
+              WRITE P13L282B-REC FROM L28A-PR-DETAIL-A AFTER 1                  
+              MOVE SPACES TO P13L282B-REC                                       
+              WRITE P13L282B-REC                                                
+              WRITE P13L282B-REC         FROM L280-PR-DETAIL-B AFTER 1          
+              MOVE SPACES TO P13L282B-REC                                       
+              WRITE P13L282B-REC                                                
+              PERFORM 700-K820-PARA  THRU 700-EXIT                              
+              PERFORM 800-MOVE       THRU 800-EXIT 15 TIMES                     
+              WRITE P13L282B-REC         FROM L28B-PR-HEAD-07  AFTER 1          
+              WRITE P13L282B-REC         FROM L28B-PR-HEAD-08  AFTER 1          
+              MOVE SPACES TO   P13L282B-REC                                     
+              WRITE P13L282B-REC                                                
+              WRITE P13L282B-REC                                                
+              WRITE P13L282B-REC         FROM L28B-PR-HEAD-09  AFTER 1          
+              MOVE SPACES TO  P13L282B-REC                                      
+              WRITE P13L282B-REC                                                
+              WRITE P13L282B-REC                                                
+              ADD 50                     TO CNT-NUM-LINE1                       
+            ELSE                                                                
+              WRITE P13L282A-REC         FROM L28A-PR-DETAIL   AFTER 1          
+              WRITE P13L282A-REC         FROM L28A-PR-DETAIL-A AFTER 1          
+              MOVE SPACES TO P13L282A-REC                                       
+              WRITE P13L282A-REC                                                
+              PERFORM 700-K820-PARA  THRU 700-EXIT                              
+              MOVE SPACES TO P13L282A-REC                                       
+              WRITE P13L282A-REC                                                
+              ADD 4                 TO CNT-NUM-LINE                             
+            END-IF.                                                             
+                                                                                
+       550-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *--------------------*                                                    
+       560-GET-MUP-COST.                                                        
+      *--------------------*                                                    
+           IF K110-AMT-MUP-COST1 NOT NUMERIC                                    
+              MOVE ZEROES TO K110-AMT-MUP-COST1                                 
+           END-IF.                                                              
+                                                                                
+           IF K110-AMT-MUP-COST2 NOT NUMERIC                                    
+              MOVE ZEROES TO K110-AMT-MUP-COST2                                 
+           END-IF.                                                              
+                                                                                
+           IF (K110-AMT-MUP-COST1 > 0 AND                                       
+               K110-AMT-MUP-COST2 > 0)                                          
+              COMPUTE WS-AMT-MUP-COST  = K110-AMT-MUP-COST2 -                   
+                                         K110-AMT-MUP-COST1                     
+              IF WS-AMT-MUP-COST < 0                                            
+                 MOVE +0       TO WS-AMT-MUP-COST                               
+              END-IF                                                            
+           ELSE                                                                 
+              MOVE +0          TO WS-AMT-MUP-COST                               
+           END-IF.                                                              
+                                                                                
+       560-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *----------------------------------------------------------------*        
+       600-PRINT-LIST.                                                          
+      *----------------------------------------------------------------*        
+            PERFORM 650-PRINT-HEADER THRU 650-EXIT.                             
+            MOVE SPACES             TO P13L282A-REC.                            
+            IF WS-FLAG = 'N'                                                    
+              ADD 1                 TO CNT-NUM-LINE                             
+            ELSE                                                                
+              ADD 1                 TO CNT-NUM-LINE1                            
+            END-IF.                                                             
+                                                                                
+       600-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+      *-------------------*                                                     
+       650-PRINT-HEADER.                                                        
+      *-------------------*                                                     
+                                                                                
+            IF WS-FLAG = 'N'                                                    
+               ADD 1                 TO CNT-PAGE                                
+               MOVE CNT-PAGE         TO L28A-PAGENO                             
+               MOVE 10               TO CNT-NUM-LINE                            
+            ELSE                                                                
+               ADD 1                 TO CNT-PAGE1                               
+               MOVE CNT-PAGE1        TO L28A-PAGENO                             
+               MOVE 10               TO CNT-NUM-LINE1                           
+            END-IF.                                                             
+            MOVE FUNCTION CURRENT-DATE TO WS-DATE.                              
+            STRING WS-DATE (7:2) '/'                                            
+                   WS-DATE (5:2) '/'                                            
+                   WS-DATE (1:4)                                                
+                   DELIMITED BY SIZE                                            
+              INTO L28A-DATE.                                                   
+            MOVE F310-USERID           TO L28A-USERID L28B-USERID.              
+            IF WS-FLAG = 'N'                                                    
+              WRITE P13L282A-REC FROM L28A-PR-HEAD-01 AFTER PAGE                
+              WRITE P13L282A-REC FROM L28A-PR-HEAD-02 AFTER 1                   
+              WRITE P13L282A-REC FROM L28A-PR-HEAD-03 AFTER 1                   
+              WRITE P13L282A-REC FROM L28A-PR-HEAD-04 AFTER 3                   
+              WRITE P13L282A-REC FROM L28A-PR-HEAD-05 AFTER 1                   
+              WRITE P13L282A-REC FROM L28A-PR-HEAD-06 AFTER 1                   
+              WRITE P13L282A-REC FROM L28A-PR-HEAD-07 AFTER 1                   
+              WRITE P13L282A-REC FROM L28A-PR-LINE    AFTER 1                   
+              MOVE SPACES           TO P13L282A-REC                             
+              WRITE P13L282A-REC                                                
+            ELSE                                                                
+              WRITE P13L282B-REC FROM L28A-PR-HEAD-01 AFTER PAGE                
+              WRITE P13L282B-REC FROM L28A-PR-HEAD-02 AFTER 1                   
+              WRITE P13L282B-REC FROM L28A-PR-HEAD-03 AFTER 1                   
+              WRITE P13L282B-REC FROM L28A-PR-HEAD-04 AFTER 3                   
+              WRITE P13L282B-REC FROM L28A-PR-HEAD-05 AFTER 1                   
+              WRITE P13L282B-REC FROM L28A-PR-HEAD-06 AFTER 1                   
+              WRITE P13L282B-REC FROM L28A-PR-HEAD-07 AFTER 1                   
+              WRITE P13L282B-REC FROM L28A-PR-LINE    AFTER 1                   
+                                                                                
+              MOVE SPACES           TO P13L282B-REC                             
+              WRITE P13L282B-REC                                                
+            END-IF.                                                             
+                                                                                
+       650-EXIT.                                                                
+            EXIT.                                                               
+                                                                                
+       700-K820-PARA.                                                           
+            IF K800-NUM-NRIC1 NOT = SPACES                                      
+               MOVE SPACES TO K820-KEY-FLD                                      
+               MOVE K800-NUM-REGN   TO K820-NUM-REGN                            
+               MOVE K800-NUM-NRIC1  TO K820-NUM-NRIC                            
+               PERFORM 750-READ-K820  THRU 750-EXIT                             
+            END-IF.                                                             
+            IF K800-NUM-NRIC2 NOT = SPACES                                      
+               MOVE SPACES TO K820-KEY-FLD                                      
+               MOVE K800-NUM-REGN   TO K820-NUM-REGN                            
+               MOVE K800-NUM-NRIC2  TO K820-NUM-NRIC                            
+               PERFORM 750-READ-K820  THRU 750-EXIT                             
+            END-IF.                                                             
+            IF K800-NUM-NRIC3 NOT = SPACES                                      
+               MOVE SPACES TO K820-KEY-FLD                                      
+               MOVE K800-NUM-REGN   TO K820-NUM-REGN                            
+               MOVE K800-NUM-NRIC3  TO K820-NUM-NRIC                            
+               PERFORM 750-READ-K820  THRU 750-EXIT                             
+            END-IF.                                                             
+            IF K800-NUM-NRIC4 NOT = SPACES                                      
+               MOVE SPACES TO K820-KEY-FLD                                      
+               MOVE K800-NUM-REGN   TO K820-NUM-REGN                            
+               MOVE K800-NUM-NRIC4  TO K820-NUM-NRIC                            
+               PERFORM 750-READ-K820  THRU 750-EXIT                             
+            END-IF.                                                             
+       700-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       750-READ-K820.                                                           
+                                                                                
+            READ BP13K820 RECORD KEY IS K820-KEY-FLD                            
+               IF WS-K820-STATUS = '00'                                         
+                  MOVE K820-NUM-NRIC        TO L28A-NRIC                        
+                  MOVE K820-NME-OCCP        TO L28A-NAME                        
+               IF K820-NUM-DEBAR-SHAP1 = SPACES                                 
+                  MOVE 'N'                  TO L28A-SHAP1                       
+               ELSE                                                             
+                  MOVE K820-NUM-DEBAR-SHAP1 TO L28A-SHAP1                       
+               END-IF                                                           
+               IF K820-NUM-DEBAR-SHAP2 = SPACES                                 
+                  MOVE 'N'                  TO L28A-SHAP2                       
+               ELSE                                                             
+                  MOVE K820-NUM-DEBAR-SHAP2 TO L28A-SHAP2                       
+               END-IF                                                           
+             IF WS-FLAG = 'N'                                                   
+              WRITE P13L282A-REC         FROM L28A-PR-DETAIL-B AFTER 1          
+              ADD 1                      TO CNT-NUM-LINE                        
+             ELSE                                                               
+              WRITE P13L282B-REC         FROM L28A-PR-DETAIL-B AFTER 1          
+              ADD 1                      TO CNT-NUM-LINE1                       
+             END-IF                                                             
+               ELSE                                                             
+                IF WS-K820-STATUS = '23'                                        
+                    MOVE  SPACES TO BP13K820-REC                                
+                    INITIALIZE      BP13K820-REC                                
+                  ELSE                                                          
+                   DISPLAY 'WS-K820-STATUS IS: ' WS-K820-STATUS                 
+                   PERFORM 999-CLOSING-ROUTINE                                  
+                END-IF                                                          
+               END-IF.                                                          
+                                                                                
+       750-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       800-MOVE.                                                                
+                                                                                
+           MOVE SPACES TO P13L282B-REC.                                         
+           WRITE P13L282B-REC.                                                  
+                                                                                
+       800-EXIT.                                                                
+           EXIT.                                                                
+                                                                                
+       900-K830-READ.                                                           
+                                                                                
+           IF WS-K800-MATCH = 'Y'                                               
+             INITIALIZE BP13K830-REC                                            
+             MOVE K800-NUM-REGN       TO K830-NUM-REGN                          
+             READ BP13K830 KEY IS K830-NUM-REGN                                 
+             IF WS-K830-STATUS = 0                                              
+               MOVE K830-NUM-BLK-HDR          TO L280-BLK                       
+               MOVE K830-NUM-MAIN-BLK         TO L280-BLK-NO                    
+               MOVE K830-NUM-LVL-CHAR         TO L280-HEX                       
+               MOVE K830-NUM-LVL-NUM          TO L280-LEVEL-NO                  
+               MOVE K830-NUM-LVL-DASH         TO L280-DASH                      
+               MOVE K830-NUM-HSEMAIN          TO L280-UNIT-NO                   
+               MOVE K830-NUM-HSESUB           TO L280-SUB-UNIT                  
+               MOVE K830-NME-STREET           TO L280-STREET                    
+               MOVE 'S('                      TO L280-POSTAL1                   
+               MOVE K830-NUM-POSTAL           TO L280-POSTAL-CODE               
+               MOVE ')'                       TO L280-POSTAL2                   
+             ELSE                                                               
+                IF WS-K830-STATUS = 23                                          
+                   MOVE 'N' TO WS-K830-MATCH                                    
+                ELSE                                                            
+                 DISPLAY 'READ ERROR, K830-STATUS = ' WS-K830-STATUS            
+                 DISPLAY 'K830-NUM-REGN = ' K830-NUM-REGN                       
+                 MOVE WS-K830-STATUS TO RETURN-CODE                             
+                 GO TO 999-CLOSING-ROUTINE                                      
+                END-IF                                                          
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+        900-EXIT.                                                               
+            EXIT.                                                               
+                                                                                
+      *-------------------*                                                     
+       999-CLOSING-ROUTINE.                                                     
+      *-------------------*                                                     
+                                                                                
+           DISPLAY '  '.                                                        
+           DISPLAY '*---------------  BP13C282  --------------*'.               
+           DISPLAY 'TOTAL NO OF REC READ FROM BP13F310 = '                      
+                   WS-CNT-READ-F310.                                            
+           DISPLAY ' '.                                                         
+                                                                                
+           CLOSE BP13F310                                                       
+                 BM06K110                                                       
+                 BP13K800                                                       
+                 P13L282A                                                       
+                 P13L282B.                                                      
+                                                                                
+           IF BM06K110-STATUS NOT = 0                                           
+               DISPLAY 'CLOSING ERROR, K110-STATUS ' BM06K110-STATUS.           
+           IF K800-STATUS NOT = 0                                               
+               DISPLAY 'CLOSING ERROR, K800-STATUS ' K800-STATUS.               
+           STOP RUN.                                                            
+                                                                                
+

@@ -1,0 +1,490 @@
+       IDENTIFICATION DIVISION.                                                 
+       PROGRAM-ID.    BP13CC33.                                                 
+       AUTHOR.        BALA AMUTHAN.                                             
+       DATE-WRITTEN.  09/10/2006.                                               
+      *****************************************************************         
+      * OBJECTIVE - TO COMPUTE NUMBER OF CUURENT RECORD WITH LOAN               
+      *             UPDATE NO OF REC FOR F PN/CLOSE-BALANCE.                    
+      *                                                                         
+      * SUBROUTINE     - NIL                                                    
+      *                                                                         
+      *----------------------------------------------------------------         
+      * REF NO   DATE    BY   AMENDMENTS/ENHANCEMENTS                           
+      * -------  ----    ---  -----------------------                           
+      * BP132772 091006  BA2  NEW PGM                                           
+      * BP132772 080207  BA3  MOVE CLOSING BALANCE TO OPENING BALANCE           
+      *                       AND COMPARE THE OPENING BALANCE WITH THE          
+      *                       OPENING BALANCE COMPUTED FROM BP13FD60.           
+      *                       IF THE OPENING BALANCE ARE NOT EQUAL,             
+      *                       THE PROGRAM WILL ABEND WITH COND CODE 99.         
+      * BP132888 030307  BA3  COMPARE THE BP13KD69 CLOSING BALANCE TO           
+      *                       TOTAL LOAN BALANCE FROM BP13FD60.                 
+      * BP133052 050607  BA3  CHANGE CONDITION LOAN-BAL NOT = ZEROES            
+      *                       TO CATER FOR NEGATIVE VALUES                      
+      * BP133091 171007  RB12 EXPAND BP13FD00 FROM 1200 TO 1600 BYTES           
+      * BP133209 070308  ED1  CONTINUE PROCESS WHEN OPEN & CLOSE BALANCE        
+      *                       ARE NOT EQUAL                                     
+      * BP133111 180308  ED1  1) INCLUDE CASES WHEN DTE-REPUD YR & MO IS        
+      *                       EQUAL TO PREV MO, & 2) CATER FOR SEPARATE         
+      *                       PROCESSING OF CONCESS & NON-CONCESS CASES         
+      * BP133545 060309  JB8  TO CATER FOR SUBTRANSFER                          
+      * BP134154 150411  JB8  TO CATER FOR RE-FINANCING                         
+      * BP134040 181011  JB8  TO CATER FOR LOAN CONVERSION CASES                
+      * BP134744 040213  LJL1 TO CATER FOR 2ND CON LOAN                         
+      * BP134527 090513  IMC1 MOVE F136 OUTPUT TO BP13CD89                      
+      *****************************************************************         
+                                                                                
+                                                                                
+       ENVIRONMENT DIVISION.                                                    
+       CONFIGURATION SECTION.                                                   
+       SOURCE-COMPUTER. IBM-3090.                                               
+       OBJECT-COMPUTER. IBM-3090.                                               
+       INPUT-OUTPUT SECTION.                                                    
+       FILE-CONTROL.                                                            
+           SELECT BP13FD00  ASSIGN TO BP13FD00.                                 
+                                                                                
+           SELECT BP13FD60  ASSIGN TO BP13FD60.                                 
+                                                                                
+           SELECT BP13KD69  ASSIGN TO BP13KD69                                  
+                  ORGANIZATION     IS INDEXED                                   
+                  RECORD KEY       IS KD69-NUM-TRANS                            
+                  FILE STATUS      IS KD69-STATUS                               
+                  ACCESS           IS RANDOM.                                   
+                                                                                
+           SELECT SY02F001 ASSIGN TO SY02F001.                                  
+                                                                                
+       DATA DIVISION.                                                           
+       FILE SECTION.                                                            
+                                                                                
+       FD  BP13FD00                   BLOCK CONTAINS 0 RECORDS                  
+                                      RECORD CONTAINS 1600 CHARACTERS           
+                                      LABEL RECORD IS STANDARD                  
+                                      RECORDING MODE IS F.                      
+       COPY BP13FD00.                                                           
+                                                                                
+       FD  BP13FD60                   BLOCK CONTAINS 0 RECORDS                  
+                                      RECORD CONTAINS 250 CHARACTERS            
+                                      LABEL RECORD IS STANDARD                  
+                                      RECORDING MODE IS F.                      
+       COPY BP13FD60.                                                           
+                                                                                
+       FD  BP13KD69                                                             
+                                      RECORD CONTAINS 150 CHARACTERS.           
+       COPY BP13KD69.                                                           
+                                                                                
+       COPY SY02F001.                                                           
+                                                                                
+       WORKING-STORAGE SECTION.                                                 
+                                                                                
+       01  WS-STATUS.                                                           
+           05 FD00-STATUS              PIC 99       VALUE ZEROS.                
+           05 FD60-STATUS              PIC 99       VALUE ZEROS.                
+           05 KD69-STATUS              PIC 99       VALUE ZEROS.                
+                                                                                
+       01  WS-COUNTERS.                                                         
+           05 WS-CNT-FD00-RD           PIC 9(6) COMP VALUE 0.                   
+           05 WS-CNT-FD60-RD           PIC 9(6) COMP VALUE 0.                   
+           05 WS-CNT-F136-WRITE        PIC 9(6) COMP VALUE 0.                   
+           05 WS-CNT-KD69-WRITE        PIC 9(6) COMP VALUE 0.                   
+           05 WS-CNT-KD69-UPDATE       PIC 9(6) COMP VALUE 0.                   
+                                                                                
+       01  WS-CLSE-OPEN.                                                        
+           05 WS-AMT-OPEN-LOAN-BAL     PIC S9(9)V99 VALUE ZEROES.               
+           05 WS-AMT-OPEN-REC-CNT      PIC 9(6)     VALUE ZEROES.               
+           05 WS-AMT-CLSE-LOAN-BAL     PIC S9(9)V99 VALUE ZEROES.               
+           05 WS-AMT-CLSE-REC-CNT      PIC 9(6)     VALUE ZEROES.               
+                                                                                
+       01  WS-CURR-DATE.                                                        
+           02 WS-CURRENT-DATE.                                                  
+              05 WS-DATE-CYM.                                                   
+                 10 WS-DATE-CCYY       PIC X(4).                                
+                 10 WS-DATE-MM         PIC X(2).                                
+              05 WS-DATE-DD            PIC X(2).                                
+                                                                                
+           02 WS-DTE-TODAY REDEFINES WS-CURRENT-DATE.                           
+              05 WS-DTE-TODAY-CC       PIC 9(2).                                
+              05 WS-DTE-TODAY-YMD.                                              
+                 10 WS-DTE-TODAY-YY    PIC 9(2).                                
+                 10 WS-DTE-TODAY-MM    PIC 9(2).                                
+                 10 WS-DTE-TODAY-DD    PIC 9(2).                                
+                                                                                
+       01  WS-CURRENT-DATE1.                                                    
+           05  WS-DATE1.                                                        
+                10  WS-DATE1-CYM.                                               
+                    15  WS-DATE1-CCYY  PIC X(4).                                
+                    15  WS-DATE1-MM    PIC X(2).                                
+                10  WS-DATE1-DD        PIC X(2).                                
+           05  WS-CURRENT-TIME         PIC X(9).                                
+           05  WS-TIME REDEFINES WS-CURRENT-TIME.                               
+                10  WS-HH              PIC 9(2).                                
+                10  WS-MM              PIC 9(2).                                
+                10  WS-SS              PIC 9(2).                                
+                10  WS-MS              PIC 9(2).                                
+                10  WS-GM              PIC 9(1).                                
+           05  FILLER                  PIC X(4).                                
+                                                                                
+       01  WS-DTE-EFF-CNVRSE           PIC X(08).                               
+                                                                                
+       01  WS-SWITCH.                                                           
+           05 WS-FD00-END              PIC X(1) VALUE 'N'.                      
+           05 WS-FD60-END              PIC X(1) VALUE 'N'.                      
+           05 WS-NON-CONCESS           PIC X(1) VALUE 'N'.                      
+                                                                                
+       PROCEDURE DIVISION.                                                      
+                                                                                
+      ******************************************************************        
+       0000-MAIN.                                                               
+      ******************************************************************        
+                                                                                
+           PERFORM 1000-START-UP       THRU 1000-EXIT.                          
+           PERFORM 2000-MAIN-PROCESS   THRU 2000-EXIT.                          
+           PERFORM 9999-WRAP-UP        THRU 9999-EXIT.                          
+                                                                                
+       0000-EXIT.                                                               
+           EXIT.                                                                
+                                                                                
+      ******************************************************************        
+       1000-START-UP.                                                           
+      ******************************************************************        
+                                                                                
+            OPEN INPUT BP13FD00                                                 
+                       SY02F001                                                 
+                       BP13FD60                                                 
+                 I-O   BP13KD69.                                                
+                                                                                
+           IF  KD69-STATUS NOT = '00' AND '97'                                  
+               DISPLAY 'ERROR OPEN BP13KD69 : ' KD69-STATUS                     
+               MOVE KD69-STATUS TO RETURN-CODE                                  
+               PERFORM 9999-WRAP-UP        THRU 9999-EXIT                       
+           END-IF.                                                              
+                                                                                
+      ******************************************************************        
+       1000-GET-DATE.                                                           
+      ******************************************************************        
+                                                                                
+           READ SY02F001 AT END                                                 
+                DISPLAY 'RECORD NOT FOUND - SY02F001.'.                         
+                                                                                
+           MOVE F001-DTE-CURRENT      TO  WS-CURRENT-DATE.                      
+                                                                                
+           MOVE FUNCTION CURRENT-DATE TO  WS-CURRENT-DATE1.                     
+                                                                                
+           STRING F001-DTE-LAST-DAY-PREV(1:6) '01'                              
+                  DELIMITED BY SIZE INTO WS-DTE-EFF-CNVRSE.                     
+                                                                                
+       1000-EXIT. EXIT.                                                         
+                                                                                
+                                                                                
+      ******************************************************************        
+       2000-MAIN-PROCESS.                                                       
+      ******************************************************************        
+                                                                                
+           PERFORM 3000-READ-BP13FD60       THRU 3000-EXIT.                     
+           PERFORM 3100-DETERMINE-TYPE      THRU 3100-EXIT.                     
+           PERFORM 3500-UPDATE-OPENING-REC  THRU 3500-EXIT                      
+                   UNTIL WS-FD60-END = 'Y'.                                     
+                                                                                
+           PERFORM 4000-READ-BP13FD00       THRU 4000-EXIT.                     
+           PERFORM 3100-DETERMINE-TYPE      THRU 3100-EXIT.                     
+           PERFORM 4500-UPDATE-CLOSING-REC  THRU 4500-EXIT                      
+                   UNTIL WS-FD00-END = 'Y'.                                     
+           PERFORM 5100-READ-BP13KD69       THRU 5100-EXIT.                     
+                                                                                
+       2000-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       3000-READ-BP13FD60.                                                      
+      ******************************************************************        
+                                                                                
+           READ BP13FD60 AT END                                                 
+                MOVE 'Y'         TO WS-FD60-END                                 
+                GO TO 3000-EXIT.                                                
+           ADD 1 TO WS-CNT-FD60-RD.                                             
+                                                                                
+       3000-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       3100-DETERMINE-TYPE.                                                     
+      ******************************************************************        
+           IF (WS-CNT-FD60-RD = 1 AND FD60-CDE-LOAN-SCH NOT = 'P') OR           
+              (WS-CNT-FD00-RD = 1 AND FD00-CDE-LOAN-SCH NOT = 'P')              
+              MOVE 'Y' TO WS-NON-CONCESS                                        
+           END-IF.                                                              
+                                                                                
+       3100-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       3500-UPDATE-OPENING-REC.                                                 
+      ******************************************************************        
+           IF WS-FD60-END = 'Y'                                                 
+              GO TO 3500-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           IF FD60-AMT-OPEN-LOAN-BAL IS NOT NUMERIC                             
+              MOVE 0 TO FD60-AMT-OPEN-LOAN-BAL                                  
+           END-IF.                                                              
+           IF FD60-AMT-OPEN-LOAN-BAL NOT = ZEROES                               
+              COMPUTE WS-AMT-OPEN-LOAN-BAL = WS-AMT-OPEN-LOAN-BAL +             
+                                             FD60-AMT-OPEN-LOAN-BAL             
+              ADD +1        TO  WS-AMT-OPEN-REC-CNT                             
+           END-IF.                                                              
+           PERFORM 3000-READ-BP13FD60       THRU 3000-EXIT.                     
+                                                                                
+       3500-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       4000-READ-BP13FD00.                                                      
+      ******************************************************************        
+                                                                                
+           READ BP13FD00 AT END                                                 
+                MOVE 'Y'         TO WS-FD00-END                                 
+                GO TO 4000-EXIT.                                                
+           ADD 1 TO WS-CNT-FD00-RD.                                             
+                                                                                
+       4000-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       4500-UPDATE-CLOSING-REC.                                                 
+      ******************************************************************        
+           IF WS-FD00-END = 'Y'                                                 
+              GO TO 4500-EXIT                                                   
+           END-IF.                                                              
+                                                                                
+           IF FD00-DTE-REPUDIATE = LOW-VALUES                                   
+              MOVE SPACES TO FD00-DTE-REPUDIATE                                 
+           END-IF.                                                              
+           IF FD00-DTE-REFINANCE = LOW-VALUES                                   
+              MOVE SPACES TO FD00-DTE-REFINANCE                                 
+           END-IF.                                                              
+           IF FD00-AMT-LOAN-BAL IS NOT NUMERIC                                  
+              MOVE ZEROES TO FD00-AMT-LOAN-BAL                                  
+           END-IF.                                                              
+                                                                                
+      *    IF FD00-CDE-LOAN-SCH = 'P' AND                                       
+      *       FD00-DTE-LOAN-CNVRSE = WS-DTE-EFF-CNVRSE                          
+      *       PERFORM 4600-PROCESS-LOAN-CNVRSE   THRU 4600-EXIT                 
+      *    END-IF.                                                              
+                                                                                
+           IF FD00-AMT-LOAN-BAL IS NUMERIC                                      
+             IF (FD00-AMT-LOAN-BAL NOT = ZEROES) OR                             
+                (FD00-DTE-REPUDIATE(1:6) =                                      
+                                       F001-DTE-LAST-DAY-PREV(1:6)) OR          
+                (FD00-DTE-EFF-TRANSFER(1:6) =                                   
+                                       F001-DTE-LAST-DAY-PREV(1:6)) OR          
+                (FD00-DTE-REFINANCE(1:6) =                                      
+                                       F001-DTE-LAST-DAY-PREV(1:6))             
+                COMPUTE WS-AMT-CLSE-LOAN-BAL = WS-AMT-CLSE-LOAN-BAL +           
+                                               FD00-AMT-LOAN-BAL                
+                ADD +1        TO  WS-AMT-CLSE-REC-CNT                           
+             END-IF                                                             
+           END-IF.                                                              
+           PERFORM 4000-READ-BP13FD00          THRU 4000-EXIT.                  
+                                                                                
+       4500-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       5000-MOVE-VALUES.                                                        
+      ******************************************************************        
+                                                                                
+           IF WS-NON-CONCESS = 'N'                                              
+              MOVE KD69-AMT-CLOSE-LOAN-BAL TO   KD69-AMT-OPEN-LOAN-BAL          
+              MOVE KD69-NUM-CLOSE-LOAN-CNT TO   KD69-NUM-OPEN-LOAN-CNT          
+              MOVE WS-AMT-CLSE-LOAN-BAL    TO   KD69-AMT-CLOSE-LOAN-BAL         
+              MOVE WS-AMT-CLSE-REC-CNT     TO   KD69-NUM-CLOSE-LOAN-CNT         
+           ELSE                                                                 
+              MOVE KD69-AMT-CLOSE-LOAN-BAL-NONCON TO                            
+                   KD69-AMT-OPEN-LOAN-BAL-NONCON                                
+              MOVE KD69-NUM-CLOSE-LOAN-CNT-NONCON TO                            
+                   KD69-NUM-OPEN-LOAN-CNT-NONCON                                
+              MOVE WS-AMT-CLSE-LOAN-BAL           TO                            
+                   KD69-AMT-CLOSE-LOAN-BAL-NONCON                               
+              MOVE WS-AMT-CLSE-REC-CNT            TO                            
+                   KD69-NUM-CLOSE-LOAN-CNT-NONCON                               
+           END-IF.                                                              
+                                                                                
+           MOVE WS-DATE1                TO   KD69-DTE-UPDATE.                   
+           MOVE WS-CURRENT-TIME         TO   KD69-TME-UPDATE.                   
+                                                                                
+           PERFORM 6000-CHECK-CLOS-BAL  THRU 6000-EXIT.                         
+                                                                                
+       5000-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       5100-READ-BP13KD69.                                                      
+      ******************************************************************        
+                                                                                
+           MOVE   SPACES             TO     BP13KD69-REC.                       
+           INITIALIZE                       BP13KD69-REC.                       
+           MOVE  'OP'                TO     KD69-NUM-TRANS.                     
+           READ BP13KD69.                                                       
+           IF KD69-STATUS = 00 OR 02                                            
+              PERFORM 5150-INITIALIZE-AMTS     THRU 5150-EXIT                   
+              PERFORM 5200-REWRITE-BP13KD69    THRU 5200-EXIT                   
+           ELSE                                                                 
+             IF KD69-STATUS = 23                                                
+                PERFORM 5300-WRITE-BP13KD69    THRU 5300-EXIT                   
+             ELSE                                                               
+                DISPLAY 'BP13KD69-READ ERROR. STATUS: '                         
+                       KD69-STATUS                                              
+                MOVE   KD69-STATUS   TO   RETURN-CODE                           
+                PERFORM 9999-WRAP-UP        THRU 9999-EXIT                      
+             END-IF                                                             
+           END-IF.                                                              
+                                                                                
+       5100-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       5150-INITIALIZE-AMTS.                                                    
+      ******************************************************************        
+           IF KD69-AMT-OPEN-LOAN-BAL IS NOT NUMERIC                             
+              MOVE 0 TO  KD69-AMT-OPEN-LOAN-BAL                                 
+           END-IF.                                                              
+           IF KD69-NUM-OPEN-LOAN-CNT IS NOT NUMERIC                             
+              MOVE 0 TO  KD69-NUM-OPEN-LOAN-CNT                                 
+           END-IF.                                                              
+           IF KD69-AMT-CLOSE-LOAN-BAL IS NOT NUMERIC                            
+              MOVE 0 TO  KD69-AMT-CLOSE-LOAN-BAL                                
+           END-IF.                                                              
+           IF KD69-NUM-CLOSE-LOAN-CNT IS NOT NUMERIC                            
+              MOVE 0 TO  KD69-NUM-CLOSE-LOAN-CNT                                
+           END-IF.                                                              
+           IF KD69-AMT-OPEN-LOAN-BAL-NONCON IS NOT NUMERIC                      
+              MOVE 0 TO  KD69-AMT-OPEN-LOAN-BAL-NONCON                          
+           END-IF.                                                              
+           IF KD69-NUM-OPEN-LOAN-CNT-NONCON IS NOT NUMERIC                      
+              MOVE 0 TO  KD69-NUM-OPEN-LOAN-CNT-NONCON                          
+           END-IF.                                                              
+           IF KD69-AMT-CLOSE-LOAN-BAL-NONCON IS NOT NUMERIC                     
+              MOVE 0 TO  KD69-AMT-CLOSE-LOAN-BAL-NONCON                         
+           END-IF.                                                              
+           IF KD69-NUM-CLOSE-LOAN-CNT-NONCON IS NOT NUMERIC                     
+              MOVE 0 TO  KD69-NUM-CLOSE-LOAN-CNT-NONCON                         
+           END-IF.                                                              
+                                                                                
+                                                                                
+       5150-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       5200-REWRITE-BP13KD69.                                                   
+      ******************************************************************        
+           PERFORM 5000-MOVE-VALUES       THRU 5000-EXIT.                       
+           REWRITE BP13KD69-REC.                                                
+                                                                                
+           IF KD69-STATUS = 00 OR 02                                            
+              ADD 1                       TO WS-CNT-KD69-UPDATE                 
+           ELSE                                                                 
+              DISPLAY ' BP13KD69-REWRITING ERROR, STATUS: '                     
+                     KD69-STATUS                                                
+              MOVE KD69-STATUS            TO   RETURN-CODE                      
+              PERFORM 9999-WRAP-UP        THRU 9999-EXIT                        
+           END-IF.                                                              
+                                                                                
+       5200-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       5300-WRITE-BP13KD69.                                                     
+      ******************************************************************        
+           PERFORM 5000-MOVE-VALUES       THRU 5000-EXIT.                       
+           WRITE BP13KD69-REC.                                                  
+           IF KD69-STATUS = 00 OR 02                                            
+              ADD 1                       TO   WS-CNT-KD69-WRITE                
+           ELSE                                                                 
+              DISPLAY ' BP13KD69-WRITING ERROR, STATUS: '                       
+                       KD69-STATUS                                              
+              MOVE KD69-STATUS            TO   RETURN-CODE                      
+              PERFORM 9999-WRAP-UP        THRU 9999-EXIT                        
+           END-IF.                                                              
+                                                                                
+       5300-EXIT.  EXIT.                                                        
+                                                                                
+      ******************************************************************        
+       6000-CHECK-CLOS-BAL.                                                     
+      ******************************************************************        
+      * KD69-AMT-OPEN-LOAN-BAL CONTAINS ALREADY THE VALUES FROM                 
+      *   KD69-AMT-CLOSE-LOAN-BAL.                                              
+      * WS-AMT-OPEN-LOAN-BAL IS THE ACCUMULATED LOAN BALANCE FROM               
+      *   BP13FD60.                                                             
+      ******************************************************************        
+            IF (WS-NON-CONCESS = 'N' AND                                        
+                KD69-AMT-CLOSE-LOAN-BAL NOT = WS-AMT-OPEN-LOAN-BAL)             
+                                                                                
+               MOVE 99  TO RETURN-CODE                                          
+                                                                                
+               DISPLAY 'CLOSING BALANCE NOT EQUAL: '                            
+               DISPLAY '    KD69-AMT-CLOSE-LOAN-BAL : '                         
+                            KD69-AMT-CLOSE-LOAN-BAL                             
+                       '    FD60-OPENING-LOAN-BAL  : '                          
+                            WS-AMT-OPEN-LOAN-BAL                                
+                                                                                
+      *****    GO TO 9999-WRAP-UP                                               
+                                                                                
+            ELSE                                                                
+                                                                                
+              IF ( WS-NON-CONCESS = 'Y' AND                                     
+                   KD69-AMT-CLOSE-LOAN-BAL-NONCON                               
+                                        NOT = WS-AMT-OPEN-LOAN-BAL)             
+                                                                                
+                 MOVE 99  TO RETURN-CODE                                        
+                                                                                
+                 DISPLAY 'CLOSING BALANCE NOT EQUAL: '                          
+                 DISPLAY '    KD69-AMT-CLOSE-LOAN-BAL-NONCON : '                
+                              KD69-AMT-CLOSE-LOAN-BAL                           
+                         '    FD60-OPENING-LOAN-BAL-NONCON : '                  
+                              WS-AMT-OPEN-LOAN-BAL                              
+               END-IF                                                           
+            END-IF.                                                             
+                                                                                
+            IF WS-AMT-OPEN-REC-CNT = 0                                          
+               DISPLAY ' ***  NO OPEN-REC(FD60) W/ LN-BAL ***'                  
+            END-IF.                                                             
+            IF WS-AMT-CLSE-REC-CNT = 0                                          
+               DISPLAY ' ***  NO CLOSE-REC(FD00) W/ LN-BAL ***'                 
+            END-IF.                                                             
+            IF WS-CNT-FD60-RD      = 0                                          
+               DISPLAY ' ***  EMPTY BP13FD60 INPUT ***'                         
+            END-IF.                                                             
+            IF WS-CNT-FD00-RD      = 0                                          
+               DISPLAY ' ***  EMPTY BP13FD00 INPUT ***'                         
+            END-IF.                                                             
+                                                                                
+       6000-EXIT.  EXIT.                                                        
+                                                                                
+                                                                                
+      ******************************************************************        
+       9999-WRAP-UP.                                                            
+      ******************************************************************        
+           DISPLAY  SPACES.                                                     
+           DISPLAY '******* CONTROL   COUNTS ********'.                         
+           DISPLAY 'PROGRAM-ID : BP13CC33'                                      
+           DISPLAY  SPACES.                                                     
+           DISPLAY 'NO. OF BP13FD00 RECS READ    : ' WS-CNT-FD00-RD.            
+           DISPLAY 'NO. OF BP13FD60 RECS READ    : ' WS-CNT-FD60-RD.            
+           DISPLAY 'NO. OF BP13KD69 RECS WRITTEN : '                            
+                                                  WS-CNT-KD69-WRITE             
+           DISPLAY 'NO. OF BP13KD69 RECS UPDATED : '                            
+                                                 WS-CNT-KD69-UPDATE             
+                                                                                
+           CLOSE    SY02F001                                                    
+                    BP13FD00                                                    
+                    BP13FD60                                                    
+                    BP13KD69.                                                   
+                                                                                
+           IF  KD69-STATUS NOT = '00'                                           
+               DISPLAY 'ERROR CLOSE BP13KD69 : ' KD69-STATUS                    
+               MOVE KD69-STATUS TO RETURN-CODE                                  
+           END-IF.                                                              
+           STOP RUN.                                                            
+                                                                                
+       9999-EXIT.  EXIT.                                                        
+                                                                                
+

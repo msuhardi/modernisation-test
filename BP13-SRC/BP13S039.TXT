@@ -1,0 +1,233 @@
+/*********************************************************************/         
+/** INPUT : 1. BP13F205 - READ START BALLOT                         **/         
+/**         2. F595PEND - PENDING CASES, NOT FND IN SOC/RSL/SMS/PPO/EC*/        
+/**                                                                 **/         
+/** REPORT: 1. BP13L001 - PENDING CASES GIVEN A CHANCE TO SELECT    **/         
+/**         2. BP13L002 - PENDING CASES NOT GIVEN A CHANCE TO SELECT**/         
+/**         3. BP13L003 - PENDING CASES WITH NO BK-STATUS           **/         
+/**                                                                 **/         
+/** OUTPUT: 1. BP13F001 - DATA FOR REPORT A                         **/         
+/**         2. BP13F002 - DATA FOR REPORT B                         **/         
+/**         3. BP13F003 - DATA FOR REPORT C                         **/         
+/**                                                                 **/         
+/**-----------------------------------------------------------------**/         
+/** CHECKING : A + B + C = F595PEND                                 **/         
+/**-----------------------------------------------------------------**/         
+/** CHG REQ   BY    DATE        DESCRIPTION                         **/         
+/** --------  ----  ----------  ------------------------------------**/         
+/** BP134300  JB8   13/07/2011  NEW PROGRAM                         **/         
+/*********************************************************************/         
+  %GLOBAL DATE;                                                                 
+  OPTIONS NODATE CAPS;                                                          
+                                                                                
+  /*  1) INPUT : FILE OF CASES NOT FOUND IN SOC/SMS/RSL/PPO/EC -*/              
+                                                                                
+   DATA BP13F205;                                                               
+     INFILE BP13F205 END=EOF;                                                   
+     INPUT @6    START_BALLOT $CHAR6.;                                          
+                                                                                
+     CALL SYMPUT('START_BALLOT',START_BALLOT);                                  
+                                                                                
+     IF _N_ = 1 THEN                                                            
+     DO;                                                                        
+        CUR_DTE=PUT(TODAY(),DDMMYY10.);                                         
+        CALL SYMPUT('DATE',CUR_DTE);                                            
+     END;                                                                       
+                                                                                
+   RUN;                                                                         
+                                                                                
+  /*  2) INPUT : FILE OF CASES NOT FOUND IN SOC/SMS/RSL/PPO/EC -*/              
+                                                                                
+  DATA F595PEND;                                                                
+     INFILE F595PEND END=EOF;                                                   
+     INPUT @41   NRIC        $CHAR9.                                            
+           @116  HH          $CHAR1.                                            
+           @334  BALLOT      $CHAR6.                                            
+           @334  BALLOT_YR   $CHAR4.                                            
+           @338  BALLOT_MTH  $CHAR2.                                            
+           @290  BK_STATUS   $CHAR2.                                            
+           @473  FST_APPLN   $CHAR6.;                                           
+                                                                                
+     IF HH ='T' OR HH ='H' THEN                                                 
+        HOUSEHOLD='FT';                                                         
+     ELSE                                                                       
+        HOUSEHOLD='ST';                                                         
+                                                                                
+     IF SUBSTR(BALLOT,5,2) > '00' AND                                           
+        SUBSTR(BALLOT,5,2) < '07' THEN                                          
+        QTR_OWN= SUBSTR(BALLOT,1,4) || ' 1H';                                   
+     ELSE                                                                       
+        QTR_OWN= SUBSTR(BALLOT,1,4) || ' 2H';                                   
+                                                                                
+     IF SUBSTR(FST_APPLN,5,2) > '00' AND                                        
+        SUBSTR(FST_APPLN,5,2) < '07' THEN                                       
+        QTR_FST= SUBSTR(FST_APPLN,1,4) || ' 1H';                                
+     ELSE                                                                       
+        QTR_FST= SUBSTR(FST_APPLN,1,4) || ' 2H';                                
+                                                                                
+  RUN;                                                                          
+                                                                                
+  /*----------------------------------------------------------------*/          
+  /*- OUTPUT DATA FILE FOR 1ST REPORT                              -*/          
+  /*----------------------------------------------------------------*/          
+                                                                                
+   DATA FINAL;                                                                  
+    SET F595PEND;                                                               
+     IF BK_STATUS = 'WF' OR BK_STATUS = 'LF' OR BK_STATUS = 'BF';               
+     IF FST_APPLN ^= '      ';                                                  
+   RUN;                                                                         
+                                                                                
+                                                                                
+   OPTIONS MISSING=0 LINESIZE=80 PAGESIZE=28000;                                
+   PROC PRINTTO FILE=BP13F001 NEW;                                              
+   PROC PRINT DATA=FINAL;                                                       
+    VAR NRIC FST_APPLN BALLOT BK_STATUS HOUSEHOLD;                              
+   RUN;                                                                         
+                                                                                
+  /*----------------------------------------------------------------*/          
+  /*- PREPARE DATA FOR 2ND REPORT                                  -*/          
+  /*- 1) PENDING CASES WITH 'NC/NF/NS/NV/SC/SF'                    -*/          
+  /*- 2) OUTPUT CASES NOT FND IN 1ST REPORT                        -*/          
+  /*- 3) READ BP13K593 TO COUNT UNSUCC ATTEMPT                     -*/          
+  /*----------------------------------------------------------------*/          
+                                                                                
+   DATA F595PED2;                                                               
+    SET F595PEND;                                                               
+     IF BK_STATUS = 'NC' OR BK_STATUS = 'NF' OR                                 
+        BK_STATUS = 'NS' OR BK_STATUS = 'NV' OR                                 
+        BK_STATUS = 'SC' OR BK_STATUS = 'SF';                                   
+   RUN;                                                                         
+                                                                                
+   DATA FINAL2;                                                                 
+     MERGE FINAL(IN=A) F595PED2(IN=B); BY NRIC;                                 
+     IF NOT A AND B;                                                            
+                                                                                
+    K593_KEY = NRIC;                                                            
+    INFILE BP13K593 VSAM KEY = K593_KEY;                                        
+    INPUT @;                                                                    
+    RC = _IORC_;                                                                
+    IF RC = 0 THEN                                                              
+       DO;                                                                      
+         INPUT @78   BALLOT01  $CHAR6.  @167  BALLOT02 $CHAR6.                  
+               @256  BALLOT03  $CHAR6.  @345  BALLOT04 $CHAR6.                  
+               @434  BALLOT05  $CHAR6.  @523  BALLOT06 $CHAR6.                  
+               @612  BALLOT07  $CHAR6.  @701  BALLOT08 $CHAR6.                  
+               @790  BALLOT09  $CHAR6.  @879  BALLOT10 $CHAR6.                  
+               @968  BALLOT11  $CHAR6.  @1057 BALLOT12 $CHAR6.                  
+               @1146 BALLOT13  $CHAR6.  @1235 BALLOT14 $CHAR6.                  
+               @1324 BALLOT15  $CHAR6.  @1413 BALLOT16 $CHAR6.                  
+               @1502 BALLOT17  $CHAR6.  @1591 BALLOT18 $CHAR6.                  
+               @1680 BALLOT19  $CHAR6.  @1769 BALLOT20 $CHAR6.;                 
+       END;                                                                     
+                                                                                
+    ATTEMPT=0;                                                                  
+    START_BALLOT=SYMGET('START_BALLOT');                                        
+    IF BALLOT01 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT02 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT03 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT04 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT05 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT06 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT07 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT08 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT09 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT10 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT11 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT12 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT13 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT14 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT15 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT16 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT17 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT18 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT19 >= START_BALLOT THEN ATTEMPT+1;                                 
+    IF BALLOT20 >= START_BALLOT THEN ATTEMPT+1;                                 
+   RUN;                                                                         
+                                                                                
+   PROC PRINTTO FILE=BP13F002 NEW;                                              
+   PROC PRINT DATA=FINAL2;                                                      
+    VAR NRIC BALLOT QTR_OWN BK_STATUS ATTEMPT HOUSEHOLD;                        
+   RUN;                                                                         
+                                                                                
+  /*----------------------------------------------------------------*/          
+  /*- PREPARE DATA FOR 3RD REPORT                                  -*/          
+  /*- 1) PENDING CASES WITH NO BK-STATUS                           -*/          
+  /*- 2) PENDING CASES NOT FND IN REPORT A AND REPORT B            -*/          
+  /*----------------------------------------------------------------*/          
+                                                                                
+   DATA TEMP3;                                                                  
+     MERGE F595PEND(IN=A) FINAL(IN=B); BY NRIC;                                 
+        IF A AND NOT B;                                                         
+   RUN;                                                                         
+                                                                                
+   DATA FINAL3;                                                                 
+     MERGE TEMP3(IN=A) FINAL2(IN=B); BY NRIC;                                   
+        IF A AND NOT B;                                                         
+   RUN;                                                                         
+                                                                                
+   PROC PRINTTO FILE=BP13F003 NEW;                                              
+   PROC PRINT DATA=FINAL3;                                                      
+    VAR NRIC BALLOT QTR_OWN HOUSEHOLD BK_STATUS;                                
+   RUN;                                                                         
+                                                                                
+ /*---------------------------------------------------------------*/            
+ /* PENDING CASES GIVEN A CHANCE TO SELECT                        */            
+ /*---------------------------------------------------------------*/            
+   OPTIONS MISSING=0 LINESIZE=133 PAGESIZE=60;                                  
+   PROC PRINTTO FILE=BP13L001 NEW;                                              
+   PROC TABULATE DATA=FINAL MISSING FORMAT=8.;                                  
+TITLE1 "BP13L001      HDB3                                 SYSTEM OF COMMITMENT 
+                      DATE : &DATE  PAGE  :  ";                                 
+TITLE2 "PENDING CASES GIVEN A CHANCE TO SELECT";                                
+                                                                                
+   CLASS QTR_FST QTR_OWN BK_STATUS HOUSEHOLD;                                   
+                                                                                
+   KEYLABEL N=" "                                                               
+            SUM =" "                                                            
+            ALL ="ALL";                                                         
+                                                                                
+   TABLE (BK_STATUS="BOOK STATUS =" ALL),                                       
+         (HOUSEHOLD=" " ALL)*(QTR_FST=" " ALL),                                 
+         (QTR_OWN="GIVEN A CHANCE TO SELECT IN" ALL)                            
+         /RTS=25 BOX="FIRST APPLICATION IN";                                    
+                                                                                
+ /*---------------------------------------------------------------*/            
+ /*--  PENDING CASES NOT GIVEN A CHANCE TO SELECT                -*/            
+ /*---------------------------------------------------------------*/            
+   OPTIONS MISSING=0 LINESIZE=133 PAGESIZE=60;                                  
+   PROC PRINTTO FILE=BP13L002 NEW;                                              
+   PROC TABULATE DATA=FINAL2 MISSING FORMAT=8.;                                 
+TITLE1 "BP13L002      HDB3                                 SYSTEM OF COMMITMENT 
+                      DATE : &DATE  PAGE  :  ";                                 
+TITLE2 "PENDING CASES NOT GIVEN A CHANCE TO SELECT";                            
+   CLASS ATTEMPT QTR_OWN HOUSEHOLD;                                             
+                                                                                
+   KEYLABEL N=" "                                                               
+            SUM =" "                                                            
+            ALL ="ALL";                                                         
+                                                                                
+   TABLE (HOUSEHOLD="HOUSEHOLD =" ALL),                                         
+         (ATTEMPT=" " ALL),                                                     
+         (QTR_OWN = "NOT GIVEN A CHANCE TO SELECT IN" ALL)                      
+         /RTS=25 BOX="NO. OF ATTEMPTS";                                         
+ /*---------------------------------------------------------------*/            
+ /* PENDING CASES WITH NO BK-STATUS                               */            
+ /*---------------------------------------------------------------*/            
+   OPTIONS MISSING=0 LINESIZE=133 PAGESIZE=60;                                  
+   PROC PRINTTO FILE=BP13L003 NEW;                                              
+   PROC TABULATE DATA=FINAL3 MISSING FORMAT=8.;                                 
+TITLE1 "BP13L003      HDB3                                 SYSTEM OF COMMITMENT 
+                      DATE : &DATE  PAGE  :  ";                                 
+TITLE2 "PENDING CASES WITH NO BOOK STATUS";                                     
+                                                                                
+   CLASS QTR_OWN HOUSEHOLD;                                                     
+                                                                                
+   KEYLABEL N=" "                                                               
+            SUM =" "                                                            
+            ALL ="ALL";                                                         
+                                                                                
+   TABLE (HOUSEHOLD=" " ALL),                                                   
+         (QTR_OWN="BALLOT QUARTER" ALL)                                         
+         /RTS=25 BOX="HOUSEHOLD";                                               
+                                                                                
+
